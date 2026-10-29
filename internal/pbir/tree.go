@@ -13,13 +13,15 @@ import (
 
 // A decoded document is a tree of these:
 //
-//   - object: members in file order, duplicates kept;
+//   - object: members in file order, each key once;
 //   - []any: an array;
 //   - string;
 //   - json.Number, bool or nil: never judged.
 //
-// Members are kept as a list rather than a map, so a duplicate key cannot
-// hide a literal behind a later one.
+// Members are kept as a list, in file order, so a walk can report where
+// it is. Desktop never writes a key twice in one object, and a lookup would
+// see only one of the two, so a duplicate key makes the file unparseable
+// (decoder.object) rather than letting the other member hide a context.
 type object []member
 
 type member struct {
@@ -27,7 +29,7 @@ type member struct {
 	val any
 }
 
-// get returns the first member named key.
+// get returns the member named key; decode guarantees there is at most one.
 func (o object) get(key string) (any, bool) {
 	for _, m := range o {
 		if m.key == key {
@@ -37,7 +39,7 @@ func (o object) get(key string) (any, bool) {
 	return nil, false
 }
 
-// getObject returns the first member named key when it is an object.
+// getObject returns the member named key when it is an object.
 func (o object) getObject(key string) (object, bool) {
 	v, ok := o.get(key)
 	if !ok {
@@ -47,7 +49,7 @@ func (o object) getObject(key string) (object, bool) {
 	return obj, ok
 }
 
-// getString returns the first member named key when it is a string.
+// getString returns the member named key when it is a string.
 func (o object) getString(key string) (string, bool) {
 	v, ok := o.get(key)
 	if !ok {
@@ -57,8 +59,8 @@ func (o object) getString(key string) (string, bool) {
 	return s, ok
 }
 
-// sorted returns the members ordered by key, duplicates in file order, so a
-// walk is deterministic whatever order the file wrote them in.
+// sorted returns the members ordered by key, so a walk is deterministic
+// whatever order the file wrote them in.
 func (o object) sorted() []member {
 	out := make([]member, len(o))
 	copy(out, o)
@@ -130,6 +132,7 @@ func (d *decoder) value() (any, error) {
 
 func (d *decoder) object() (any, error) {
 	obj := object{}
+	seen := map[string]bool{}
 	for d.dec.More() {
 		tok, err := d.dec.Token()
 		if err != nil {
@@ -139,6 +142,12 @@ func (d *decoder) object() (any, error) {
 		if !ok {
 			return nil, d.fail(nil, "object key is not a string")
 		}
+		if seen[key] {
+			// Fail closed: a lookup sees one member of the two, and the
+			// other could hold a context.
+			return nil, d.fail(nil, "duplicate key in an object")
+		}
+		seen[key] = true
 		v, err := d.value()
 		if err != nil {
 			return nil, err

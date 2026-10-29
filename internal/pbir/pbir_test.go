@@ -349,11 +349,41 @@ func TestEachLiteralIsOneFinding(t *testing.T) {
 	}
 }
 
-func TestDuplicateKeysAreAllWalked(t *testing.T) {
-	doc := `{"filterConfig": {"filters": [{"filter": {"From": [` + from("s", "student") + `], "Where": [
-		{"Condition": {"In": {"Expressions": [` + col("s", "", "full_name") + `], "Values": [[` + lit("'Pat Example'") + `]], "Values": [[` + lit("'Sam Example'") + `]]}}}]}}]}}`
-	if got := scan(t, doc); len(got) != 2 {
-		t.Fatalf("got %d findings, want 2", len(got))
+func parseError(t *testing.T, doc string) *judge.ParseError {
+	t.Helper()
+	got, err := pbir.Scan(testPath, []byte(doc), loadPolicy(t))
+	var pe *judge.ParseError
+	if !errors.As(err, &pe) || len(got) != 0 {
+		t.Fatalf("got %d findings and %v, want only a ParseError", len(got), err)
+	}
+	if strings.Contains(pe.Error(), "Doe") {
+		t.Error("the parse error quotes the file")
+	}
+	return pe
+}
+
+func TestDuplicateKeysAreUnparseable(t *testing.T) {
+	leak := `{"filters": [{"filter": ` + in(from("s", "student"), col("s", "", "full_name"), lit("'Doe, Jane'")) + `}]}`
+	docs := []string{
+		// The empty member first would hide the leak behind a lookup.
+		`{"filterConfig": null, "filterConfig": ` + leak + `}`,
+		`{"filterConfig": ` + leak + `, "filterConfig": {}}`,
+		// Deep inside a context, too.
+		`{"filterConfig": {"filters": [{"filter": {"From": [` + from("s", "student") + `], "Where": [
+		{"Condition": {"In": {"Expressions": [` + col("s", "", "full_name") + `], "Values": [[` + lit("'Pat Example'") + `]], "Values": [[` + lit("'Doe, Jane'") + `]]}}}]}}]}}`,
+	}
+	for _, doc := range docs {
+		if pe := parseError(t, doc); pe.Reason != finding.UnparseableJSON || pe.Line == 0 {
+			t.Errorf("parse error = %v", pe)
+		}
+	}
+}
+
+func TestTopLevelMustBeAnObject(t *testing.T) {
+	for _, doc := range []string{`["Doe, Jane"]`, `"Doe, Jane"`, `null`, `5`} {
+		if pe := parseError(t, doc); pe.Reason != finding.UnparseableJSON {
+			t.Errorf("reason = %s", pe.Reason)
+		}
 	}
 }
 
@@ -413,10 +443,8 @@ func TestByteOrderMarkAccepted(t *testing.T) {
 	check(t, scan(t, doc), want{ctx: finding.Filter, column: "student.full_name", tier: finding.Block, reasons: blockCol})
 }
 
-func TestNonObjectDocumentsAreClean(t *testing.T) {
-	for _, doc := range []string{`[]`, `"Doe, Jane"`, `null`, `{}`} {
-		check(t, scan(t, doc))
-	}
+func TestEmptyObjectIsClean(t *testing.T) {
+	check(t, scan(t, `{}`))
 }
 
 func TestParseErrorsCarryNoSourceText(t *testing.T) {

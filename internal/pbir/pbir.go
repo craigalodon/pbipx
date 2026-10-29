@@ -29,7 +29,9 @@ func Scan(path string, data []byte, p *policy.Policy) ([]finding.Finding, error)
 	}
 	doc, ok := root.(object)
 	if !ok {
-		return nil, nil
+		// Every PBIR file is an object. Anything else is not a report this
+		// scanner can place, and is never a clean file (principle 10).
+		return nil, &judge.ParseError{Reason: finding.UnparseableJSON, Line: 1, Msg: "the document is not an object"}
 	}
 	var out []finding.Finding
 	for _, c := range contexts(doc) {
