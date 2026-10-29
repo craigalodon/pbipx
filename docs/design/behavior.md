@@ -526,8 +526,24 @@ Decisions by tool. Every tool not listed is allowed.
   `.claude/settings.json` or `.claude/settings.local.json` in the
   repository root or any directory below it, names compared without regard
   to case. Such a file can set `disableAllHooks`, which turns off the gate's
-  own user-level hook (threat model, layer 5). Every other write is allowed:
-  the gate does not otherwise judge writes.
+  own user-level hook (threat model, layer 5).
+
+  A write outside the repository is denied with `agent-settings` too when,
+  under any spelling (and with the symlinks of the deepest existing
+  ancestor resolved, for a path not yet there), it is one of the files that
+  control the gate:
+  - inside the pbipx approval store: `$PBIPX_CONFIG_DIR`, and
+    `<user config dir>/pbipx` in any case (layer 6; a forged record would
+    approve a weakened policy);
+  - a user-level Claude Code settings file: a file named `settings*.json`
+    (case ignored) directly in `$CLAUDE_CONFIG_DIR` or in `~/.claude`;
+  - inside Claude Code's managed settings directory (`/etc/claude-code`,
+    `/Library/Application Support/ClaudeCode` or
+    `C:\Program Files\ClaudeCode`), `managed-settings.json` and the
+    `managed-settings.d` drop-ins included.
+
+  The message says which of these the path is, and does not name it. Every
+  other write is allowed: the gate does not otherwise judge writes.
 
 A deny writes the Claude Code decision JSON (`permissionDecision: deny` and a
 reason) to stdout, writes the reason to stderr, and exits 2. An allow writes

@@ -75,6 +75,44 @@ func SettingsPath() (string, error) {
 	return filepath.Join(home, ".claude", "settings.json"), nil
 }
 
+// UserSettingsDirs are the directories Claude Code may read user-level
+// settings from: $CLAUDE_CONFIG_DIR when it is set, made absolute, and
+// ~/.claude in any case, since a session started without the variable reads
+// it. A directory that cannot be found is left out.
+func UserSettingsDirs() []string {
+	var dirs []string
+	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
+		if a, err := filepath.Abs(dir); err == nil {
+			dirs = append(dirs, a)
+		}
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		dirs = append(dirs, filepath.Join(home, ".claude"))
+	}
+	return dirs
+}
+
+// IsUserSettingsName reports whether name is a file name Claude Code reads
+// user-level settings from, or one like it: settings*.json, compared without
+// regard to case.
+func IsUserSettingsName(name string) bool {
+	n := strings.ToLower(name)
+	return strings.HasPrefix(n, "settings") && strings.HasSuffix(n, ".json")
+}
+
+// ManagedSettingsDir is where Claude Code reads managed settings on the
+// system goos names (a GOOS value): managed-settings.json and the
+// managed-settings.d drop-in directory.
+func ManagedSettingsDir(goos string) string {
+	switch goos {
+	case "windows":
+		return `C:\Program Files\ClaudeCode`
+	case "darwin":
+		return "/Library/Application Support/ClaudeCode"
+	}
+	return "/etc/claude-code"
+}
+
 // Merge is the result of merging the hook into a settings file.
 type Merge struct {
 	// Data is the new file. It is nil when nothing changes.

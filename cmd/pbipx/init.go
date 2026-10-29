@@ -298,16 +298,8 @@ func describeLayout(w io.Writer, l setup.Layout) {
 }
 
 // managedSettingsDir is where Claude Code reads managed settings on this
-// system: managed-settings.json and the managed-settings.d directory.
-func managedSettingsDir() string {
-	switch runtime.GOOS {
-	case "windows":
-		return `C:\Program Files\ClaudeCode`
-	case "darwin":
-		return "/Library/Application Support/ClaudeCode"
-	}
-	return "/etc/claude-code"
-}
+// system.
+func managedSettingsDir() string { return setup.ManagedSettingsDir(runtime.GOOS) }
 
 // managedDropInPath is the drop-in file init --managed asks an administrator
 // to add: Claude Code merges every *.json in managed-settings.d, beside
