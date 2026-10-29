@@ -483,6 +483,11 @@ behavior (2026-10-29).
 - `cachedFilterDisplayItems[].label` is judged wherever it appears in a
   bookmark's state, against the context it sits in.
 - `allow` values match exactly, case included.
+- **Divergence (hierarchy levels):** the predecessor associates only
+  `Column` references, so a selection on a hierarchy level is tied only to
+  the context's other columns. pbipx also associates a `HierarchyLevel` as a
+  column, named after its level, of the hierarchy's table. A level is
+  usually named after the column it shows. (Decided 2026-10-29.)
 
 ### Models
 
