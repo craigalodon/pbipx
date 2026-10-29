@@ -33,7 +33,7 @@ func TestPrepare(t *testing.T) {
 	needGit(t)
 	c := openTest(t, testCorpusDir)
 	root := t.TempDir()
-	if err := c.Prepare(findCase(t, c, staging), root); err != nil {
+	if _, err := c.Prepare(findCase(t, c, staging), root, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -65,7 +65,7 @@ func TestPrepare(t *testing.T) {
 func TestPrepareWithoutGit(t *testing.T) {
 	c := openTest(t, testCorpusDir)
 	root := t.TempDir()
-	if err := c.Prepare(findCase(t, c, usage), root); err != nil {
+	if _, err := c.Prepare(findCase(t, c, usage), root, ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(root, ".git")); !os.IsNotExist(err) {
@@ -79,7 +79,7 @@ func TestPrepareWithoutGit(t *testing.T) {
 func TestPrepareKeepsReportBytes(t *testing.T) {
 	c := openTest(t, testCorpusDir)
 	root := t.TempDir()
-	if err := c.Prepare(findCase(t, c, slicer), root); err != nil {
+	if _, err := c.Prepare(findCase(t, c, slicer), root, ""); err != nil {
 		t.Fatal(err)
 	}
 	rel := filepath.FromSlash(strings.TrimPrefix(visual, "tree/"))
@@ -143,7 +143,7 @@ func TestCommandArgs(t *testing.T) {
 		if tt.spec != nil {
 			tt.spec(&cs.Spec)
 		}
-		if got := CommandArgs(&cs, "/r"); !slices.Equal(got, tt.want) {
+		if got := CommandArgs(&cs, &Prepared{Root: "/r"}); !slices.Equal(got, tt.want) {
 			t.Errorf("%s: args = %q, want %q", tt.id, got, tt.want)
 		}
 	}

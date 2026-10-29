@@ -20,6 +20,9 @@ type Finding struct {
 	Reasons []string
 	// Locator is the raw JSON locator, nil when the finding has none.
 	Locator json.RawMessage
+	// Fingerprint is an implementation's baseline key for the finding. It is
+	// read only from output, never from expected.json.
+	Fingerprint string
 }
 
 // Result is a normalized result: findings, a failure, a gate decision, or
@@ -257,6 +260,9 @@ func (p *resultParser) finding(item json.RawMessage, i int) (Finding, bool) {
 	}
 	if raw, ok := obj["locator"]; ok {
 		f.Locator = raw
+	}
+	if raw, ok := obj["fingerprint"]; ok && !p.strict {
+		f.Fingerprint, _ = p.str(raw, what+".fingerprint")
 	}
 	if p.strict && len(p.problems) == before {
 		p.checkFinding(f, what)

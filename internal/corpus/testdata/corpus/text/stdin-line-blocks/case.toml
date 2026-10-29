@@ -1,0 +1,7 @@
+description = "a name on a line of standard input blocks"
+command     = "scan-text"
+args        = ["-"]
+policy      = "minimal"
+exit        = 1
+sentinels   = ["Roe, Richard"]
+git         = false

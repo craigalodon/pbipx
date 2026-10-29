@@ -32,13 +32,15 @@ it shows (`slicer-on-block-column-blocks`).
 
 A runner, one per implementation, does this for each case:
 
-1. Copy `tree/` to a fresh temporary directory, the **root**.
+1. Copy `tree/` to a fresh temporary directory, the **root**. A case with
+   no `tree/` starts from an empty root.
 2. Unless `policy = "tree"`, write `policies/<policy>.toml` to
    `<root>/.pbipx.toml`.
 3. Unless `git = false`, make the root a git repository and commit every
    file, except those listed in `untracked` (left untracked) and `staged`
-   (added to the index, not committed). The commit uses a fixed synthetic
-   author and date.
+   (added to the index, not committed). A file the tree's own `.gitignore`
+   ignores is not committed. The commit uses a fixed synthetic author and
+   date.
 4. Replace `{root}` in `args` and `stdin` with the root's absolute path.
 5. Run the command in the root, with `CI`, `PRE_COMMIT` and
    `PBIPX_NO_REVEAL` unset and standard output not a terminal, unless `env`
@@ -58,8 +60,9 @@ args        = ["--all"]
 policy      = "default"              # policies/default.toml, or "tree" for tree/.pbipx.toml
 exit        = 1
 
-# Synthetic values planted in tree/ or stdin. None may appear in stdout or
-# stderr. This is what proves redaction (principle 2): every case checks it.
+# Synthetic values planted in tree/, stdin or args. None may appear in
+# stdout or stderr. This is what proves redaction (principle 2): every case
+# checks it.
 sentinels = ["Doe, Jane"]
 
 # Optional.
@@ -98,8 +101,11 @@ implementations; findings cannot.
 }
 ```
 
-- `findings` are sorted by path, context, column, then reasons.
-- `path` is relative to the root, with forward slashes.
+- `findings` are sorted by path, context, column, then reasons: strings in
+  byte order, `null` before any string, and reasons element by element
+  (a shorter list first when one is a prefix of the other).
+- `path` is relative to the root, with forward slashes. A finding read from
+  standard input (`scan-text -`) has the path `-`.
 - `context` and each reason come from
   [vocabulary.toml](../../testdata/corpus/vocabulary.toml). Reasons within a
   finding are in the vocabulary's `reason-order`.
@@ -129,8 +135,9 @@ vocabulary's `gate-reasons`, never free text:
 
 An allow has no reason: `{"decision": "allow"}`. The gate exits 0 on allow
 and 2 on deny. How a runner reads the class from the gate's output is up to
-that implementation; pbipx writes it first in the deny reason, as
-`pbipx: <class>:`.
+that implementation. pbipx starts its deny reason with `pbipx: <class>:`,
+and the first line of stderr, which carries it, is authoritative: Claude
+Code reads stderr, not stdout, from a hook that exits 2.
 
 For `explain`, the result is the structure as JSON. Its schema is settled
 with the first `explain` cases (phase 3).
@@ -261,11 +268,11 @@ How it does each step, where this format leaves the choice open:
 - The commit's author and committer are `Corpus Runner
   <corpus-runner@example.com>`, at 2100-01-01T00:00:00Z, on branch `main`.
   Every `GIT_` variable of the caller is removed, and user and system git
-  configuration are turned off, for setup and for the command. A file the
-  tree's own `.gitignore` ignores is not committed; a `staged` path is
-  staged even if ignored.
-- Every command but the gate gets `--format json` appended to its `args`,
-  except a case with `exit = 4`. A case does not set `--format` itself.
+  configuration are turned off, for setup and for the command. A `staged`
+  path is staged even if ignored.
+- A case other than the gate that has an `expected.json` gets
+  `--format json` appended to its `args`. A case does not set `--format`
+  itself.
 - `--format json` prints the `expected.json` shape, and may add fields (a
   finding's `locator` and `fingerprint`, for instance). The runner compares
   only what `expected.json` can say: the failure, or the findings as a
@@ -273,22 +280,36 @@ How it does each step, where this format leaves the choice open:
   is compared, as JSON, only when it has one. For `explain`, every key of
   the expected object is compared, recursively.
 - The gate's exit code is the decision: 0 is an allow, 2 a deny. The class
-  of a deny is read from `permissionDecisionReason` in the hook JSON on
-  stdout, which pbipx starts with `pbipx: <class>:`. With nothing on stdout,
-  it is read from the first line of stderr, which starts the same way.
-- A sentinel counts as present in output as written, or as the body of a
-  JSON string that encodes it.
+  of a deny is read from the first line of stderr. Only when that has no
+  class is it read from `permissionDecisionReason` in the hook JSON on
+  stdout.
+- The baseline setup scan is `pbipx scan --all --no-baseline --format json`,
+  run on a committed copy of the root, so that the root itself is committed
+  only after `after/tree/` is applied. Each finding in its output carries
+  `fingerprint`. The baseline is written as shown in "Baseline cases", with
+  `column` left out for a null column.
+- A sentinel counts as present in output as written, with each apostrophe
+  doubled, or as the body of a JSON string that encodes either.
 
 The validator adds rules this format implies:
 
 - An empty `sentinels` needs a description that says, in one clause, that
   the case plants no value ("plants no value", "nothing is planted", "no
   values").
-- A sentinel appears in `tree/`, `stdin` or `args`, and never in
-  `description` or `expected.json`.
-- Report JSON (a `.json` or `.pbir` file below a `*.Report` directory)
-  parses, unless the case expects an error for it.
+- A sentinel appears in `tree/`, `after/tree/`, `stdin` or `args`, and
+  never in `description` or `expected.json`. It counts as present with each
+  apostrophe doubled (`''`, as a quoted literal stores it), and, in a
+  `.tmdl` file, inside an Enter data blob: the base64 argument of
+  `Binary.FromText`, raw-deflated or plain.
+- `policy = "tree"` needs `tree/.pbipx.toml`, unless the expected failure is
+  `policy-error`.
+- `[[baseline]]` and `[fingerprint]` describe a finding of `tree/` with a
+  context and reasons from the vocabulary; `{fingerprint}` is in `args` if
+  and only if `[fingerprint]` is set; `after/tree/` needs one of them.
+- Report JSON (a `.json` or `.pbir` file below a `*.Report` directory, in
+  `tree/` or `after/tree/`) parses, unless the case expects an error for it.
 - Exit codes agree with the result: a failure or an error finding exits 3;
   a block finding, with no error finding, exits 1; an allow exits 0 and a
   deny 2.
-- Each finding's path names a path in `tree/`, or `.pbipx.toml`.
+- Each finding's path names a path in `tree/` or `after/tree/`, or
+  `.pbipx.toml`, or is `-` in a `scan-text` case with a `stdin`.

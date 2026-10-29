@@ -1,0 +1,14 @@
+description = "a baselined warning stays suppressed when its selection changes to another value of the same kind"
+command     = "scan"
+args        = ["--all", "--strict"]
+policy      = "minimal"
+exit        = 0
+sentinels   = ["Fall 2150", "Fall 2151"]
+
+[[baseline]]
+path     = "pbip/Example.Report/definition/pages/0000/visuals/0001/visual.json"
+context  = "slicer-selection"
+column   = "enrollment.cohort_year"
+reasons  = ["warn-column"]
+severity = "warn"
+expires  = "2199-12-31"
