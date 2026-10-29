@@ -6,6 +6,10 @@ import (
 	"testing"
 )
 
+// sentinel stands for a value typed on a command line. It must never be
+// echoed.
+const sentinel = "Doe, Jane"
+
 func TestRun(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -16,8 +20,15 @@ func TestRun(t *testing.T) {
 	}{
 		{"no command", nil, 2, "", "Usage:"},
 		{"version", []string{"version"}, 0, "pbipx dev\n", ""},
+		{"version flag", []string{"--version"}, 0, "pbipx dev\n", ""},
 		{"help", []string{"help"}, 0, "Usage:", ""},
-		{"unknown", []string{"Doe, Jane"}, 2, "", "unknown command"},
+		{"help flag", []string{"--help"}, 0, "Usage:", ""},
+		{"help for a command", []string{"help", "version"}, 0, "print the version", ""},
+		{"unknown command", []string{sentinel}, 2, "", "usage error"},
+		{"unknown help topic", []string{"help", sentinel}, 2, "", "usage error"},
+		{"unknown flag", []string{"--" + sentinel}, 2, "", "usage error"},
+		{"flag with a value", []string{"--name=" + sentinel}, 2, "", "usage error"},
+		{"extra argument", []string{"version", sentinel}, 2, "", "usage error"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -32,8 +43,8 @@ func TestRun(t *testing.T) {
 			if !strings.Contains(stderr.String(), tt.wantStderr) {
 				t.Errorf("stderr = %q, want it to contain %q", stderr.String(), tt.wantStderr)
 			}
-			for _, arg := range tt.args {
-				if tt.wantCode != 0 && strings.Contains(stdout.String()+stderr.String(), arg) {
+			for _, part := range []string{"Doe", "Jane"} {
+				if strings.Contains(stdout.String()+stderr.String(), part) {
 					t.Errorf("output echoes the argument")
 				}
 			}

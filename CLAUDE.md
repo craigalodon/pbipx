@@ -48,7 +48,7 @@ you, fix the cause or tell the user.
 ## Layout
 
 ```text
-cmd/pbipx/          the binary's entry point and command dispatch
+cmd/pbipx/          the entry point; commands on cobra (ADR-0005)
 internal/           packages; nothing is a public Go API yet
 testdata/corpus/    the language-neutral behavior corpus (docs/design/corpus.md)
 docs/ROADMAP.md     phases and exit criteria
