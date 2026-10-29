@@ -23,8 +23,13 @@ func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
-// run executes a command and returns the process exit code: 0 on success,
-// 2 on a usage error.
+// Exit codes (testdata/corpus/vocabulary.toml). The gate has its own.
+const (
+	exitClean = 0
+	exitUsage = 4
+)
+
+// run executes a command and returns the process exit code.
 func run(args []string, stdout, stderr io.Writer) int {
 	if args == nil {
 		// Cobra reads os.Args when given nil.
@@ -38,9 +43,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 		// Every error is reported as a usage error for now; the error itself
 		// is not printed.
 		fmt.Fprintln(stderr, "pbipx: usage error; run 'pbipx help'")
-		return 2
+		return exitUsage
 	}
-	return 0
+	return exitClean
 }
 
 func newRootCmd() *cobra.Command {

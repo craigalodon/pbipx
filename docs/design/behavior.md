@@ -6,8 +6,10 @@ This is a description of behavior, in this repository's words. It holds no
 fixture, policy entry or value from any real deployment.
 
 Where pbipx should behave differently, the difference is marked
-**Divergence** and gets a corpus case that says which behavior is right. Until
-the vocabulary is settled, the slugs in this document are proposals.
+**Divergence** and gets a corpus case that says which behavior is right. The
+slugs in this document are settled in
+[vocabulary.toml](../../testdata/corpus/vocabulary.toml); the divergences
+were accepted on 2026-10-29.
 
 ## Judging one literal
 
@@ -56,7 +58,7 @@ Each shape can be switched off in policy (`person_name`, `email`, `ssn`,
 
 **Divergence (dates).** CONTRIBUTING.md asks for synthetic dates in the years
 2100 to 2199, which the predecessor's date shape never matches, so a synthetic
-fixture could not exercise it. Proposed: pbipx's date shape accepts years
+fixture could not exercise it. pbipx's date shape accepts years
 `19xx` to `21xx`. Cases that need the predecessor's exact behavior plant
 2100s dates and expect the date shape from pbipx, and are marked as a known
 difference.
@@ -87,7 +89,7 @@ the bare column name.
 Seven places in a report hold model values. Everything else, such as column
 width metadata (which names columns), is not visited.
 
-| Proposed slug | Where | Notes |
+| Slug | Where | Notes |
 |---|---|---|
 | `filter` | `filterConfig.filters[i]` in a page or visual | the entry's own `field.Column` is added to the columns |
 | `slicer-selection` | `visual.objects.<any>[i].properties.filter.filter` | any object class, not only `general` |
@@ -137,7 +139,7 @@ structure, never source text.
 
 ### What is judged, and its context
 
-| Proposed slug | What |
+| Slug | What |
 |---|---|
 | `tmdl-dax` | DAX: `measure`, `column`, `calculationItem` and `tablePermission` expressions; the DAX-valued properties (format string, detail rows, KPI target, status and trend expressions, field-parameter selection expressions); an unnamed `expression`; `calculated` partition sources |
 | `tmdl-m` | M: named `expression`s, `sourceExpression`, `pollingExpression`, and `m` and `policyRange` partition sources |
@@ -271,7 +273,7 @@ The policy classifies each repository-relative path:
 
 Errors are findings with reasons and no value:
 
-| Proposed reason | When |
+| Reason | When |
 |---|---|
 | `unvettable` | under a root and no class covers it |
 | `unreadable` | the file could not be read |
@@ -283,8 +285,8 @@ error.
 
 **Divergence (lenient JSON).** The predecessor skips an unparseable report
 JSON file silently unless `--strict` is given (the gate always is). Principle
-10 says a parse failure is never a clean file. Proposed: pbipx always reports
-it as an error.
+10 says a parse failure is never a clean file. pbipx always reports it as an
+error.
 
 ## Accepting a warning
 
@@ -333,8 +335,8 @@ ADR-0004 replaces the regular expressions with globs per file kind.
 
 Error findings take precedence over blocks.
 
-**Divergence (exit codes).** pbipx exits 2 on a usage error today. Proposed:
-adopt this table, so a broken invocation is never mistaken for "warnings".
+pbipx adopts this table, so a broken invocation is never mistaken for
+"warnings" (vocabulary.toml).
 
 `scan` sources: `--staged` (the index, with no fallback to the working
 tree); `--all`, the default, which covers every file git would commit (tracked,
@@ -358,7 +360,7 @@ Redaction:
 
 **Divergence (digest).** The predecessor prints each value's length and a
 short hash of the value by default. Principle 3 forbids hashing a value, and
-a length alone is part of the shape. Proposed: pbipx prints neither unless
+a length alone is part of the shape. pbipx prints neither unless
 `--show-shape` is given.
 
 **Divergence (error text).** The predecessor puts exception messages into
@@ -425,7 +427,7 @@ reason) to stdout, writes the reason to stderr, and exits 2. An allow writes
 nothing and exits 0. The reason names the file, the column and the reasons,
 and never a value.
 
-Proposed gate reason classes: `finding`, `unvettable`, `scan-error`,
+Gate reason classes: `finding`, `unvettable`, `scan-error`,
 `local-state`, `git-content`, `policy-error`, `event-error`,
 `not-a-repository`, `internal-error`.
 

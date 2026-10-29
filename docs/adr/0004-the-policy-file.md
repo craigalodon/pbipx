@@ -30,13 +30,80 @@ to get subtly wrong.
   no scan scope covers is a policy error. A policy error denies every gated
   call.
 
+## Schema (proposed)
+
+```toml
+version = 1
+protected_roots = ["pbip"]          # required, non-empty, plain relative paths
+
+[scan]                              # globs per file kind; at least one kind
+report  = ["pbip/**/*.json"]
+model   = ["pbip/**/*.tmdl"]
+sql     = ["sql/**/*.sql"]
+yaml    = ["models/**/*.yml"]
+prose   = ["notes/**/*.md"]
+exclude = ["**/.pbi/**"]            # removed from every kind
+
+[files]
+local_state     = ["**/.pbi/localSettings.json"]
+unscanned_allow = ["pbip/**/StaticResources/**/*.png"]
+
+[columns]
+block         = ["full_name"]       # bare names, compared lowercased
+block_pattern = "(^|_)email(_|$)"   # RE2, over the lowercased bare name
+warn          = ["cohort_year"]
+
+[shapes]                            # each defaults to true
+person_name = true
+email       = true
+ssn         = true
+date        = true
+phone       = true
+
+[values]
+allow = ["(none selected)"]         # literals never judged
+
+[[accept]]                          # a lasting acceptance of one warn column
+column      = "enrollment.cohort_year"
+path        = "pbip/Example.Report/definition"
+note        = "why"
+reviewed_by = "who"
+```
+
+Globs match repository-relative paths with forward slashes: `*` and `?`
+within one segment, `[...]` a class, `**` any number of segments. Matching
+is case-sensitive.
+
+Policy errors: a missing file; invalid TOML; an unknown key at any level; a
+`version` other than 1; a glob or pattern that does not compile; an empty or
+malformed `protected_roots`; a protected root that no scan kind covers; an
+`accept` entry missing a field, naming a column that is not `table.column` or
+not a warn column, or with a path that is absolute, uses `.`, `..` or `\`, or
+is shallower than three segments.
+
+Mapping from the predecessor's keys, for the one hand conversion:
+
+| Predecessor | pbipx |
+|---|---|
+| `protected_roots` | `protected_roots` |
+| `scan_path_regex` | `[scan]` globs per kind, and `exclude` |
+| `local_state_regex`, `unscanned_allow_regex` | `[files]` globs |
+| `block_columns`, `block_column_regex`, `warn_columns` | `[columns]` |
+| `heuristics` (`dob`) | `[shapes]` (`date`) |
+| `allowlist_literals` | `[values] allow` |
+| `allow_quasi` | `[[accept]]` |
+
+## Settled questions
+
+- **Globs or regular expressions for scope?** Globs, per file kind, with one
+  `exclude` list in place of negative lookahead. The column pattern stays a
+  regular expression, because it matches names, not paths. (2026-10-29)
+- **Default column lists in the binary?** No. `pbipx init` writes them out
+  in the policy, so everything that decides a verdict is in one reviewed
+  file and nothing is hidden in the tool (principle 13). (2026-10-29)
+
 ## Open questions
 
-- Globs or regular expressions for scope? Globs are easier to read. The
-  predecessor needed negative lookahead to exclude `.pbi/`, which a separate
-  exclude list would replace.
-- Should the default column lists ship in the binary, as a named preset that
-  a policy extends, or always be written out in the policy?
 - How does policy integrity (threat model, layer 6) bind to this file: a
   digest of the whole file, or of a normalized form?
 

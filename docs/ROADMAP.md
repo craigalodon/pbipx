@@ -24,9 +24,9 @@ is phases 1 to 4. Stage, collect and perf can follow it.
 Most of this phase is spent in the predecessor's repository, which stays
 private (ADR-0003).
 
-- [ ] Settle the vocabulary: finding contexts, reasons, gate reason classes
+- [x] Settle the vocabulary: finding contexts, reasons, gate reason classes
       (`testdata/corpus/vocabulary.toml`)
-- [ ] `policies/default.toml`: a generic policy for the corpus
+- [x] `policies/default.toml`: a generic policy for the corpus
 - [ ] Cases, written fresh and synthetic, for each area:
   - [ ] `pbir`: the six report contexts that carry values; which literals are
         judged; column association; neutral-filter sentinels

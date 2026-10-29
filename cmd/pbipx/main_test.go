@@ -18,17 +18,17 @@ func TestRun(t *testing.T) {
 		wantStdout string
 		wantStderr string
 	}{
-		{"no command", nil, 2, "", "Usage:"},
+		{"no command", nil, exitUsage, "", "Usage:"},
 		{"version", []string{"version"}, 0, "pbipx dev\n", ""},
 		{"version flag", []string{"--version"}, 0, "pbipx dev\n", ""},
 		{"help", []string{"help"}, 0, "Usage:", ""},
 		{"help flag", []string{"--help"}, 0, "Usage:", ""},
 		{"help for a command", []string{"help", "version"}, 0, "print the version", ""},
-		{"unknown command", []string{sentinel}, 2, "", "usage error"},
-		{"unknown help topic", []string{"help", sentinel}, 2, "", "usage error"},
-		{"unknown flag", []string{"--" + sentinel}, 2, "", "usage error"},
-		{"flag with a value", []string{"--name=" + sentinel}, 2, "", "usage error"},
-		{"extra argument", []string{"version", sentinel}, 2, "", "usage error"},
+		{"unknown command", []string{sentinel}, exitUsage, "", "usage error"},
+		{"unknown help topic", []string{"help", sentinel}, exitUsage, "", "usage error"},
+		{"unknown flag", []string{"--" + sentinel}, exitUsage, "", "usage error"},
+		{"flag with a value", []string{"--name=" + sentinel}, exitUsage, "", "usage error"},
+		{"extra argument", []string{"version", sentinel}, exitUsage, "", "usage error"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
