@@ -282,6 +282,46 @@ func TestCommentChar(t *testing.T) {
 	}
 }
 
+func TestCommitMessages(t *testing.T) {
+	root := newRepo(t, map[string]string{"notes/a.md": "a\n"})
+	gitIn(t, root, "tag", "base")
+	gitIn(t, root, "commit", "--allow-empty", "-m", "first subject\n\nbody "+sentinel)
+	gitIn(t, root, "commit", "--allow-empty", "-m", "second subject\n\n# a line git -m keeps")
+	r := open(t, root)
+
+	got, err := r.CommitMessages("base..HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d commits, want 2", len(got))
+	}
+	if !strings.HasPrefix(string(got[0].Message), "second subject\n\n# a line git -m keeps") ||
+		!strings.HasPrefix(string(got[1].Message), "first subject\n\nbody "+sentinel) {
+		t.Errorf("the messages are not read whole, newest first")
+	}
+	for _, c := range got {
+		if !commitID.MatchString(c.ID) {
+			t.Errorf("commit id %q is not a full object name", c.ID)
+		}
+	}
+
+	none, err := r.CommitMessages("HEAD..HEAD")
+	if err != nil || len(none) != 0 {
+		t.Errorf("an empty range: %d commits, %v", len(none), err)
+	}
+
+	for _, rng := range []string{sentinel + "..HEAD", "--output=" + sentinel, "-n1", ""} {
+		_, err := r.CommitMessages(rng)
+		if !errors.Is(err, ErrBadRange) {
+			t.Errorf("a bad range: %v, want ErrBadRange", err)
+		}
+		if err != nil && strings.Contains(err.Error(), "Doe") {
+			t.Error("the error quotes the range")
+		}
+	}
+}
+
 func TestGitErrorQuotesNothing(t *testing.T) {
 	err := &GitError{Op: "ls-files", Exit: 128}
 	if err.Error() != "git ls-files failed (exit 128)" {

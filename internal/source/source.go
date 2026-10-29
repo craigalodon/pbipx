@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 )
@@ -186,6 +187,56 @@ func (r *Repo) Rev(rev string) (*Set, error) {
 		objects[path] = fields[2]
 	}
 	return r.objectSet(objects)
+}
+
+// ErrBadRange is returned when --commits does not name commits git can
+// list.
+var ErrBadRange = errors.New("the range does not name commits")
+
+// Commit is one commit's message.
+type Commit struct {
+	ID      string // the full object name
+	Message []byte // as git stores it: the subject, a blank line, the body
+}
+
+// commitID is a full SHA-1 or SHA-256 object name.
+var commitID = regexp.MustCompile(`^(?:[0-9a-f]{40}|[0-9a-f]{64})$`)
+
+// CommitMessages is the message of every commit in rng, a range as git log
+// takes it (base..head), newest first. The range is passed after
+// --end-of-options, and one that starts with "-" is refused before git
+// runs.
+func (r *Repo) CommitMessages(rng string) ([]Commit, error) {
+	if rng == "" || strings.HasPrefix(rng, "-") {
+		return nil, ErrBadRange
+	}
+	// -z ends each record with a NUL, and the format puts a NUL between
+	// the object name and the message. A signature check would print to
+	// standard output, so it is turned off whatever the configuration says.
+	out, err := git(r.Root, "log", "log", "-z", "--no-show-signature", "--no-color",
+		"--format=%H%x00%B", "--end-of-options", rng, "--")
+	if err != nil {
+		var ge *GitError
+		if errors.As(err, &ge) && ge.Exit > 0 {
+			return nil, ErrBadRange
+		}
+		return nil, err
+	}
+	fields := strings.Split(string(out), "\x00")
+	if len(fields)%2 != 1 || fields[len(fields)-1] != "" {
+		return nil, &GitError{Op: "log", Exit: 0}
+	}
+	commits := make([]Commit, 0, len(fields)/2)
+	for i := 0; i+1 < len(fields); i += 2 {
+		// A message holding a NUL would shift every field after it; that
+		// shows as a field that is not an object name, and nothing is
+		// returned rather than a misread message.
+		if !commitID.MatchString(fields[i]) {
+			return nil, &GitError{Op: "log", Exit: 0}
+		}
+		commits = append(commits, Commit{ID: fields[i], Message: []byte(fields[i+1])})
+	}
+	return commits, nil
 }
 
 // objectSet is a set read from git's object store. A key may carry a stage
