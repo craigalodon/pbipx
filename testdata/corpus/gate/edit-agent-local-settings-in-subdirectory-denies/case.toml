@@ -1,0 +1,7 @@
+description = "an Edit of .claude/settings.local.json in a subdirectory denies, as one at the root does"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
+known       = "predecessor"

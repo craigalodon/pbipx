@@ -13,7 +13,7 @@ import (
 )
 
 // HookMatcher is the tools the gate's PreToolUse hook is registered for.
-const HookMatcher = "Read|Grep|Bash"
+const HookMatcher = "Read|Grep|Bash|Write|Edit|MultiEdit|NotebookEdit"
 
 // gateArgs is in every pbipx gate hook command (claudecode.HookCommand), and
 // identifies one that runs another binary.

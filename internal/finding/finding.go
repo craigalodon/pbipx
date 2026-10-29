@@ -96,6 +96,9 @@ const (
 	UnparseableTMDL Reason = "unparseable-tmdl"
 	UnlexableSQL    Reason = "unlexable-sql"
 	UnparseableYAML Reason = "unparseable-yaml"
+	// HooksDisabled is a committed Claude Code settings file that turns
+	// off hooks, the gate's included, or that does not parse.
+	HooksDisabled Reason = "hooks-disabled"
 )
 
 // ReasonOrder is the order of finding reasons within one finding.
@@ -106,7 +109,7 @@ var ReasonOrder = []Reason{
 
 // ErrorReasons lists every error reason.
 var ErrorReasons = []Reason{
-	Unvettable, Unreadable, NotUTF8, UnparseableJSON, UnparseableTMDL, UnlexableSQL, UnparseableYAML,
+	Unvettable, Unreadable, NotUTF8, UnparseableJSON, UnparseableTMDL, UnlexableSQL, UnparseableYAML, HooksDisabled,
 }
 
 // SortReasons puts finding reasons in ReasonOrder. Reasons not in it, which

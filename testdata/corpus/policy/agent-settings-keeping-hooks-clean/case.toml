@@ -1,0 +1,6 @@
+description = "must stay clean: a committed .claude/settings.json that does not set disableAllHooks is not a finding"
+command     = "scan"
+args        = ["--all"]
+policy      = "tree"
+exit        = 0
+sentinels   = ["Doe, Jane"]

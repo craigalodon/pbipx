@@ -31,15 +31,16 @@ const (
 	Read   Tool = "read"   // reads one file
 	Search Tool = "search" // searches the files under a path
 	Shell  Tool = "shell"  // runs a shell command line
+	Write  Tool = "write"  // creates or changes one file
 	Other  Tool = "other"  // anything else: allowed once the setup loads
 )
 
 // Event is one tool call, in the agent's terms translated.
 type Event struct {
 	Tool Tool
-	// Path is the file a read names, or the path a search covers (empty
-	// for the working directory), as the agent gave it: it may be relative
-	// to Cwd.
+	// Path is the file a read or a write names, or the path a search
+	// covers (empty for the working directory), as the agent gave it: it
+	// may be relative to Cwd.
 	Path string
 	// Command is a shell call's command line.
 	Command string
@@ -78,6 +79,7 @@ const (
 	ReasonUnvettable       = "unvettable"
 	ReasonScanError        = "scan-error"
 	ReasonLocalState       = "local-state"
+	ReasonAgentSettings    = "agent-settings"
 	ReasonGitContent       = "git-content"
 	ReasonPolicyError      = "policy-error"
 	ReasonPolicyUnapproved = "policy-unapproved"
@@ -88,7 +90,7 @@ const (
 
 // Reasons lists every reason class.
 var Reasons = []string{
-	ReasonFinding, ReasonUnvettable, ReasonScanError, ReasonLocalState, ReasonGitContent,
+	ReasonFinding, ReasonUnvettable, ReasonScanError, ReasonLocalState, ReasonAgentSettings, ReasonGitContent,
 	ReasonPolicyError, ReasonPolicyUnapproved, ReasonEventError, ReasonNotARepository, ReasonInternalError,
 }
 
@@ -127,6 +129,8 @@ func Decide(ev Event, opts Options) (d Decision) {
 		return s.search(ev.Path)
 	case Shell:
 		return s.shell(ev.Command)
+	case Write:
+		return s.write(ev.Path)
 	}
 	return allow()
 }

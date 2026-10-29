@@ -1,0 +1,6 @@
+description = "a Write of any file but a Claude Code settings file allows: the gate does not otherwise judge writes"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = ["Doe, Jane"]

@@ -319,6 +319,16 @@ Errors are findings with reasons and no value:
 | `unreadable` | the file could not be read |
 | `not-utf8` | not UTF-8 (a BOM is accepted) |
 | `unparseable-json`, `unparseable-tmdl`, `unlexable-sql`, `unparseable-yaml` | the scanner for its kind rejected it |
+| `hooks-disabled` | a Claude Code settings file that can turn hooks off (below) |
+
+`pbipx scan`, from every source, checks each Claude Code settings file in
+the files it scans (`.claude/settings.json` or `.claude/settings.local.json`
+in any directory), whatever the policy's scan scope: one that is not a JSON
+object, or that sets `disableAllHooks` to anything but `false`, is an error
+finding with `hooks-disabled`. It names the path and the reason only. Such
+a file turns off the gate's user-level hook (threat model, layer 5). The
+gate's own scans do not check it; the gate denies an agent's write to it
+instead.
 
 Model, SQL, YAML and prose files are always strict: a parse error is an
 error.
@@ -495,14 +505,30 @@ Decisions by tool. Every tool not listed is allowed.
      `-e` or `-f` gave it), default `.`.
   5. Otherwise allowed.
 
+  Before rule 1, a command that names a Claude Code settings file in the
+  repository (below) as a word, a redirection target, the value of a
+  `--flag=value` or what an unquoted glob matches is **denied** with
+  `agent-settings`. The message does not name the file: it can exist only in
+  the command's text.
+- **Write**, **Edit** and **MultiEdit** of `file_path`, and **NotebookEdit**
+  of `notebook_path`: denied with `agent-settings` when the path, under any
+  spelling (relative to the working directory, absolute, symlinks
+  resolved), is a Claude Code settings file inside the repository:
+  `.claude/settings.json` or `.claude/settings.local.json` in the
+  repository root or any directory below it, names compared without regard
+  to case. Such a file can set `disableAllHooks`, which turns off the gate's
+  own user-level hook (threat model, layer 5). Every other write is allowed:
+  the gate does not otherwise judge writes.
+
 A deny writes the Claude Code decision JSON (`permissionDecision: deny` and a
 reason) to stdout, writes the reason to stderr, and exits 2. An allow writes
 nothing and exits 0. The reason names the file, the column and the reasons,
 and never a value.
 
 Gate reason classes: `finding`, `unvettable`, `scan-error`,
-`local-state`, `git-content`, `policy-error`, `policy-unapproved` (pbipx
-only), `event-error`, `not-a-repository`, `internal-error`.
+`local-state`, `agent-settings` (pbipx only), `git-content`, `policy-error`,
+`policy-unapproved` (pbipx only), `event-error`, `not-a-repository`,
+`internal-error`.
 
 Glob is not gated: it prints file names, and names are schema (principle 1).
 
@@ -706,6 +732,12 @@ behavior (2026-10-29).
   names a local-state path or directory, with `local-state`. Tree scans
   still skip local state, so a recursive search that does not name it is
   decided as before. (Decided 2026-10-29.)
+- **Divergence (agent settings):** the predecessor neither gates writes nor
+  checks Claude Code's settings. pbipx denies an agent's write to, or shell
+  command naming, `.claude/settings.json` or `.claude/settings.local.json`
+  in the repository with `agent-settings`, and `pbipx scan` reports a
+  committed one that sets `disableAllHooks` with `hooks-disabled`, because
+  such a file turns off the gate's user-level hook. (Decided 2026-10-29.)
 
 ### Baseline
 

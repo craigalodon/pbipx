@@ -6,6 +6,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -39,17 +40,22 @@ func newInitCmd() *cobra.Command {
    .pbip files, and write a commented starting policy, .pbipx.toml, that
    protects them. An existing policy is kept unless --force is given. Only
    directory and file names are read, never a file's content.
-2. Register the gate as Claude Code's PreToolUse hook for Read, Grep and Bash,
-   in the user-level settings ($CLAUDE_CONFIG_DIR/settings.json, or
-   ~/.claude/settings.json), outside the repository, where a project cannot
-   remove it. Every other setting and hook is kept, a backup of the file is
+2. Register the gate as Claude Code's PreToolUse hook for Read, Grep, Bash and
+   the file-writing tools, in the user-level settings
+   ($CLAUDE_CONFIG_DIR/settings.json, or ~/.claude/settings.json), outside the
+   repository, where a project cannot remove it. A project can still turn
+   every user-level hook off with disableAllHooks; the gate denies an agent's
+   edit of the project's settings and pbipx scan reports a committed one, but
+   on shared machines and for teams use --managed. Every other setting and
+   hook is kept, a backup of the file is
    written beside it, and an equivalent hook is not added twice. The hook runs
    this binary by its absolute path, so init refuses to run from a binary
    inside the repository.
 3. Print the next steps.
 
---managed writes no settings and prints the hook for an administrator to add
-to Claude Code's managed settings instead. --dry-run writes nothing and prints
+--managed writes no settings and prints the hook as a drop-in file of Claude
+Code's managed settings (managed-settings.d/pbipx.json), for an administrator
+to add, instead. --dry-run writes nothing and prints
 what init would do. --gitignore appends the .gitignore lines a PBIP repository
 needs (.pbi/, *.pbix, *.abf) when they are missing; without it, init lists
 them.
@@ -151,7 +157,15 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 		if serr != nil {
 			return operational(cmd, "the hook cannot be rendered")
 		}
-		fmt.Fprintf(out, "\nNo settings written (--managed). Add this hook to Claude Code's managed settings\n(%s), merging it with any hooks already there:\n\n%s", managedSettingsPath(), snippet)
+		fmt.Fprintf(out, "\nNo settings written (--managed). An administrator adds the hook as a drop-in file of\n"+
+			"Claude Code's managed settings, which merges every *.json there and needs no other\n"+
+			"file edited:\n\n  %s\n\nholding:\n\n%s\n", managedDropInPath(), snippet)
+		fmt.Fprintf(out, "# A repository's .claude/settings.json can set \"disableAllHooks\": true, which\n"+
+			"# turns off user-level hooks. To stop any repository or user setting from\n"+
+			"# turning hooks off, also set this in managed settings (managed-settings.json\n"+
+			"# or another drop-in in %s). Only managed hooks then\n"+
+			"# run: user and project hooks stop.\n#\n"+
+			"#   \"allowManagedHooksOnly\": true\n", managedSettingsDir())
 	case merge.Present:
 		fmt.Fprintf(out, "The gate's hook is already registered in %s.\n", settingsPath)
 	case f.dryRun:
@@ -165,6 +179,9 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 		if backup != "" {
 			fmt.Fprintf(out, "The previous settings are kept in %s.\n", backup)
 		}
+	}
+	if !f.managed {
+		fmt.Fprintln(out, "A repository can turn off user-level hooks (disableAllHooks); on shared machines and for teams, use pbipx init --managed.")
 	}
 	if merge.Others > 0 {
 		fmt.Fprintf(out, "Warning: %s registers %s that runs another pbipx binary. A hook whose binary is gone denies every call; remove it if it is stale.\n",
@@ -266,16 +283,26 @@ func describeLayout(w io.Writer, l setup.Layout) {
 	}
 }
 
-// managedSettingsPath is where Claude Code reads managed settings on this
-// system.
-func managedSettingsPath() string {
+// managedSettingsDir is where Claude Code reads managed settings on this
+// system: managed-settings.json and the managed-settings.d directory.
+func managedSettingsDir() string {
 	switch runtime.GOOS {
 	case "windows":
-		return `C:\Program Files\ClaudeCode\managed-settings.json`
+		return `C:\Program Files\ClaudeCode`
 	case "darwin":
-		return "/Library/Application Support/ClaudeCode/managed-settings.json"
+		return "/Library/Application Support/ClaudeCode"
 	}
-	return "/etc/claude-code/managed-settings.json"
+	return "/etc/claude-code"
+}
+
+// managedDropInPath is the drop-in file init --managed asks an administrator
+// to add: Claude Code merges every *.json in managed-settings.d, beside
+// managed-settings.json, in alphabetical order.
+func managedDropInPath() string {
+	if runtime.GOOS == "windows" {
+		return managedSettingsDir() + `\managed-settings.d\pbipx.json`
+	}
+	return path.Join(managedSettingsDir(), "managed-settings.d", "pbipx.json")
 }
 
 // nextSteps prints what the adopter does after init.

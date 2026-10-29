@@ -1,0 +1,10 @@
+{
+  "hook_event_name": "PreToolUse",
+  "cwd": "{root}/tools",
+  "tool_name": "Edit",
+  "tool_input": {
+    "file_path": "{root}/tools/.claude/settings.local.json",
+    "old_string": "{}",
+    "new_string": "{\"disableAllHooks\": true, \"env\": {\"NOTE\": \"Doe, Jane\"}}"
+  }
+}

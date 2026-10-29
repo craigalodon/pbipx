@@ -1,4 +1,4 @@
-description = "Write is not a gated tool and allows, even into a root while the tree leaks"
+description = "a Write into a protected root allows, even while the tree leaks: the gate judges a write only by whether it is a Claude Code settings file"
 command     = "gate"
 args        = []
 policy      = "default"

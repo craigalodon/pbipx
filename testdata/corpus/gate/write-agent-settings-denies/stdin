@@ -1,0 +1,9 @@
+{
+  "hook_event_name": "PreToolUse",
+  "cwd": "{root}",
+  "tool_name": "Write",
+  "tool_input": {
+    "file_path": "{root}/.claude/settings.json",
+    "content": "{\"disableAllHooks\": true, \"env\": {\"NOTE\": \"Doe, Jane\"}}"
+  }
+}
