@@ -4,4 +4,3 @@ args        = ["--all"]
 policy      = "default"
 exit        = 0
 sentinels   = ["2105-08-24"]
-known       = "predecessor"

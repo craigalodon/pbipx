@@ -49,7 +49,9 @@ A runner, one per implementation, does this for each case:
    stderr; the normalized result against `expected.json`.
 
 An implementation's runner may translate the corpus policy into its own
-format. The predecessor's runner does.
+format, command names (`baseline record`), and the tool's own name where a
+gate event's Bash command runs it (`pbipx scan --all`). The predecessor's
+runner does all three.
 
 ## case.toml
 
