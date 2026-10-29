@@ -1,0 +1,6 @@
+description = "plants no value: a .pbix under a protected root is unvettable, an error finding"
+command     = "scan"
+args        = ["--all"]
+policy      = "tree"
+exit        = 3
+sentinels   = []

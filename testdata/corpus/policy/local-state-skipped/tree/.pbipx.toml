@@ -1,0 +1,13 @@
+version = 1
+protected_roots = ["pbip"]
+
+[scan]
+report = ["pbip/**/*.json"]
+
+[columns]
+block = ["full_name"]
+warn  = ["cohort_year", "section_number"]
+
+[files]
+local_state     = ["**/.pbi/**"]
+unscanned_allow = ["pbip/**/StaticResources/**/*.png"]

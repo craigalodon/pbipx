@@ -1,0 +1,6 @@
+description = "an accept entry does not accept a block on its column: a shaped value has no warn-column reason"
+command     = "scan"
+args        = ["--all", "--strict"]
+policy      = "tree"
+exit        = 1
+sentinels   = ["student0100@example.com"]

@@ -1,0 +1,6 @@
+description = "block_pattern blocks a column in no list, matched on its lowercased bare name"
+command     = "scan"
+args        = ["--all"]
+policy      = "tree"
+exit        = 1
+sentinels   = ["Record 0100"]

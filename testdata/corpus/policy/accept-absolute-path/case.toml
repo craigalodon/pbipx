@@ -1,0 +1,6 @@
+description = "an accept entry with an absolute path is a policy error"
+command     = "scan"
+args        = ["--all"]
+policy      = "tree"
+exit        = 3
+sentinels   = ["Fall 2150"]

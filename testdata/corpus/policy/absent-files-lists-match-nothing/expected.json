@@ -1,0 +1,15 @@
+{
+  "findings": [
+    {
+      "path": "pbip/Example.Report/StaticResources/RegisteredResources/logo.png",
+      "context": null,
+      "column": null,
+      "tier": "error",
+      "reasons": [
+        "unvettable"
+      ]
+    }
+  ],
+  "accepted": 0,
+  "suppressed": 0
+}

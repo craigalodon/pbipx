@@ -1,0 +1,6 @@
+description = "plants no value: an allowlisted image under a protected root is skipped, not unvettable"
+command     = "scan"
+args        = ["--all"]
+policy      = "tree"
+exit        = 0
+sentinels   = []

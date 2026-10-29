@@ -1,0 +1,16 @@
+version = 1
+protected_roots = ["pbip"]
+
+[scan]
+report = ["pbip/**/*.json"]
+
+[columns]
+block = ["full_name"]
+warn  = ["cohort_year", "section_number"]
+
+[[accept]]
+column      = "enrollment.cohort_year"
+path        = "pbip/Example.Report/definition"
+note        = "a persisted selection, reviewed and intended"
+reviewed_by = "a reviewer"
+expires     = "2199-12-31"

@@ -1,0 +1,6 @@
+description = "an accept entry accepts a warning whose only reason is its warn column, under its path"
+command     = "scan"
+args        = ["--all", "--strict"]
+policy      = "tree"
+exit        = 0
+sentinels   = ["Fall 2150"]

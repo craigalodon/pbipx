@@ -1,0 +1,6 @@
+description = "plants no value: with no [files] lists, an image under a protected root is unvettable"
+command     = "scan"
+args        = ["--all"]
+policy      = "tree"
+exit        = 3
+sentinels   = []

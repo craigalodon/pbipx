@@ -1,0 +1,6 @@
+description = "an accept entry does not accept a warning on another warn column"
+command     = "scan"
+args        = ["--all", "--strict"]
+policy      = "tree"
+exit        = 2
+sentinels   = ["Section 0100"]
