@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/craigalodon/pbipx/internal/finding"
 	"github.com/craigalodon/pbipx/internal/secret"
@@ -50,19 +51,48 @@ func ProseLine(line string, allow []string, sw Switches) []finding.Reason {
 // it cannot join into a new match, and un-doubles apostrophes. Removal runs
 // before and after un-doubling, so an allowlisted name matches whether the
 // line quotes it SQL-style or not. Longer literals go first, so one that
-// contains another is removed whole.
+// contains another is removed whole. A literal is removed only where it is
+// word-bounded, with no letter or digit next to it on either side, so an
+// allowed word cannot cut down a name it starts ("All" in "Allen, Jane").
 func clean(line string, allow []string) string {
 	sorted := slices.Clone(allow)
 	slices.SortStableFunc(sorted, func(a, b string) int { return cmp.Compare(len(b), len(a)) })
 	remove := func(s string) string {
 		for _, a := range sorted {
 			if a != "" {
-				s = strings.ReplaceAll(s, a, " ")
+				s = removeBounded(s, a)
 			}
 		}
 		return s
 	}
 	return remove(strings.ReplaceAll(remove(line), "''", "'"))
+}
+
+// removeBounded replaces each occurrence of lit in s with a space where
+// neither the rune before it nor the rune after it is a word rune.
+func removeBounded(s, lit string) string {
+	var b strings.Builder
+	start := 0 // s[:start] is written to b
+	from := 0  // where the next search begins
+	for {
+		i := strings.Index(s[from:], lit)
+		if i < 0 {
+			b.WriteString(s[start:])
+			return b.String()
+		}
+		i += from
+		end := i + len(lit)
+		before, _ := utf8.DecodeLastRuneInString(s[:i])
+		after, _ := utf8.DecodeRuneInString(s[end:])
+		if (i == 0 || !wordRune(before)) && (end == len(s) || !wordRune(after)) {
+			b.WriteString(s[start:i])
+			b.WriteString(" ")
+			start, from = end, end
+			continue
+		}
+		_, size := utf8.DecodeRuneInString(s[i:])
+		from = i + size
+	}
 }
 
 // nameStandsAlone reports whether the line, after its lead markers, or any

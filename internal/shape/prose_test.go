@@ -101,6 +101,9 @@ func TestProseLine(t *testing.T) {
 		{"an empty allow entry is ignored", "- Doe, Jane", []string{""}, name},
 		{"allow matches exactly, case included", "- Example, Pat", []string{"example, pat"}, name},
 		{"the longer allow entry goes first", "- Example, Pat Doe", []string{"Example, Pat", "Example, Pat Doe"}, nil},
+		{"an allowed word does not cut a name it starts", "- Allen, Jane", []string{"All"}, name},
+		{"an allowed word does not cut a name it ends", "- Roe, Janet", []string{"et"}, name},
+		{"an allowed name between punctuation is removed", "- (Example, Pat).", []string{"Example, Pat"}, nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.why, func(t *testing.T) {
@@ -198,4 +201,24 @@ func TestProse(t *testing.T) {
 			t.Errorf("got %d hits, want none", len(got))
 		}
 	})
+}
+
+func TestCleanIsWordBounded(t *testing.T) {
+	tests := []struct {
+		line  string
+		allow []string
+		want  string
+	}{
+		{"The slicer saves (none selected) as its value.", []string{"(none selected)"}, "The slicer saves   as its value."},
+		{"(none selected)", []string{"(none selected)"}, " "},
+		{"Allen, Jane", []string{"All"}, "Allen, Jane"},
+		{"All, Allen, All", []string{"All"}, " , Allen,  "},
+		{"Roe, Janet", []string{"et"}, "Roe, Janet"},
+		{"x9(none selected)", []string{"(none selected)"}, "x9(none selected)"},
+	}
+	for _, tt := range tests {
+		if got := clean(tt.line, tt.allow); got != tt.want {
+			t.Errorf("clean(%q) = %q, want %q", tt.line, got, tt.want)
+		}
+	}
 }
