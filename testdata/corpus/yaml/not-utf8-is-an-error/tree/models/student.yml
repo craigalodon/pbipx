@@ -1,0 +1,7 @@
+version: 2
+
+models:
+  - name: student
+    meta:
+      full_name: Roe, Richard
+      note: café

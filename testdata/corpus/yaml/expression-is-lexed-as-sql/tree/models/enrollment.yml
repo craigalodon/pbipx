@@ -1,0 +1,7 @@
+version: 2
+
+models:
+  - name: enrollment
+    data_tests:
+      - dbt_utils.expression_is_true:
+          expression: "student_id <> 7041293"

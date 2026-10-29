@@ -1,0 +1,4 @@
+version: 2
+
+models:
+  - name: student # steward jane.doe@example.com

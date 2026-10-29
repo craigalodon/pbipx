@@ -1,0 +1,10 @@
+unit_tests:
+  - name: test_student_display
+    model: student_display
+    given:
+      - input: ref('student')
+        rows:
+          - {student_id: 7041293, full_name: "Doe, Jane"}
+    expect:
+      rows:
+        - {student_id: 7041293}

@@ -1,0 +1,9 @@
+version: 2
+
+models:
+  - name: student
+    meta:
+      full_name: null
+      first_name: ~
+      email: false
+      last_name: ""

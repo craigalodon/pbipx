@@ -1,0 +1,15 @@
+{
+  "findings": [
+    {
+      "path": "models/student.yml",
+      "context": "yaml-comment",
+      "column": null,
+      "tier": "block",
+      "reasons": [
+        "email-shape"
+      ]
+    }
+  ],
+  "accepted": 0,
+  "suppressed": 0
+}

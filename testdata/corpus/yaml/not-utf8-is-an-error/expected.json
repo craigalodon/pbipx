@@ -1,0 +1,15 @@
+{
+  "findings": [
+    {
+      "path": "models/student.yml",
+      "context": null,
+      "column": null,
+      "tier": "error",
+      "reasons": [
+        "not-utf8"
+      ]
+    }
+  ],
+  "accepted": 0,
+  "suppressed": 0
+}

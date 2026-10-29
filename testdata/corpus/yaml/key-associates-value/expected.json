@@ -1,0 +1,15 @@
+{
+  "findings": [
+    {
+      "path": "models/student.yml",
+      "context": "yaml",
+      "column": "full_name",
+      "tier": "block",
+      "reasons": [
+        "block-column"
+      ]
+    }
+  ],
+  "accepted": 0,
+  "suppressed": 0
+}

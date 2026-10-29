@@ -1,0 +1,9 @@
+version: 2
+
+models:
+  - name: student
+    columns:
+      - name: full_name
+        data_tests:
+          - accepted_values:
+              values: ["Example, Pat"

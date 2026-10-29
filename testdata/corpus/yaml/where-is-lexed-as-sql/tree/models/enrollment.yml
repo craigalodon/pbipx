@@ -1,0 +1,10 @@
+version: 2
+
+models:
+  - name: enrollment
+    columns:
+      - name: section_number
+        data_tests:
+          - not_null:
+              config:
+                where: "first_name = 'Richard'"

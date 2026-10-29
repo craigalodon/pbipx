@@ -1,0 +1,6 @@
+description = "nulls, booleans and empty strings are not judged, even under block-column keys; must stay clean; plants no value"
+command     = "scan"
+args        = ["--all"]
+policy      = "default"
+exit        = 0
+sentinels   = []

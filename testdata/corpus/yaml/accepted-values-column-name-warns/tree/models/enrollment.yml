@@ -1,0 +1,8 @@
+version: 2
+
+models:
+  - name: enrollment
+    data_tests:
+      - accepted_values:
+          column_name: cohort_year
+          values: [2101, 2102]

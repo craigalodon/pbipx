@@ -1,0 +1,7 @@
+version: 2
+
+models:
+  - name: student
+    meta:
+      reviewers:
+        jane.doe@example.com: approved

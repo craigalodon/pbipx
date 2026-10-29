@@ -1,0 +1,6 @@
+description = "every document of a multi-document file is scanned, not only the first"
+command     = "scan"
+args        = ["--all"]
+policy      = "default"
+exit        = 1
+sentinels   = ["Richard"]
