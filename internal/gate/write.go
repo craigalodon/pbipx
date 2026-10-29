@@ -17,8 +17,8 @@ func (s *setup) write(p string) Decision {
 	if p == "" {
 		return allow()
 	}
-	if rel, ok := s.namesAgentSettings(p); ok {
-		return deny(ReasonAgentSettings, "%s is a Claude Code settings file; %s", rel, agentSettingsWhy)
+	if rel, ok := s.namesAgentSettings(expandHome(p, s.home)); ok {
+		return deny(ReasonAgentSettings, "%s is a Claude Code settings file; %s", displayPath(rel), agentSettingsWhy)
 	}
 	return allow()
 }
