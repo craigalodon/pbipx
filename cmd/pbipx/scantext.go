@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/craigalodon/pbipx/internal/finding"
+	"github.com/craigalodon/pbipx/internal/policy"
 	"github.com/craigalodon/pbipx/internal/scan"
 	"github.com/craigalodon/pbipx/internal/source"
 )
@@ -19,17 +21,24 @@ const stdinPath = "-"
 type scanTextFlags struct {
 	out       outputFlags
 	commitMsg bool
+	commits   string
 	policy    string
 }
+
+// commitPathLen is how much of a commit's object name a finding's path
+// shows: "commit <12 hex digits>".
+const commitPathLen = 12
 
 func newScanTextCmd() *cobra.Command {
 	var f scanTextFlags
 	cmd := &cobra.Command{
-		Use:   "scan-text [files... | -]",
+		Use:   "scan-text [files... | - | --commits <range>]",
 		Short: "scan prose (notes, a commit message) for personal data",
 		Long: `Scan prose for personal data, line by line: a name standing alone, an
 email, an SSN or a phone number. "-" reads standard input. Every path given is
-scanned, whatever the policy's prose scope says.
+scanned, whatever the policy's prose scope says. --commits scans the message
+of every commit in a range (base..head), as --commit-msg would, each reported
+as "commit <id>".
 
 Exit codes: 0 clean, 1 a finding, 3 an error or a failure, 4 a usage error.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -37,14 +46,19 @@ Exit codes: 0 clean, 1 a finding, 3 an error or a failure, 4 a usage error.`,
 		},
 	}
 	cmd.Flags().BoolVar(&f.commitMsg, "commit-msg", false, "scan a commit message: every line, comment lines included, up to git's scissors line")
+	cmd.Flags().StringVar(&f.commits, "commits", "", "scan the message of every commit in a git range, such as origin/main..HEAD")
 	cmd.Flags().StringVar(&f.policy, "policy", "", "the policy file (default: .pbipx.toml at the repository root)")
 	f.out.register(cmd, true)
 	return cmd
 }
 
 func runScanText(cmd *cobra.Command, args []string, f *scanTextFlags) error {
-	if len(args) == 0 {
-		return usageError{"scan-text needs a file, or - for standard input"}
+	commits := cmd.Flags().Changed("commits")
+	switch {
+	case commits && len(args) > 0:
+		return usageError{"scan-text takes files or --commits, not both"}
+	case !commits && len(args) == 0:
+		return usageError{"scan-text needs a file, - for standard input, or --commits"}
 	}
 	if err := f.out.check(cmd.OutOrStdout()); err != nil {
 		return err
@@ -59,7 +73,7 @@ func runScanText(cmd *cobra.Command, args []string, f *scanTextFlags) error {
 	// be scanned outside one.
 	repo, err := source.Open(cwd)
 	if err != nil {
-		if f.policy == "" {
+		if f.policy == "" || commits {
 			return repoError(cmd, format, err)
 		}
 		repo = nil
@@ -67,6 +81,10 @@ func runScanText(cmd *cobra.Command, args []string, f *scanTextFlags) error {
 	p, err := loadPolicy(cmd, format, cwd, repo, f.policy)
 	if err != nil {
 		return err
+	}
+
+	if commits {
+		return scanCommits(cmd, repo, p, f)
 	}
 
 	scanner := scan.Prose
@@ -93,6 +111,29 @@ func runScanText(cmd *cobra.Command, args []string, f *scanTextFlags) error {
 			continue
 		}
 		findings = append(findings, scan.File(path, data, scanner, p)...)
+	}
+	res := scan.Accept(findings, scan.Options{Policy: p, Now: now()})
+	if err := f.out.writeResult(cmd.OutOrStdout(), res, false); err != nil {
+		return operational(cmd, "writing the result failed")
+	}
+	return exitWith(res.ExitCode(false))
+}
+
+// scanCommits scans the message of every commit in the range --commits
+// names, each as --commit-msg scans one: every line, up to git's scissors
+// line. A range git cannot list is a usage error that does not echo it.
+func scanCommits(cmd *cobra.Command, repo *source.Repo, p *policy.Policy, f *scanTextFlags) error {
+	list, err := repo.CommitMessages(f.commits)
+	switch {
+	case errors.Is(err, source.ErrBadRange):
+		return usageError{"--commits does not name a range of commits"}
+	case err != nil:
+		return operational(cmd, gitDetail(err))
+	}
+	scanner := scan.CommitMessage(repo.CommentChar())
+	var findings []finding.Finding
+	for _, c := range list {
+		findings = append(findings, scan.File("commit "+c.ID[:commitPathLen], c.Message, scanner, p)...)
 	}
 	res := scan.Accept(findings, scan.Options{Policy: p, Now: now()})
 	if err := f.out.writeResult(cmd.OutOrStdout(), res, false); err != nil {

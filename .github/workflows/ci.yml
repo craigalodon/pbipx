@@ -56,6 +56,25 @@ jobs:
       - run: go vet ./...
       - run: go test -race ./...
 
+  # Every commit message a pull request adds, scanned as the commit-msg hook
+  # would. The repository has no policy of its own; the corpus's generic one
+  # supplies the shape switches and allowlist prose scanning needs.
+  commit-messages:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: go build -o "$RUNNER_TEMP/pbipx" ./cmd/pbipx
+      - run: '"$RUNNER_TEMP/pbipx" scan-text --policy testdata/corpus/policies/default.toml --commits "origin/${BASE_REF}..HEAD"'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+
   vulncheck:
     runs-on: ubuntu-latest
     steps:
