@@ -1,11 +1,12 @@
-// Package tmdl parses a model's TMDL files into a tree of declarations.
+// Package tmdl parses a model's TMDL files into a tree of declarations, and
+// scans them for persisted values (Scan, in scan.go).
 //
 // The parser follows docs/design/behavior.md ("Models (TMDL)", "Parsing").
 // It places every line by its tab indentation and fails closed: a line it
 // cannot place is an error. Errors are *judge.ParseError values that name a
 // line and a structure, never source text (principle 2). The parser judges
-// nothing; it only gives the scanner the declarations, their properties and
-// their expression bodies.
+// nothing; it only gives Scan the declarations, their properties and their
+// expression bodies.
 package tmdl
 
 import (
