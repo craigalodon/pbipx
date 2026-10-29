@@ -1,0 +1,15 @@
+{
+  "findings": [
+    {
+      "path": "sql/cohort_counts.sql",
+      "context": "sql",
+      "column": "cohort_year",
+      "tier": "warn",
+      "reasons": [
+        "warn-column"
+      ]
+    }
+  ],
+  "accepted": 0,
+  "suppressed": 0
+}

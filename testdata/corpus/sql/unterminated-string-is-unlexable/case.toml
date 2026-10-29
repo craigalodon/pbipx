@@ -1,0 +1,6 @@
+description = "an unterminated string is a lex error: an error finding with no value, exit 3"
+command     = "scan"
+args        = ["--all"]
+policy      = "default"
+exit        = 3
+sentinels   = ["Doe, Jane"]

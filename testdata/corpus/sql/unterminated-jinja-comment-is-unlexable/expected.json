@@ -1,0 +1,15 @@
+{
+  "findings": [
+    {
+      "path": "sql/student_ids.sql",
+      "context": null,
+      "column": null,
+      "tier": "error",
+      "reasons": [
+        "unlexable-sql"
+      ]
+    }
+  ],
+  "accepted": 0,
+  "suppressed": 0
+}

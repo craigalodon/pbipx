@@ -1,0 +1,16 @@
+{
+  "findings": [
+    {
+      "path": "sql/student_lookup.sql",
+      "context": "sql",
+      "column": "email",
+      "tier": "block",
+      "reasons": [
+        "block-column",
+        "email-shape"
+      ]
+    }
+  ],
+  "accepted": 0,
+  "suppressed": 0
+}
