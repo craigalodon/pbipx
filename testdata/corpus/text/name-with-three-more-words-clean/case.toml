@@ -1,0 +1,6 @@
+description = "must stay clean: a table cell with Word, Word and three more words is a heading or phrase, not a name; the field allows at most two more words"
+command     = "scan-text"
+args        = ["notes/review.md"]
+policy      = "default"
+exit        = 0
+sentinels   = ["Totals, Region North South East"]

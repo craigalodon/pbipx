@@ -1,0 +1,6 @@
+description = "a name filling a whole tab-separated field of a pasted row blocks, though the line does not start with it"
+command     = "scan-text"
+args        = ["notes/review.md"]
+policy      = "default"
+exit        = 1
+sentinels   = ["Roe, Richard"]
