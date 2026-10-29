@@ -139,8 +139,8 @@ that implementation. pbipx starts its deny reason with `pbipx: <class>:`,
 and the first line of stderr, which carries it, is authoritative: Claude
 Code reads stderr, not stdout, from a hook that exits 2.
 
-For `explain`, the result is the structure as JSON. Its schema is settled
-with the first `explain` cases (phase 3).
+For `explain`, the result is the structure as JSON, in the schema of
+[explain.md](explain.md).
 
 A value never appears in `expected.json`. The tool never prints one, so a
 normalized result has nowhere to put it.
