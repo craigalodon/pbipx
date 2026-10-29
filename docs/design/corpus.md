@@ -247,3 +247,48 @@ operational refusal); refusal of a block or an unknown fingerprint exits 4.
 
 An expiry is metadata, not a planted value. A case that needs an expired
 entry uses a past year; the years 2100 to 2199 are for values.
+
+## pbipx's runner
+
+pbipx's runner is in [internal/corpus](../../internal/corpus).
+`TestCorpusValid` holds every case to this format in every `go test ./...`.
+`TestCorpus` runs each case as a subtest named `<area>/<case>`, for the
+areas listed in `enabledAreas` in its test file or in `PBIPX_CORPUS_AREAS`
+(`pbir,text`, or `all`). It skips without git on `PATH`.
+
+How it does each step, where this format leaves the choice open:
+
+- The commit's author and committer are `Corpus Runner
+  <corpus-runner@example.com>`, at 2100-01-01T00:00:00Z, on branch `main`.
+  Every `GIT_` variable of the caller is removed, and user and system git
+  configuration are turned off, for setup and for the command. A file the
+  tree's own `.gitignore` ignores is not committed; a `staged` path is
+  staged even if ignored.
+- Every command but the gate gets `--format json` appended to its `args`,
+  except a case with `exit = 4`. A case does not set `--format` itself.
+- `--format json` prints the `expected.json` shape, and may add fields (a
+  finding's `locator` and `fingerprint`, for instance). The runner compares
+  only what `expected.json` can say: the failure, or the findings as a
+  multiset with `accepted` and `suppressed`. An expected finding's locator
+  is compared, as JSON, only when it has one. For `explain`, every key of
+  the expected object is compared, recursively.
+- The gate's exit code is the decision: 0 is an allow, 2 a deny. The class
+  of a deny is read from `permissionDecisionReason` in the hook JSON on
+  stdout, which pbipx starts with `pbipx: <class>:`. With nothing on stdout,
+  it is read from the first line of stderr, which starts the same way.
+- A sentinel counts as present in output as written, or as the body of a
+  JSON string that encodes it.
+
+The validator adds rules this format implies:
+
+- An empty `sentinels` needs a description that says, in one clause, that
+  the case plants no value ("plants no value", "nothing is planted", "no
+  values").
+- A sentinel appears in `tree/`, `stdin` or `args`, and never in
+  `description` or `expected.json`.
+- Report JSON (a `.json` or `.pbir` file below a `*.Report` directory)
+  parses, unless the case expects an error for it.
+- Exit codes agree with the result: a failure or an error finding exits 3;
+  a block finding, with no error finding, exits 1; an allow exits 0 and a
+  deny 2.
+- Each finding's path names a path in `tree/`, or `.pbipx.toml`.

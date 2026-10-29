@@ -1,0 +1,7 @@
+description = "an unknown flag is a usage error; the case plants no value"
+command     = "scan-text"
+args        = ["--no-such-flag", "-"]
+policy      = "minimal"
+exit        = 4
+sentinels   = []
+git         = false

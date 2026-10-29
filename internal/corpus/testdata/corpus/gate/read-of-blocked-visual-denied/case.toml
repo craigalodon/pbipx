@@ -1,0 +1,6 @@
+description = "a Read of a visual with a block finding is denied"
+command     = "gate"
+args        = []
+policy      = "minimal"
+exit        = 2
+sentinels   = ["Doe, Jane"]

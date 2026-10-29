@@ -1,0 +1,4 @@
+# A placeholder policy for the corpus package's own tests. The validator only
+# checks that it exists; nothing here is run.
+version = 1
+protected_roots = ["pbip"]
