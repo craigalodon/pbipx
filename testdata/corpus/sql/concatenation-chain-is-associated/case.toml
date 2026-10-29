@@ -1,0 +1,6 @@
+description = "a literal compared with a || chain of columns is tied to a block column anywhere in the chain"
+command     = "scan"
+args        = ["--all"]
+policy      = "default"
+exit        = 1
+sentinels   = ["Roe Jr"]

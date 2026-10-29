@@ -1,0 +1,6 @@
+description = "a comment is lexed as SQL, so a commented-out comparison still ties its literal to its column"
+command     = "scan"
+args        = ["--all"]
+policy      = "default"
+exit        = 1
+sentinels   = ["Jane"]

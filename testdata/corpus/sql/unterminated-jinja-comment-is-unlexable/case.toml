@@ -1,0 +1,6 @@
+description = "an unterminated Jinja comment is a lex error, exit 3"
+command     = "scan"
+args        = ["--all"]
+policy      = "default"
+exit        = 3
+sentinels   = ["Example, Pat"]

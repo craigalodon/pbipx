@@ -1,0 +1,15 @@
+{
+  "findings": [
+    {
+      "path": "models/enrollment.yml",
+      "context": "yaml-sql",
+      "column": "student_id",
+      "tier": "block",
+      "reasons": [
+        "block-column"
+      ]
+    }
+  ],
+  "accepted": 0,
+  "suppressed": 0
+}

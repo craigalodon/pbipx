@@ -1,0 +1,6 @@
+version: 2
+
+models:
+  - name: student
+    meta:
+      full_name: Jane Doe

@@ -1,0 +1,11 @@
+version: 2
+
+models:
+  - name: student
+---
+version: 2
+
+models:
+  - name: enrollment
+    meta:
+      first_name: Richard

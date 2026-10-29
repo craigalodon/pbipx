@@ -1,0 +1,6 @@
+description = "accepted_values items are tied to the column named by column_name; integers are numbers, so they warn on a warn column and exit 0"
+command     = "scan"
+args        = ["--all"]
+policy      = "default"
+exit        = 0
+sentinels   = ["2101", "2102"]

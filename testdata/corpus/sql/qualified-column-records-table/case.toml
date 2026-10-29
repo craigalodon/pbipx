@@ -1,0 +1,6 @@
+description = "in a.b.c the last part is the column and the one before it its table, recorded as table.column"
+command     = "scan"
+args        = ["--all"]
+policy      = "default"
+exit        = 1
+sentinels   = ["Richard"]
