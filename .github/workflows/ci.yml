@@ -3,7 +3,9 @@ name: ci
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -38,9 +40,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # macOS minutes count tenfold in a private repository, so pull
-        # requests test on Linux and Windows and macOS runs once per merge.
-        os: ${{ github.event_name == 'push' && fromJSON('["ubuntu-latest", "windows-latest", "macos-latest"]') || fromJSON('["ubuntu-latest", "windows-latest"]') }}
+        # Pull requests and main test on Linux. Windows and macOS minutes
+        # cost more in a private repository, so they run for a release tag
+        # (v*) or a manual run (Actions > ci > Run workflow).
+        os: ${{ (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') && fromJSON('["ubuntu-latest", "windows-latest", "macos-latest"]') || fromJSON('["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
