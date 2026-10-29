@@ -38,7 +38,7 @@ private (ADR-0003).
   - [x] `baseline`, `policy`: blocks never baselined; acceptances; policy errors
   - [x] `gate`: the classification table; Read, search and shell decisions;
         every error path
-  - [ ] `explain`: structure only; non-identifier names replaced (deferred to
+  - [x] `explain`: structure only; non-identifier names replaced (written in
         phase 3, with its output schema)
 - [x] A Go corpus runner and case validator (`internal/corpus`)
 - [x] In the predecessor's repository: a normalized JSON output and a corpus
@@ -56,7 +56,7 @@ marked as known differences. None showed a predecessor bug.
 - [x] Personal-data shapes and the block/warn verdict
 - [x] Report (PBIR) scanning
 - [x] Prose scanning: `scan-text`, commit-message use
-- [ ] `scan-text --commits <range>`, for CI over a pull request's messages
+- [x] `scan-text --commits <range>`, for CI over a pull request's messages
 - [x] Baseline: fingerprints of location, column and reasons; never values
 - [x] `scan --staged | --all | <paths>`, `--strict`, redacted output,
       `--show-values` refused off an interactive terminal and under
@@ -66,10 +66,10 @@ marked as known differences. None showed a predecessor bug.
 
 ## Phase 3: models and code
 
-- [ ] TMDL parser; DAX, M and embedded SQL lexing; association rules
-- [ ] "Enter data" decoding (deflate and base64); an undecodable value is an error
-- [ ] SQL and YAML scanning
-- [ ] `explain` for reports, models and SQL
+- [x] TMDL parser; DAX, M and embedded SQL lexing; association rules
+- [x] "Enter data" decoding (deflate and base64); an undecodable value is an error
+- [x] SQL and YAML scanning
+- [x] `explain` for reports, models and SQL
 
 **Exit:** the `tmdl`, `sql`, `yaml` and `explain` areas pass.
 
