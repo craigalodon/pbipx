@@ -1,0 +1,24 @@
+{
+  "findings": [
+    {
+      "path": "pbip/School.SemanticModel/definition/tables/selected_students.tmdl",
+      "context": "tmdl-dax",
+      "column": "selected_students.first_name",
+      "tier": "block",
+      "reasons": [
+        "block-column"
+      ]
+    },
+    {
+      "path": "pbip/School.SemanticModel/definition/tables/selected_students.tmdl",
+      "context": "tmdl-dax",
+      "column": "selected_students.first_name",
+      "tier": "block",
+      "reasons": [
+        "block-column"
+      ]
+    }
+  ],
+  "accepted": 0,
+  "suppressed": 0
+}

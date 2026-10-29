@@ -1,0 +1,15 @@
+{
+  "findings": [
+    {
+      "path": "sql/enrollment_summary.sql",
+      "context": "sql",
+      "column": null,
+      "tier": "block",
+      "reasons": [
+        "email-shape"
+      ]
+    }
+  ],
+  "accepted": 0,
+  "suppressed": 0
+}

@@ -1,0 +1,6 @@
+description = "must stay clean: a literal equal to an allowlist entry is not judged, even on a block column"
+command     = "scan"
+args        = ["--all"]
+policy      = "default"
+exit        = 0
+sentinels   = ["(none selected)"]

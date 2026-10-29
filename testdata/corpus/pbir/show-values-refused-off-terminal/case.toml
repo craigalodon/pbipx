@@ -1,0 +1,6 @@
+description = "--show-values is a usage error when stdout is not a terminal"
+command     = "scan"
+args        = ["--all", "--show-values"]
+policy      = "default"
+exit        = 4
+sentinels   = ["Doe, Jane"]

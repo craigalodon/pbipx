@@ -1,0 +1,6 @@
+description = "Grep of a directory that neither is, holds nor sits in a root allows without a scan"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = ["Doe, Jane"]

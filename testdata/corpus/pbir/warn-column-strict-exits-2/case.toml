@@ -1,0 +1,6 @@
+description = "a slicer selection on a warn column fails under --strict"
+command     = "scan"
+args        = ["--all", "--strict"]
+policy      = "default"
+exit        = 2
+sentinels   = ["SEC-07"]

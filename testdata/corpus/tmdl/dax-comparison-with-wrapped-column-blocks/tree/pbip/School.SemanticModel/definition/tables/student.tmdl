@@ -1,0 +1,4 @@
+table student
+
+	measure 'Selected Rows' = CALCULATE(COUNTROWS(student), LOWER(student[email_address]) = "jane.doe")
+		formatString: 0

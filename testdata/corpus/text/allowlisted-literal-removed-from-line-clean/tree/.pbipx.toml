@@ -1,0 +1,67 @@
+# The corpus default policy, with one more allowlisted literal. Format:
+# ADR-0004.
+#
+# The tree layout it assumes:
+#
+#   pbip/<Name>.Report/...         reports (PBIR)
+#   pbip/<Name>.SemanticModel/...  models (TMDL)
+#   sql/...                        SQL
+#   models/...                     YAML
+#   notes/...                      prose
+
+version = 1
+
+protected_roots = ["pbip"]
+
+# What each scanner reads. Globs are matched against repository-relative
+# paths with forward slashes: `*` within one segment, `**` across segments.
+[scan]
+report  = ["pbip/**/*.json", "pbip/**/*.pbir", "pbip/**/*.pbism", "pbip/**/*.pbip", "pbip/**/.platform"]
+model   = ["pbip/**/*.tmdl"]
+sql     = ["sql/**/*.sql", "pbip/**/*.sql"]
+yaml    = ["models/**/*.yml", "models/**/*.yaml"]
+prose   = ["notes/**/*.md"]
+exclude = ["**/.pbi/**"]
+
+[files]
+# Power BI Desktop's UI state: never read, skipped by tree scans.
+local_state = ["**/.pbi/localSettings.json", "**/.pbi/editorSettings.json"]
+# Opaque files allowed unscanned under a protected root.
+unscanned_allow = [
+  "pbip/**/StaticResources/**/*.png",
+  "pbip/**/StaticResources/**/*.jpg",
+  "pbip/**/StaticResources/**/*.jpeg",
+  "pbip/**/StaticResources/**/*.gif",
+]
+
+[columns]
+# Direct identifiers. Matched against the bare column name, lowercased.
+block = [
+  "full_name", "first_name", "last_name", "preferred_name",
+  "email", "email_address", "phone", "phone_number",
+  "student_id", "person_id", "employee_id",
+  "date_of_birth", "birth_date", "street_address",
+]
+# A regular expression (RE2) over the lowercased bare name.
+block_pattern = "(^|_)(email|phone|ssn)(_|$)"
+# Quasi-identifiers.
+warn = ["cohort_year", "graduation_year", "section_number", "birth_year", "postal_code"]
+
+[shapes]
+person_name = true
+email       = true
+ssn         = true
+date        = true
+phone       = true
+
+[values]
+# Literals never judged. The sentinel a single-select slicer saves.
+allow = ["(none selected)", "Example, Pat"]
+
+# Lasting acceptances of warnings go here (ADR-0004), for example:
+#
+# [[accept]]
+# column      = "enrollment.cohort_year"
+# path        = "pbip/Example.Report/definition"
+# note        = "why this persisted selection is intended"
+# reviewed_by = "a reviewer"

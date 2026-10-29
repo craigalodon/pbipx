@@ -10,4 +10,5 @@ note on the old one, never by silently editing it.
 | [0001](0001-go-and-a-single-binary.md) | Go, shipped as one binary | Accepted |
 | [0002](0002-built-for-public-from-the-first-commit.md) | Built for public from the first commit | Accepted |
 | [0003](0003-parity-through-a-language-neutral-corpus.md) | Parity through a language-neutral corpus | Accepted |
-| [0004](0004-the-policy-file.md) | The policy file | Proposed |
+| [0004](0004-the-policy-file.md) | The policy file | Accepted |
+| [0005](0005-cobra-for-the-command-line.md) | Cobra for the command line | Accepted |

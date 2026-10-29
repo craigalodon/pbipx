@@ -1,0 +1,6 @@
+description = "Read of a directory under a root allows, even when a file inside it leaks"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = ["Doe, Jane"]

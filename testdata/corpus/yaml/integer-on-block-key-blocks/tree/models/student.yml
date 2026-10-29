@@ -1,0 +1,6 @@
+version: 2
+
+models:
+  - name: student
+    meta:
+      student_id: 7041293

@@ -1,0 +1,15 @@
+{
+  "findings": [
+    {
+      "path": "pbip/Example.Report/definition/pages/0000/visuals/0001/visual.json",
+      "context": "slicer-selection",
+      "column": "enrollment.cohort_year",
+      "tier": "warn",
+      "reasons": [
+        "warn-column"
+      ]
+    }
+  ],
+  "accepted": 0,
+  "suppressed": 0
+}

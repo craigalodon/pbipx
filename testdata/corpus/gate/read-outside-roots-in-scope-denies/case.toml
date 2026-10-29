@@ -1,0 +1,6 @@
+description = "Read of a file outside the roots but in scan scope is scanned: a note with a name on its own line denies"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]

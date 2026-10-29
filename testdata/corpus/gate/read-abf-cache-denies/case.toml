@@ -1,0 +1,6 @@
+description = "Read of a data cache in a .pbi folder denies: excluded from scan scope, not local state, so unvettable. Plants no value"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []

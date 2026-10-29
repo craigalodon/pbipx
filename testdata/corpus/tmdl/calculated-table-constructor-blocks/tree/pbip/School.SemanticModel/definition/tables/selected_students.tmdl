@@ -1,0 +1,10 @@
+table selected_students
+
+	column first_name
+		dataType: string
+		summarizeBy: none
+		sourceColumn: [Value]
+
+	partition selected_students = calculated
+		mode: import
+		source = {"Jane", "Richard"}

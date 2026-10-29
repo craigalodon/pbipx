@@ -1,0 +1,6 @@
+description = "grep -r over . touches the root without naming it, so the tree is scanned and the leak denies"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]

@@ -1,0 +1,6 @@
+description = "Grep with no path searches the working directory, the repository root, so a leak denies"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]

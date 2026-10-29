@@ -1,0 +1,6 @@
+description = "an SSN-shaped number in the middle of a sentence on standard input blocks"
+command     = "scan-text"
+args        = ["-"]
+policy      = "default"
+exit        = 1
+sentinels   = ["900-12-3456"]

@@ -1,0 +1,15 @@
+{
+  "findings": [
+    {
+      "path": "sql/enrollment_by_name.sql",
+      "context": "sql",
+      "column": "first_name",
+      "tier": "block",
+      "reasons": [
+        "block-column"
+      ]
+    }
+  ],
+  "accepted": 0,
+  "suppressed": 0
+}

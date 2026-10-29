@@ -1,0 +1,6 @@
+description = "Grep at a protected root denies while a file under it leaks"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]

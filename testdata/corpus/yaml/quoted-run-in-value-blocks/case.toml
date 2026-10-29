@@ -1,0 +1,6 @@
+description = "a quoted run inside a value is judged for the name shape though the value does not start with it"
+command     = "scan"
+args        = ["--all"]
+policy      = "default"
+exit        = 1
+sentinels   = ["Doe, Jane"]

@@ -1,0 +1,13 @@
+description = "recording an acceptance is refused when CI is set"
+command     = "baseline"
+args        = ["record", "{fingerprint}", "--note", "a reviewed persisted selection"]
+policy      = "default"
+exit        = 3
+sentinels   = ["Fall 2150"]
+env         = { CI = "true" }
+
+[fingerprint]
+path     = "pbip/Example.Report/definition/pages/0000/visuals/0001/visual.json"
+context  = "slicer-selection"
+column   = "enrollment.cohort_year"
+reasons  = ["warn-column"]

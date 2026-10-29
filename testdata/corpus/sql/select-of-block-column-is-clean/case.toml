@@ -1,0 +1,6 @@
+description = "selecting block columns does not tie the query's other strings to them: an unrelated select-list string and a filter on an unlisted column stay clean"
+command     = "scan"
+args        = ["--all"]
+policy      = "default"
+exit        = 0
+sentinels   = ["Contoso", "Withdrawn"]

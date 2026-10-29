@@ -1,0 +1,24 @@
+{
+  "findings": [
+    {
+      "path": "models/student.yml",
+      "context": "yaml",
+      "column": "preferred_name",
+      "tier": "block",
+      "reasons": [
+        "block-column"
+      ]
+    },
+    {
+      "path": "models/student.yml",
+      "context": "yaml",
+      "column": "preferred_name",
+      "tier": "block",
+      "reasons": [
+        "block-column"
+      ]
+    }
+  ],
+  "accepted": 0,
+  "suppressed": 0
+}

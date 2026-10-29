@@ -1,0 +1,6 @@
+description = "must stay clean: an allowlisted literal is removed from the line before checking, so the bullet line holding it and one more word is not a name"
+command     = "scan-text"
+args        = ["notes/review.md"]
+policy      = "tree"
+exit        = 0
+sentinels   = ["Example, Pat"]

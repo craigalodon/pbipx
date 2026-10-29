@@ -1,0 +1,21 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.go]
+indent_style = tab
+
+[*.{yml,yaml,toml,md}]
+indent_style = space
+indent_size = 2
+
+# PBIR fixtures keep Power BI Desktop's serialization (CONTRIBUTING.md).
+[testdata/corpus/*/*/tree/**]
+insert_final_newline = unset
+trim_trailing_whitespace = unset
+indent_style = unset
+indent_size = unset

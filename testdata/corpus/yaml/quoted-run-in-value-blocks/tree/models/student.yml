@@ -1,0 +1,5 @@
+version: 2
+
+models:
+  - name: student
+    description: The test row "Doe, Jane" is excluded downstream.

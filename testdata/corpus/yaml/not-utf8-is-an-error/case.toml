@@ -1,0 +1,6 @@
+description = "a YAML file that is not UTF-8 is a not-utf8 error finding, exit 3"
+command     = "scan"
+args        = ["--all"]
+policy      = "default"
+exit        = 3
+sentinels   = ["Roe, Richard"]

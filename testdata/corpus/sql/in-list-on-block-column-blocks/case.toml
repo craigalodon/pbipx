@@ -1,0 +1,6 @@
+description = "every item of an IN list is tied to the column before IN"
+command     = "scan"
+args        = ["--all"]
+policy      = "default"
+exit        = 1
+sentinels   = ["Doe, Jane", "Roe, Richard"]

@@ -1,0 +1,4 @@
+table student
+
+	measure 'Selected Rows' = COUNTROWS(FILTER(student, "Jane" = student[first_name]))
+		formatString: 0

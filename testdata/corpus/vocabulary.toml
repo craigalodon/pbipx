@@ -1,0 +1,100 @@
+# The closed vocabulary of the corpus (docs/design/corpus.md). Every context,
+# reason and class in an expected.json is one of these. Adding one is a
+# reviewed change to this file, with the case that needs it.
+#
+# The behavior behind each entry is in docs/design/behavior.md.
+
+version = 1
+
+# Where a finding's value was persisted. `area` is the corpus area whose cases
+# exercise it.
+[contexts]
+filter             = { area = "pbir", description = "a filter-pane entry: filterConfig.filters[] of a page or visual" }
+slicer-selection   = { area = "pbir", description = "a persisted slicer selection: visual.objects.<any>[].properties.filter.filter" }
+expansion-state    = { area = "pbir", description = "expanded matrix or decomposition-tree rows: visual.expansionStates" }
+insight-selector   = { area = "pbir", description = "an insight's scope: visual.objects.insights[].selector" }
+conditional-format = { area = "pbir", description = "a conditional-formatting rule: Conditional.Cases under visual.objects" }
+title-text         = { area = "pbir", description = "typed title or subtitle text: visual.visualContainerObjects" }
+bookmark           = { area = "pbir", description = "a bookmark's explorationState, per visual container or the rest of the state" }
+
+tmdl-dax           = { area = "tmdl", description = "a literal in a DAX expression" }
+tmdl-m             = { area = "tmdl", description = "a literal in an M expression" }
+tmdl-native-sql    = { area = "tmdl", description = "a literal in SQL embedded in an M string" }
+tmdl-enter-data    = { area = "tmdl", description = "a cell of an Enter data table" }
+tmdl-property      = { area = "tmdl", description = "a property value (kind: value)" }
+tmdl-description   = { area = "tmdl", description = "a /// description" }
+tmdl-comment       = { area = "tmdl", description = "a comment inside DAX, M or native SQL" }
+tmdl-text          = { area = "tmdl", description = "an annotation, extended property or other free-text body" }
+tmdl-role-member   = { area = "tmdl", description = "a role member identity" }
+
+sql                = { area = "sql", description = "a literal in a SQL file" }
+sql-comment        = { area = "sql", description = "a comment in a SQL file" }
+
+yaml               = { area = "yaml", description = "a scalar value in a YAML file" }
+yaml-key           = { area = "yaml", description = "a mapping key in a YAML file" }
+yaml-comment       = { area = "yaml", description = "a comment in a YAML file" }
+yaml-sql           = { area = "yaml", description = "a literal in a SQL-valued key (where, expression)" }
+
+text               = { area = "text", description = "a line of prose: a note or a commit message" }
+
+# Why a finding fired. Finding reasons go with tier block or warn; error
+# reasons with tier error.
+[reasons]
+block-column      = { kind = "finding", description = "associated with a block column (list or pattern)" }
+warn-column       = { kind = "finding", description = "associated with a warn (quasi-identifier) column" }
+person-name-shape = { kind = "finding", description = "has the Last, First shape" }
+email-shape       = { kind = "finding", description = "contains an email address" }
+ssn-shape         = { kind = "finding", description = "contains an SSN-shaped number" }
+date-shape        = { kind = "finding", description = "contains a date (years 19xx to 21xx)" }
+phone-shape       = { kind = "finding", description = "contains a North American phone number" }
+role-member       = { kind = "finding", description = "a role member identity; always blocks" }
+
+unvettable        = { kind = "error", description = "under a protected root, and no file class covers it" }
+unreadable        = { kind = "error", description = "the file could not be read" }
+not-utf8          = { kind = "error", description = "the file is not UTF-8" }
+unparseable-json  = { kind = "error", description = "report JSON that does not parse" }
+unparseable-tmdl  = { kind = "error", description = "TMDL the parser cannot place, or an undecodable Enter data blob" }
+unlexable-sql     = { kind = "error", description = "SQL the lexer rejects" }
+unparseable-yaml  = { kind = "error", description = "YAML that does not parse" }
+
+# The order reasons are listed in, within one finding.
+[reason-order]
+order = [
+  "block-column", "warn-column", "role-member",
+  "person-name-shape", "email-shape", "ssn-shape", "date-shape", "phone-shape",
+]
+
+[tiers]
+block = "fails the scan; never accepted"
+warn  = "fails only under --strict; may be accepted"
+error = "the file was not vetted; an operational failure"
+
+# A failure before or instead of a scan result (expected.json "failure").
+[failures]
+policy-error     = "the policy is missing, invalid, or fails validation"
+baseline-error   = "the baseline is invalid"
+not-a-repository = "the command needs a git repository and is not in one"
+
+# The gate's normalized result: {"decision": "allow" | "deny", "reason": <class>}.
+[gate-reasons]
+finding          = "a block finding in the file, or in the protected tree the call could reach"
+unvettable       = "the file, or one in the protected tree, cannot be vetted"
+scan-error       = "the file, or one in the protected tree, could not be scanned"
+local-state      = "a read of Power BI Desktop local state"
+git-content      = "a git command that would print content from a protected root"
+policy-error     = "the policy failed to load"
+event-error      = "the hook event is not valid JSON or not an object"
+not-a-repository = "the working directory is not in a git repository"
+internal-error   = "any other failure"
+
+# Process exit codes, for every command but the gate.
+[exit-codes]
+0 = "clean (warnings without --strict)"
+1 = "a block finding"
+2 = "warnings under --strict; expired entries on baseline verify"
+3 = "an error finding, or a failure"
+4 = "a usage error"
+
+[gate-exit-codes]
+0 = "allow"
+2 = "deny"

@@ -1,0 +1,15 @@
+{
+  "findings": [
+    {
+      "path": "pbip/School.SemanticModel/definition/tables/student.tmdl",
+      "context": "tmdl-m",
+      "column": "student.email",
+      "tier": "block",
+      "reasons": [
+        "block-column"
+      ]
+    }
+  ],
+  "accepted": 0,
+  "suppressed": 0
+}

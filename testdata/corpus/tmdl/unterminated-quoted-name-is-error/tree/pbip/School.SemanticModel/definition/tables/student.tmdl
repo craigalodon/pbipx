@@ -1,0 +1,4 @@
+table student
+
+	column 'full name
+		dataType: string

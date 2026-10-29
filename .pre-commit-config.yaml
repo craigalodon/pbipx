@@ -1,0 +1,71 @@
+# Local hooks and CI run the same checks from this file. Install once per
+# clone (CONTRIBUTING.md):
+#
+#   pre-commit install
+#
+# CI skips private-terms, because the list lives only on a maintainer's
+# machine (ADR-0002).
+default_install_hook_types: [pre-commit, commit-msg]
+default_stages: [pre-commit]
+minimum_pre_commit_version: "4.0.0"
+
+# PBIR fixtures keep Power BI Desktop's serialization, with no final newline
+# and no reformatting (CONTRIBUTING.md), so no fixer may touch the corpus
+# trees, or the trees of the corpus package's own test cases. The
+# private-terms hook is not subject to this.
+exclude: ^(testdata/corpus|internal/corpus/testdata/corpus)/.*/tree/
+
+repos:
+  - repo: local
+    hooks:
+      - id: private-terms
+        name: private terms (staged paths and content)
+        entry: scripts/check-private-terms.sh --staged
+        language: script
+        pass_filenames: false
+        always_run: true
+        exclude: ^$
+      - id: private-terms-message
+        name: private terms (commit message)
+        entry: scripts/check-private-terms.sh --message
+        language: script
+        stages: [commit-msg]
+      - id: go-mod-tidy
+        name: go mod tidy
+        entry: go mod tidy -diff
+        language: golang
+        files: (^go\.(mod|sum)$|\.go$)
+        pass_filenames: false
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-added-large-files
+      - id: check-case-conflict
+      - id: check-executables-have-shebangs
+      - id: check-merge-conflict
+      - id: check-shebang-scripts-are-executable
+      - id: check-toml
+      - id: check-yaml
+      - id: detect-private-key
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: trailing-whitespace
+
+  - repo: https://github.com/golangci/golangci-lint
+    rev: v2.15.0
+    hooks:
+      - id: golangci-lint-config-verify
+      - id: golangci-lint-fmt
+      - id: golangci-lint-full
+
+  - repo: https://github.com/rvben/rumdl-pre-commit
+    rev: v0.3.2
+    hooks:
+      - id: rumdl-check
+
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.12
+    hooks:
+      - id: actionlint

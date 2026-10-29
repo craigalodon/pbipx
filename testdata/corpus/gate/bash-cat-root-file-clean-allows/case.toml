@@ -1,0 +1,6 @@
+description = "cat of a file under a root allows when the protected tree is clean. Plants no value"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = []

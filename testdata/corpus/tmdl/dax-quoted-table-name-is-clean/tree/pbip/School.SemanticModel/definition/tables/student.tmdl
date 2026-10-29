@@ -1,0 +1,4 @@
+table student
+
+	measure 'Selected Rows' = COUNTROWS('Enrollment, Current')
+		formatString: 0

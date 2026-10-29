@@ -1,0 +1,9 @@
+version: 2
+
+models:
+  - name: student
+    columns:
+      - name: preferred_name
+        data_tests:
+          - accepted_values:
+              values: [Jane, Richard]

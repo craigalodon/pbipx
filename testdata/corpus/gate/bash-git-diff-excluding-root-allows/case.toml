@@ -1,0 +1,6 @@
+description = "git diff whose pathspecs exclude every root allows; the exclude names the root, so the tree is scanned, and it is clean. Plants no value"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = []

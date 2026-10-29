@@ -1,0 +1,15 @@
+{
+  "findings": [
+    {
+      "path": "pbip/School.SemanticModel/definition/tables/enrollment.tmdl",
+      "context": "tmdl-dax",
+      "column": "enrollment.cohort_year",
+      "tier": "warn",
+      "reasons": [
+        "warn-column"
+      ]
+    }
+  ],
+  "accepted": 0,
+  "suppressed": 0
+}

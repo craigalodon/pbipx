@@ -1,0 +1,10 @@
+table student
+
+	partition student = m
+		mode: import
+		source =
+				let
+					Source = Sql.Database("contoso.example.cloud", "school"),
+					Query = Value.NativeQuery(Source, "select student_id, full_name from enrollment.student where student.full_name = 'Doe, Jane'")
+				in
+					Query

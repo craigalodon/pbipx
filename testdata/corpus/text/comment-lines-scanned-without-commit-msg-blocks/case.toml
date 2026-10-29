@@ -1,0 +1,6 @@
+description = "without --commit-msg, a line starting with # is ordinary prose and its email blocks"
+command     = "scan-text"
+args        = ["message.txt"]
+policy      = "default"
+exit        = 1
+sentinels   = ["Doe, Jane", "jane.doe@example.com"]

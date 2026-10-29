@@ -1,0 +1,8 @@
+version: 2
+
+models:
+  - name: student
+    meta: &steward
+      email: jane.doe@example.com
+  - name: enrollment
+    meta: *steward

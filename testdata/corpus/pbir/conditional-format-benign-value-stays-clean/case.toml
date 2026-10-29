@@ -1,0 +1,6 @@
+description = "a conditional-formatting rule comparing an unlisted column to a value with no shape stays clean"
+command     = "scan"
+args        = ["--all"]
+policy      = "default"
+exit        = 0
+sentinels   = ["Autumn Term"]

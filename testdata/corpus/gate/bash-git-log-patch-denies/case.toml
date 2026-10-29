@@ -1,0 +1,6 @@
+description = "git log -p prints content, so it denies even on a clean tree. Plants no value"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []

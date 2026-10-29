@@ -14,6 +14,9 @@ is phases 1 to 4. Stage, collect and perf can follow it.
 - [x] ADRs 0001 to 0004
 - [x] Go module, `pbipx version`, the `secret.Value` type and its tests
 - [x] CI workflow (format, vet, test), private-terms commit hooks
+- [x] pre-commit for every lint (golangci-lint, rumdl, actionlint), run
+      locally and in CI; govulncheck; Dependabot
+- [x] CLI on cobra (ADR-0005)
 - [ ] Push to a private GitHub repository; CI green there
 
 ## Phase 1: the corpus, and the predecessor passing it
@@ -21,21 +24,23 @@ is phases 1 to 4. Stage, collect and perf can follow it.
 Most of this phase is spent in the predecessor's repository, which stays
 private (ADR-0003).
 
-- [ ] Settle the vocabulary: finding contexts, reasons, gate reason classes
+- [x] Settle the vocabulary: finding contexts, reasons, gate reason classes
       (`testdata/corpus/vocabulary.toml`)
-- [ ] `policies/default.toml`: a generic policy for the corpus
-- [ ] Cases, written fresh and synthetic, for each area:
-  - [ ] `pbir`: the six report contexts that carry values; which literals are
+- [x] `policies/default.toml`: a generic policy for the corpus
+- [x] Cases, written fresh and synthetic, for each area (247 cases):
+  - [x] `pbir`: the seven report contexts that carry values; which literals are
         judged; column association; neutral-filter sentinels
-  - [ ] `tmdl`: partitions and expressions, "Enter data" tables, `DATATABLE`,
+  - [x] `tmdl`: partitions and expressions, "Enter data" tables, `DATATABLE`,
         RLS filters and members, descriptions, annotations; parse errors
-  - [ ] `sql`, `yaml`: comparisons with identifier columns; shapes in
+  - [x] `sql`, `yaml`: comparisons with identifier columns; shapes in
         comments and descriptions
-  - [ ] `text`: prose rules (anchored names, no date shape)
-  - [ ] `baseline`, `policy`: blocks never baselined; acceptances; policy errors
-  - [ ] `gate`: the classification table; Read, search and shell decisions;
+  - [x] `text`: prose rules (anchored names, no date shape)
+  - [x] `baseline`, `policy`: blocks never baselined; acceptances; policy errors
+  - [x] `gate`: the classification table; Read, search and shell decisions;
         every error path
-  - [ ] `explain`: structure only; non-identifier names replaced
+  - [ ] `explain`: structure only; non-identifier names replaced (deferred to
+        phase 3, with its output schema)
+- [x] A Go corpus runner and case validator (`internal/corpus`)
 - [ ] In the predecessor's repository: a normalized JSON output and a corpus
       runner pointed at a local pbipx checkout
 
@@ -44,7 +49,7 @@ a known predecessor bug and has an issue.
 
 ## Phase 2: the core scanner
 
-- [ ] Policy loading (ADR-0004 settled to Accepted), policy errors
+- [ ] Policy loading (ADR-0004, accepted), policy errors
 - [ ] Personal-data shapes and the block/warn verdict
 - [ ] Report (PBIR) scanning
 - [ ] Prose scanning: `scan-text`, commit-message use

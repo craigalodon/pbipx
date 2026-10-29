@@ -1,0 +1,6 @@
+description = "a line that is only a name, on standard input, blocks"
+command     = "scan-text"
+args        = ["-"]
+policy      = "default"
+exit        = 1
+sentinels   = ["Roe, Richard"]

@@ -1,0 +1,16 @@
+{
+  "findings": [
+    {
+      "path": "sql/student_lookup.sql",
+      "context": "sql",
+      "column": "full_name",
+      "tier": "block",
+      "reasons": [
+        "block-column",
+        "person-name-shape"
+      ]
+    }
+  ],
+  "accepted": 0,
+  "suppressed": 0
+}

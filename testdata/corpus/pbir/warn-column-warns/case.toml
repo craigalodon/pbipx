@@ -1,0 +1,6 @@
+description = "a slicer selection on a warn column warns, which is clean without --strict"
+command     = "scan"
+args        = ["--all"]
+policy      = "default"
+exit        = 0
+sentinels   = ["SEC-07"]

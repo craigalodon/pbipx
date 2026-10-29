@@ -1,0 +1,6 @@
+description = "Grep over the protected tree skips local state, so a value in it does not deny"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = ["Doe, Jane"]

@@ -1,0 +1,11 @@
+table advisee
+
+	partition advisee = m
+		mode: import
+		source =
+				let
+					Source = Sql.Database("contoso.example.cloud", "school"),
+					student = Source{[Schema = "enrollment", Item = "student"]}[Data],
+					Filtered = Table.SelectRows(student, each [last_name] <> "Doe")
+				in
+					Filtered

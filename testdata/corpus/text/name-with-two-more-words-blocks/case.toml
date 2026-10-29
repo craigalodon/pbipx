@@ -1,0 +1,6 @@
+description = "a table cell holding a name and two more name words is still a name standing alone, and blocks"
+command     = "scan-text"
+args        = ["notes/review.md"]
+policy      = "default"
+exit        = 1
+sentinels   = ["Doe, Jane Ann Marie"]

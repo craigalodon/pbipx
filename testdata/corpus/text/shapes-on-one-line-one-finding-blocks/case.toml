@@ -1,0 +1,6 @@
+description = "a table row with a name, an email and a phone is one finding with all three reasons in vocabulary order"
+command     = "scan-text"
+args        = ["notes/review.md"]
+policy      = "default"
+exit        = 1
+sentinels   = ["Doe, Jane", "jane.doe@example.com", "555-555-0142"]

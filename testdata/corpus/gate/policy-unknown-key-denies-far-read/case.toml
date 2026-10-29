@@ -1,0 +1,6 @@
+description = "A policy with an unknown key fails to load and denies a Read far from any root. Plants no value"
+command     = "gate"
+args        = []
+policy      = "tree"
+exit        = 2
+sentinels   = []

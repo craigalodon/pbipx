@@ -1,0 +1,15 @@
+table contact_sample
+
+	column full_name
+		dataType: string
+		summarizeBy: none
+		sourceColumn: full_name
+
+	partition contact_sample = m
+		mode: import
+		source =
+				let
+					Source = Table.FromRows(Json.Document(Binary.Decompress(Binary.FromText("i45WcslP1VHwSsxLVYrViVYKAvGCMpMzEotSlGJjAQ==", BinaryEncoding.Base64), Compression.Deflate)), let _t = ((type nullable text) meta [Serialized.Text = true]) in type table [full_name = _t]),
+					#"Changed Type" = Table.TransformColumnTypes(Source, {{"full_name", type text}})
+				in
+					#"Changed Type"

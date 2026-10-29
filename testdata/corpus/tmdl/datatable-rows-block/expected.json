@@ -1,0 +1,26 @@
+{
+  "findings": [
+    {
+      "path": "pbip/School.SemanticModel/definition/tables/roster_sample.tmdl",
+      "context": "tmdl-dax",
+      "column": "roster_sample.full_name",
+      "tier": "block",
+      "reasons": [
+        "block-column",
+        "person-name-shape"
+      ]
+    },
+    {
+      "path": "pbip/School.SemanticModel/definition/tables/roster_sample.tmdl",
+      "context": "tmdl-dax",
+      "column": "roster_sample.full_name",
+      "tier": "block",
+      "reasons": [
+        "block-column",
+        "person-name-shape"
+      ]
+    }
+  ],
+  "accepted": 0,
+  "suppressed": 0
+}

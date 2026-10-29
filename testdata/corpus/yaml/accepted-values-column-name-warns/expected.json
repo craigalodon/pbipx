@@ -1,0 +1,24 @@
+{
+  "findings": [
+    {
+      "path": "models/enrollment.yml",
+      "context": "yaml",
+      "column": "cohort_year",
+      "tier": "warn",
+      "reasons": [
+        "warn-column"
+      ]
+    },
+    {
+      "path": "models/enrollment.yml",
+      "context": "yaml",
+      "column": "cohort_year",
+      "tier": "warn",
+      "reasons": [
+        "warn-column"
+      ]
+    }
+  ],
+  "accepted": 0,
+  "suppressed": 0
+}

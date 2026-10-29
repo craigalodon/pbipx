@@ -1,0 +1,15 @@
+{
+  "findings": [
+    {
+      "path": "-",
+      "context": "text",
+      "column": null,
+      "tier": "block",
+      "reasons": [
+        "ssn-shape"
+      ]
+    }
+  ],
+  "accepted": 0,
+  "suppressed": 0
+}

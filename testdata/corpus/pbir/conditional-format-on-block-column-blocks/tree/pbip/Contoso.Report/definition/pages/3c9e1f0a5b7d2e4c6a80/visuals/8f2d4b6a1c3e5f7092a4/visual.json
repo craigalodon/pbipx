@@ -1,0 +1,97 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.4.0/schema.json",
+  "name": "8f2d4b6a1c3e5f7092a4",
+  "position": {
+    "x": 40,
+    "y": 32,
+    "z": 0,
+    "height": 240,
+    "width": 320,
+    "tabOrder": 0
+  },
+  "visual": {
+    "visualType": "tableEx",
+    "query": {
+      "queryState": {
+        "Values": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "student"
+                    }
+                  },
+                  "Property": "full_name"
+                }
+              },
+              "queryRef": "student.full_name",
+              "nativeQueryRef": "full_name",
+              "active": true
+            }
+          ]
+        }
+      }
+    },
+    "objects": {
+      "values": [
+        {
+          "properties": {
+            "backColor": {
+              "solid": {
+                "color": {
+                  "expr": {
+                    "Conditional": {
+                      "Cases": [
+                        {
+                          "Condition": {
+                            "Comparison": {
+                              "ComparisonKind": 0,
+                              "Left": {
+                                "Column": {
+                                  "Expression": {
+                                    "SourceRef": {
+                                      "Entity": "student"
+                                    }
+                                  },
+                                  "Property": "full_name"
+                                }
+                              },
+                              "Right": {
+                                "Literal": {
+                                  "Value": "'Pat Example'"
+                                }
+                              }
+                            }
+                          },
+                          "Value": {
+                            "ThemeDataColor": {
+                              "ColorId": 4,
+                              "Percent": 0
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "selector": {
+            "data": [
+              {
+                "dataViewWildcard": {
+                  "matchingOption": 1
+                }
+              }
+            ],
+            "metadata": "student.full_name"
+          }
+        }
+      ]
+    },
+    "drillFilterOtherVisuals": true
+  }
+}

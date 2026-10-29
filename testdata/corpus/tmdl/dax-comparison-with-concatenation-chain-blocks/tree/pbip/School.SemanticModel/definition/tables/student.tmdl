@@ -1,0 +1,4 @@
+table student
+
+	measure 'Selected Rows' = CALCULATE(COUNTROWS(student), student[campus_code] & student[student_id] = "N9900417")
+		formatString: 0

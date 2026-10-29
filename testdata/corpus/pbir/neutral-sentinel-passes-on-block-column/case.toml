@@ -1,0 +1,6 @@
+description = "a single-select slicer on a block column saving the allowed neutral sentinel stays clean"
+command     = "scan"
+args        = ["--all"]
+policy      = "default"
+exit        = 0
+sentinels   = ["(none selected)"]

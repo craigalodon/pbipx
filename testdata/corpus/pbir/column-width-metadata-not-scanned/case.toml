@@ -1,0 +1,6 @@
+description = "column width selector metadata naming a block column is not visited, so it does not associate with the visual's filter and the case stays clean"
+command     = "scan"
+args        = ["--all"]
+policy      = "default"
+exit        = 0
+sentinels   = ["Autumn Term"]

@@ -1,0 +1,24 @@
+{
+  "findings": [
+    {
+      "path": "pbip/School.SemanticModel/definition/tables/contact_sample.tmdl",
+      "context": "tmdl-enter-data",
+      "column": "contact_sample.first_name",
+      "tier": "block",
+      "reasons": [
+        "block-column"
+      ]
+    },
+    {
+      "path": "pbip/School.SemanticModel/definition/tables/contact_sample.tmdl",
+      "context": "tmdl-enter-data",
+      "column": "contact_sample.first_name",
+      "tier": "block",
+      "reasons": [
+        "block-column"
+      ]
+    }
+  ],
+  "accepted": 0,
+  "suppressed": 0
+}

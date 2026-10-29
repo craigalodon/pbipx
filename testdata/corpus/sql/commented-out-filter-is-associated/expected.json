@@ -1,0 +1,15 @@
+{
+  "findings": [
+    {
+      "path": "sql/enrollment_extract.sql",
+      "context": "sql-comment",
+      "column": "first_name",
+      "tier": "block",
+      "reasons": [
+        "block-column"
+      ]
+    }
+  ],
+  "accepted": 0,
+  "suppressed": 0
+}

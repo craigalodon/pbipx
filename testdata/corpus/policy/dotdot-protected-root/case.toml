@@ -1,0 +1,6 @@
+description = "a protected root that climbs out with .. is a policy error"
+command     = "scan"
+args        = ["--all"]
+policy      = "tree"
+exit        = 3
+sentinels   = ["Fall 2150"]

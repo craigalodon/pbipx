@@ -1,0 +1,56 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - copyloopvar
+    - errorlint
+    - forbidigo
+    - gocritic
+    - gosec
+    - misspell
+    - nolintlint
+    - revive
+    - unconvert
+    - unparam
+    - usestdlibvars
+  settings:
+    forbidigo:
+      analyze-types: true
+      forbid:
+        # Principle 2: Reveal has exactly one caller, the interactive
+        # --show-values path. Adding that caller means adding its file to the
+        # exclusion below, in a reviewed change.
+        - pattern: ^secret\.Reveal$
+          pkg: ^github\.com/craigalodon/pbipx/internal/secret$
+          msg: only the --show-values path may call secret.Reveal
+        - pattern: ^print(ln)?$
+          msg: write to an io.Writer passed in, not the process's stderr
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+    revive:
+      rules:
+        - name: exported
+        - name: package-comments
+        - name: var-naming
+  exclusions:
+    presets:
+      - std-error-handling
+    rules:
+      - path: ^internal/secret/
+        linters: [forbidigo]
+        text: secret\.Reveal
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/craigalodon/pbipx

@@ -1,0 +1,6 @@
+description = "Grep over the protected tree allows when every file there is clean. Plants no value"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = []

@@ -1,0 +1,4 @@
+table enrollment
+
+	measure 'Selected Rows' = CALCULATE(COUNTROWS(enrollment), enrollment[cohort_year] = 2101)
+		formatString: 0

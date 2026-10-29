@@ -1,0 +1,4 @@
+role advisor_self
+	modelPermission: read
+
+	tablePermission student = student[email] = "jane.doe@example.com"

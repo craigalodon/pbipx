@@ -1,0 +1,7 @@
+description = "a shell command naming a local-state path denies, as a Read of it does, even on an otherwise clean tree"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
+known       = "predecessor"

@@ -1,0 +1,15 @@
+{
+  "findings": [
+    {
+      "path": "pbip/School.SemanticModel/definition/tables/student.tmdl",
+      "context": "tmdl-dax",
+      "column": "student.preferred_name",
+      "tier": "block",
+      "reasons": [
+        "block-column"
+      ]
+    }
+  ],
+  "accepted": 0,
+  "suppressed": 0
+}

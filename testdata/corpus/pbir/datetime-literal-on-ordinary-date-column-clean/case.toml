@@ -1,0 +1,7 @@
+description = "a typed date literal on an ordinary date column stays clean: every typed date has a date shape, so judging the shape would block every date filter (noise measurement)"
+command     = "scan"
+args        = ["--all"]
+policy      = "default"
+exit        = 0
+sentinels   = ["2105-08-24"]
+known       = "predecessor"

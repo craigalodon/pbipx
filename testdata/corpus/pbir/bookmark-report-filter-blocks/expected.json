@@ -1,0 +1,16 @@
+{
+  "findings": [
+    {
+      "path": "pbip/Contoso.Report/definition/bookmarks/Bookmark5d0e2a7c4f1b.bookmark.json",
+      "context": "bookmark",
+      "column": "student.full_name",
+      "tier": "block",
+      "reasons": [
+        "block-column",
+        "person-name-shape"
+      ]
+    }
+  ],
+  "accepted": 0,
+  "suppressed": 0
+}

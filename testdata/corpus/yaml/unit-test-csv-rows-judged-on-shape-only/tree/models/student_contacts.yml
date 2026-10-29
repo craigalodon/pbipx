@@ -1,0 +1,14 @@
+unit_tests:
+  - name: test_student_contacts
+    model: student_contacts
+    given:
+      - input: ref('student')
+        format: csv
+        rows: |
+          student_id,email
+          7041293,jane.doe@example.com
+    expect:
+      format: csv
+      rows: |
+        student_id
+        7041293

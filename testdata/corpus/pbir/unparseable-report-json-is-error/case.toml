@@ -1,0 +1,7 @@
+description = "a report JSON file that does not parse is an error finding, never a clean file; the predecessor skips it without --strict"
+command     = "scan"
+args        = ["--all"]
+policy      = "default"
+exit        = 3
+sentinels   = ["Doe, Jane"]
+known       = "predecessor"
