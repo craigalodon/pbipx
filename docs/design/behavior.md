@@ -666,12 +666,13 @@ Found by the predecessor's corpus runner (2026-10-29). Each case is marked
 until cutover replaces it. This list is the record of them; there is no
 separate issue tracker.
 
+Fixed in the predecessor since, and unmarked: SQL backslash escapes and `#`
+comments (2026-10-29).
+
 | Case | What the predecessor misses |
 |---|---|
 | `tmdl/dax-function-body-blocks` | a DAX user-defined function body is judged as free text, without its columns |
 | `tmdl/query-partition-sql-comparison-blocks` | a legacy `query` partition's SQL is judged as free text, not lexed |
-| `sql/backslash-escaped-quote-keeps-literals-apart` | backslash-escaped quotes shift which text is read as a literal |
-| `sql/hash-comment-is-a-comment` | a `#` comment is lexed as code |
 | `sql/dollar-quoted-value-on-block-column-blocks` | a `$$` string is lexed as code |
 | `yaml/alias-takes-site-association` | an alias does not take the key at the alias site |
 | `yaml/tagged-scalar-judged-by-text` | tagged nulls and booleans are skipped; tagged numbers get no shape checks |
