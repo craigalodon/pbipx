@@ -318,6 +318,16 @@ func TestComments(t *testing.T) {
 			[]want{{ctx: finding.YAMLComment, tier: finding.Block, reasons: name}}},
 		{"comment after a document marker", "--- # Doe, Jane\na: 1\n",
 			[]want{{ctx: finding.YAMLComment, tier: finding.Block, reasons: name}}},
+		{"quote on a plain continuation", "key: plain\n  'continued # Doe, Jane\nother: 1 # Roe, Richard\n",
+			[]want{
+				{ctx: finding.YAMLComment, tier: finding.Block, reasons: name},
+				{ctx: finding.YAMLComment, tier: finding.Block, reasons: name},
+			}},
+		{"block indicator on a plain continuation", "key: plain\n  > continued # Doe, Jane\nother: 1 # Roe, Richard\n",
+			[]want{
+				{ctx: finding.YAMLComment, tier: finding.Block, reasons: name},
+				{ctx: finding.YAMLComment, tier: finding.Block, reasons: name},
+			}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

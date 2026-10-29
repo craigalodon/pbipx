@@ -56,7 +56,7 @@ func Scan(path string, data []byte, p *policy.Policy) ([]finding.Finding, error)
 	if w.err != nil {
 		return nil, w.err
 	}
-	for i, c := range comments(string(data)) {
+	for i, c := range allComments(string(data), docs) {
 		loc := "comment[" + strconv.Itoa(i) + "]"
 		w.judge(finding.YAMLComment, sqlfile.Value{Text: c.text, Kind: judge.String, Locator: loc})
 		for _, r := range sqlfile.Readings(c.text, false, loc) {

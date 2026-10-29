@@ -1,0 +1,8 @@
+version: 2
+
+models:
+  - name: student
+    description: the enrolled
+      'student table # Doe, Jane
+    meta:
+      owner: the data team # Roe, Richard

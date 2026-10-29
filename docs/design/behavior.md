@@ -523,6 +523,14 @@ behavior (2026-10-29).
   verdict and shapes, unless its text read as a plain scalar is a number.
   Only plain, untagged nulls and booleans, and empty strings, are skipped.
   `!!str` is a string.
+- A quote, or a `|` or `>` block indicator, opens a scalar only where a node
+  can start: after a key's `:`, a sequence entry's `-` or an explicit key's
+  `?`, a document marker, at a flow collection's start or after its commas,
+  or first on a line that does not continue a plain scalar. On a plain
+  scalar's continuation line it is text, and a `#` after it is still a
+  comment. The comments the parser attaches to nodes are judged too, merged
+  with the scanner's by text, so a mistake in either cannot by itself hide a
+  comment.
 
 ### Prose
 
