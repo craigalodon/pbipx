@@ -9,43 +9,76 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+
+	"github.com/craigalodon/pbipx/internal/finding"
 )
 
 // version is set at release with -ldflags "-X main.version=<tag>".
 var version = "dev"
 
-// errUsage is returned for every usage error. Cobra's own messages quote what
-// was typed, and a command line can carry a value, so they are never printed
-// (ADR-0005).
+// errUsage is returned for every usage error Cobra reports. Cobra's own
+// messages quote what was typed, and a command line can carry a value, so
+// they are never printed (ADR-0005).
 var errUsage = errors.New("usage error")
 
-func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+// usageError is a usage error pbipx itself detects. Its message is fixed
+// text that names flags, never what was typed.
+type usageError struct{ msg string }
+
+func (e usageError) Error() string { return "usage error: " + e.msg }
+
+// exitError ends a command with a code after the command has written its own
+// output.
+type exitError struct{ code int }
+
+func (e exitError) Error() string { return fmt.Sprintf("exit %d", e.code) }
+
+// exitWith is nil for a clean exit and an exitError otherwise.
+func exitWith(code int) error {
+	if code == finding.ExitClean {
+		return nil
+	}
+	return exitError{code: code}
 }
 
-// Exit codes (testdata/corpus/vocabulary.toml). The gate has its own.
-const (
-	exitClean = 0
-	exitUsage = 4
-)
+func main() {
+	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
+}
 
-// run executes a command and returns the process exit code.
-func run(args []string, stdout, stderr io.Writer) int {
+// run executes a command and returns the process exit code. A panic is an
+// operational error, reported without its message, which could carry a
+// value.
+func run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
+	defer func() {
+		if recover() != nil {
+			fmt.Fprintln(stderr, "pbipx: internal error")
+			code = finding.ExitOperational
+		}
+	}()
 	if args == nil {
 		// Cobra reads os.Args when given nil.
 		args = []string{}
 	}
 	root := newRootCmd()
 	root.SetArgs(args)
+	root.SetIn(stdin)
 	root.SetOut(stdout)
 	root.SetErr(stderr)
-	if err := root.Execute(); err != nil {
-		// Every error is reported as a usage error for now; the error itself
-		// is not printed.
-		fmt.Fprintln(stderr, "pbipx: usage error; run 'pbipx help'")
-		return exitUsage
+	err := root.Execute()
+	var ee exitError
+	var ue usageError
+	switch {
+	case err == nil:
+		return finding.ExitClean
+	case errors.As(err, &ee):
+		return ee.code
+	case errors.As(err, &ue):
+		fmt.Fprintf(stderr, "pbipx: %s\n", ue.Error())
+		return finding.ExitUsage
 	}
-	return exitClean
+	// Every other error is Cobra's, and is not printed.
+	fmt.Fprintln(stderr, "pbipx: usage error; run 'pbipx help'")
+	return finding.ExitUsage
 }
 
 func newRootCmd() *cobra.Command {
@@ -54,8 +87,8 @@ func newRootCmd() *cobra.Command {
 		Short: "tools for agentic Power BI project development",
 		Long: `pbipx: tools for agentic Power BI project development
 
-Planned: scan, scan-text, gate, explain, stage, collect, perf.
-See docs/ROADMAP.md.`,
+Commands: scan, scan-text, baseline.
+Planned: gate, explain, stage, collect, perf. See docs/ROADMAP.md.`,
 		Version:            version,
 		SilenceErrors:      true,
 		SilenceUsage:       true,
@@ -69,7 +102,7 @@ See docs/ROADMAP.md.`,
 	root.SetVersionTemplate("pbipx {{.Version}}\n")
 	root.SetFlagErrorFunc(func(*cobra.Command, error) error { return errUsage })
 	root.SetHelpCommand(newHelpCmd())
-	root.AddCommand(newVersionCmd())
+	root.AddCommand(newVersionCmd(), newScanCmd(), newScanTextCmd(), newBaselineCmd())
 	return root
 }
 
