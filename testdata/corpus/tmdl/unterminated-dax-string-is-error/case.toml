@@ -1,0 +1,6 @@
+description = "a DAX string with no closing quote is a parse error, reported without its text"
+command     = "scan"
+args        = ["--all"]
+policy      = "default"
+exit        = 3
+sentinels   = ["Doe, Jane"]

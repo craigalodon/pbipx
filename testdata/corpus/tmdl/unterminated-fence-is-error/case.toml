@@ -1,0 +1,6 @@
+description = "a ``` block with no closing fence is a parse error; plants no value"
+command     = "scan"
+args        = ["--all"]
+policy      = "default"
+exit        = 3
+sentinels   = []
