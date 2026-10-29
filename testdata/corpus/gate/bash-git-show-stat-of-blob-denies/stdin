@@ -1,0 +1,8 @@
+{
+  "hook_event_name": "PreToolUse",
+  "cwd": "{root}",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "git show --stat 6a7af3054fb1c875629b08576220a780ce09eb81"
+  }
+}

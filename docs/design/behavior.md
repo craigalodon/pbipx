@@ -482,21 +482,65 @@ Decisions by tool. Every tool not listed is allowed.
      protected root:
      - always content: `blame`, `annotate`, `grep`, `archive`,
        `format-patch`, `difftool`, `range-diff`;
-     - `diff` and `show` unless a summary flag is given (`--stat`,
-       `--numstat`, `--shortstat`, `--name-only`, `--name-status`,
-       `--dirstat`, `--compact-summary`, `--summary`, `--raw`, `--no-patch`,
-       `-s`, `--quiet`), and a patch flag overrides the summary;
-     - `log`, `reflog` and `whatchanged` only with a patch flag (`-p`, `-u`,
-       `--patch` and kin, `--cc`, `--full-diff`, `-L`);
-     - `stash show` with a patch flag; `cat-file` except `-t`, `-s`, `-e`,
-       `--batch-check`;
-     - git's global options `-C`, `-c`, `--git-dir`, `--work-tree` and
-       `--namespace` consume their argument;
+     - content that cannot be placed, whatever the pathspecs:
+       `fast-export`, `pack-objects`, `unpack-file`, `filter-branch`;
+       `rebase` and `am` with `--show-current-patch`; `rebase` with `-x` or
+       `--exec`, `submodule foreach` and `bisect run`, which run a command;
+       `request-pull -p`; `bundle create` to `-` or a `/dev/` path (to a
+       file it is allowed); `merge-tree --trivial-merge`, or with three
+       commits and no `--write-tree`; `merge-file --object-id`;
+     - `diff` unless a summary flag is given (`--stat`, `--numstat`,
+       `--shortstat`, `--name-only`, `--name-status`, `--dirstat`,
+       `--compact-summary`, `--summary`, `--raw`, `--no-patch`, `-s`,
+       `--quiet`), and a patch flag overrides the summary;
+     - `log`, `reflog` and `whatchanged`, and `diff-index` and `diff-files`,
+       only with a patch flag (`-p`, `-u`, `--patch` and kin, `--cc`, `-c`,
+       `--dd`, `--remerge-diff`, `--full-diff`, `-L`, and the content
+       searches `-S` and `-G`); `diff-tree` with a patch flag or `--stdin`;
+     - `show`: a `REV:path` or `:path` argument prints that blob; any
+       argument holding `:/` or `^{/` (a search of commit messages) cannot
+       be placed. Every other argument is resolved in the repository with
+       `git cat-file -t`: a commit, a range of commits or a tag of a commit
+       prints a diff, as `diff` does (an annotated tag prints its target);
+       a blob, a tree, a tag of anything else, or a name that does not
+       resolve prints content that cannot be placed, whatever the summary
+       flags say. `--all`, `--branches`, `--tags`, `--remotes`, `--glob`,
+       `--stdin` and the like cannot be placed either;
+     - `stash show` with a patch flag, or with no summary flag when
+       `stash.showPatch` is true; `cat-file` except `-t`, `-s`, `-e`,
+       `--batch-check`, and an object name other than `REV:path` cannot be
+       placed;
+     - hunks shown interactively: `add -p` and `add -i`, `checkout -p`,
+       `restore -p`, `reset -p`, `stash -p` (and `stash push -p`), `commit
+       -p` and `commit --interactive`, short options clustered too (`-ap`);
+     - an alias: a subcommand that is not one of git's own is looked up
+       with `git config --get alias.<name>`. A shell alias (`!`), an alias
+       that does not split, or an alias of an alias is denied; otherwise the
+       expansion, split as git splits it, replaces the subcommand and is
+       judged with the rest of the arguments;
+     - git's global options `-C`, `-c`, `--config-env`, `--git-dir`,
+       `--work-tree`, `--namespace` and `--attr-source` consume their
+       argument. `--git-dir` and `--work-tree` make every content
+       unprovable. `-c` or `--config-env` with a key not known to be
+       harmless (an alias, a pager, an editor, `diff.external`, a textconv
+       or other driver, `stash.showPatch`, `log.*`, anything that can run a
+       command) and `--exec-path=` deny any subcommand. The known-harmless
+       keys are `color.*`, `user.*`, `advice.*` and similar, a pager set to
+       `cat`, empty or a boolean, and an editor set to `true`;
+       `--literal-pathspecs`, `--glob-pathspecs` and `--icase-pathspecs`
+       make every pathspec unprovable;
+     - environment assignments before git: any `GIT_` variable but the
+       author and committer identities, tracing and a few others, a
+       `GIT_PAGER` or `PAGER` other than `cat`, an editor other than `true`
+       and `LESSOPEN` deny any subcommand;
      - pathspecs avoid the roots when every root is excluded (`:!`, `:^`,
        `:(exclude)`), or when there is no glob and no positive pathspec
-       touches a root. Pathspecs are those after `--`; for `show` and
-       `cat-file`, `REV:path`, relative to the repository root; for `blame`,
-       the last argument.
+       touches a root. Pathspecs are those after `--` (or
+       `--pathspec-from-file`, which cannot be placed); for `show` and
+       `cat-file`, `REV:path`, relative to the repository root; for `blame`
+       and `annotate`, every positional argument before or after `--`, and
+       `--contents`, since git takes the file before or after the
+       revision; for `add -p` and `restore -p`, every positional argument.
   3. If the working directory is inside a protected root, or the command
      names a root as a whole word, the protected tree is scanned as for Grep.
   4. A recursive search (`grep`, `egrep` and `fgrep` with `-r` or `-R`;
