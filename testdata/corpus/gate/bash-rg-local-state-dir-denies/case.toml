@@ -1,0 +1,7 @@
+description = "a search naming a local-state directory denies, even on an otherwise clean tree"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
+known       = "predecessor"

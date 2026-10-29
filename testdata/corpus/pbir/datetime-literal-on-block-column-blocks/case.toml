@@ -1,0 +1,7 @@
+description = "a typed date literal on a block column blocks on the column; typed dates are judged by column, not by the date shape"
+command     = "scan"
+args        = ["--all"]
+policy      = "default"
+exit        = 1
+sentinels   = ["2105-03-14"]
+known       = "predecessor"

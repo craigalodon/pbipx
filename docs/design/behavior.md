@@ -473,8 +473,10 @@ behavior (2026-10-29).
 - A quoted string of digits (`'2105'`) is a string: column verdict and
   shapes both apply.
 - Typed literals other than strings, such as `datetime'...'`, are not
-  judged. This is an open question for pbipx, since a date filter can hold
-  a date of birth.
+  judged by the predecessor. **Divergence (typed dates):** pbipx judges a
+  `datetime'...'` literal by its column only. The date shape is not applied,
+  because every typed date has it and every date filter would block.
+  (Decided 2026-10-29.)
 - `cachedFilterDisplayItems[].label` is judged wherever it appears in a
   bookmark's state, against the context it sits in.
 - `allow` values match exactly, case included.
@@ -516,9 +518,12 @@ behavior (2026-10-29).
 - When a scan finds both a block and an error, the gate reports `finding`.
   (A scan's exit code reports the error: 3.)
 - A shell command that reads local state (`cat .pbi/localSettings.json`) is
-  allowed when the rest of the tree is clean, because tree scans skip local
-  state. A Read of the same file is denied. Whether pbipx closes this gap is
-  an open question.
+  allowed by the predecessor when the rest of the tree is clean, because tree
+  scans skip local state, while a Read of the same file is denied.
+  **Divergence (local state in shell):** pbipx denies a Bash command that
+  names a local-state path or directory, with `local-state`. Tree scans
+  still skip local state, so a recursive search that does not name it is
+  decided as before. (Decided 2026-10-29.)
 
 ### Baseline
 
