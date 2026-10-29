@@ -3,7 +3,7 @@
     {
       "path": "pbip/School.SemanticModel/definition/tables/roster_sample.tmdl",
       "context": "tmdl-dax",
-      "column": "full_name",
+      "column": "roster_sample.full_name",
       "tier": "block",
       "reasons": [
         "block-column",
@@ -13,7 +13,7 @@
     {
       "path": "pbip/School.SemanticModel/definition/tables/roster_sample.tmdl",
       "context": "tmdl-dax",
-      "column": "full_name",
+      "column": "roster_sample.full_name",
       "tier": "block",
       "reasons": [
         "block-column",
