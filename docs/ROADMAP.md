@@ -45,7 +45,7 @@ private (ADR-0003).
       runner pointed at a local pbipx checkout
 
 **Exit:** the predecessor passes every case, or each case it fails is marked as
-a known predecessor bug and has an issue.
+a known predecessor bug and recorded in behavior.md.
 
 Met 2026-10-29: of 250 cases, the predecessor passes 242 and fails the 8
 marked as known differences. None showed a predecessor bug.

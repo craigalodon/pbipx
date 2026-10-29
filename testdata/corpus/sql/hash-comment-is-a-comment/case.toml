@@ -4,3 +4,4 @@ args        = ["--all"]
 policy      = "default"
 exit        = 1
 sentinels   = ["Doe, Jane"]
+known       = "predecessor"

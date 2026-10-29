@@ -4,3 +4,4 @@ args        = ["--all"]
 policy      = "default"
 exit        = 1
 sentinels   = ["Example\\'s campus", "Doe, Jane", "Roe\\'s note"]
+known       = "predecessor"
