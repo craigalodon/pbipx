@@ -47,7 +47,7 @@ a known predecessor bug and has an issue.
 
 ## Phase 2: the core scanner
 
-- [ ] Policy loading (ADR-0004 settled to Accepted), policy errors
+- [ ] Policy loading (ADR-0004, accepted), policy errors
 - [ ] Personal-data shapes and the block/warn verdict
 - [ ] Report (PBIR) scanning
 - [ ] Prose scanning: `scan-text`, commit-message use

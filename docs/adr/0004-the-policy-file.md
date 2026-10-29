@@ -1,6 +1,6 @@
 # ADR-0004: The policy file
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-10-29)
 - **Date:** 2026-10-29
 
 ## Context
@@ -12,7 +12,7 @@ predecessor's policy grew one key at a time. Its scan scope is one large
 regular expression spanning every file kind, which is hard to review and easy
 to get subtly wrong.
 
-## Decision (proposed)
+## Decision
 
 - The policy is `.pbipx.toml` at the repository root. The baseline is
   `.pbipx-baseline.toml`.
@@ -30,7 +30,7 @@ to get subtly wrong.
   no scan scope covers is a policy error. A policy error denies every gated
   call.
 
-## Schema (proposed)
+## Schema
 
 ```toml
 version = 1
