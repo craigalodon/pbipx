@@ -9,6 +9,7 @@ package exprlex
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -54,6 +55,11 @@ type Token struct {
 type Comment struct {
 	Text string
 	Line int // 1-based line of the comment's start
+	// Extra is set on a comment of SQL found only under another reading of
+	// the source than the first one that lexes (SQLSites): a # comment, or
+	// one that a backslash escape moves out of a string.
+	Extra bool
+	off   int // byte offset of the comment's marker
 }
 
 // LexError is code that could not be lexed. Its message is structure only.
@@ -70,6 +76,7 @@ const (
 	msgName         = "unterminated quoted name"
 	msgColumn       = "unterminated column reference"
 	msgBlockComment = "unterminated block comment"
+	msgDollar       = "unterminated dollar-quoted string"
 )
 
 // lexer is the state the three languages share.
@@ -77,17 +84,34 @@ type lexer struct {
 	src     string
 	pos     int
 	line    int
+	start   int // byte offset where the token being read starts
 	toks    []Token
 	dq      []bool // parallel to toks: a Str read from a double-quoted run (SQL)
+	offs    []int  // parallel to toks: the byte offset where each starts
 	coms    []Comment
 	lastEnd int // byte offset just after the last token
+	// spans are the byte ranges [start, end) of every comment and every
+	// quoted run (a string or a name), for SQLCode.
+	spans [][2]int
+	// SQL readings (SQLSites): bs reads a backslash in a quoted run as an
+	// escape; hash reads # as the start of a line comment.
+	bs, hash bool
+	// bodies are the tags of the dollar-quoted bodies open under the body
+	// reading, innermost last.
+	bodies []string
 }
 
 func newLexer(src string) *lexer { return &lexer{src: src, line: 1, lastEnd: -1} }
 
 func (l *lexer) emit(k Kind, text, table string, line int) {
+	if len(l.toks) == cap(l.toks) {
+		// Double, where append grows a large slice by a quarter: a long
+		// expression would otherwise copy its tokens several times over.
+		l.toks = slices.Grow(l.toks, len(l.toks)+16)
+	}
 	l.toks = append(l.toks, Token{Kind: k, Text: text, Table: table, Line: line})
 	l.dq = append(l.dq, false)
+	l.offs = append(l.offs, l.start)
 	l.lastEnd = l.pos
 }
 
@@ -128,7 +152,8 @@ func (l *lexer) lineComment(n int) {
 	if end < 0 {
 		end = len(rest)
 	}
-	l.coms = append(l.coms, Comment{Text: strings.TrimSpace(rest[:end]), Line: line})
+	l.coms = append(l.coms, Comment{Text: strings.TrimSpace(rest[:end]), Line: line, off: l.pos})
+	l.spans = append(l.spans, [2]int{l.pos, l.pos + n + end})
 	l.advance(n + end)
 }
 
@@ -139,7 +164,8 @@ func (l *lexer) blockComment() error {
 	if end < 0 {
 		return &LexError{Line: line, Msg: msgBlockComment}
 	}
-	l.coms = append(l.coms, Comment{Text: strings.TrimSpace(l.src[l.pos+2 : l.pos+2+end]), Line: line})
+	l.coms = append(l.coms, Comment{Text: strings.TrimSpace(l.src[l.pos+2 : l.pos+2+end]), Line: line, off: l.pos})
+	l.spans = append(l.spans, [2]int{l.pos, l.pos + 2 + end + 2})
 	l.advance(2 + end + 2)
 	return nil
 }
@@ -147,25 +173,93 @@ func (l *lexer) blockComment() error {
 // delimited reads a run from the opening byte at pos to the closing byte, a
 // doubled closing byte standing for itself. It returns the content,
 // unescaped.
+//
+// Under the backslash reading (l.bs), a backslash in a '...' or "..." run
+// escapes the byte after it: \', \" and \\ stand for the quote or the
+// backslash, and any other pair is kept as written, so a pattern such as
+// '\d+' has the same value under both readings. A backticked run has no
+// escapes.
 func (l *lexer) delimited(closer byte, msg string) (string, error) {
 	line := l.line
+	start := l.pos
+	stops := string(closer)
+	if l.bs && closer != '`' {
+		stops += `\`
+	}
 	var b strings.Builder
 	i := l.pos + 1
 	for {
-		j := strings.IndexByte(l.src[i:], closer)
+		j := strings.IndexAny(l.src[i:], stops)
 		if j < 0 {
 			return "", &LexError{Line: line, Msg: msg}
 		}
 		b.WriteString(l.src[i : i+j])
 		i += j
+		if l.src[i] == '\\' {
+			if i+1 >= len(l.src) {
+				return "", &LexError{Line: line, Msg: msg}
+			}
+			switch c := l.src[i+1]; c {
+			case '\'', '"', '\\':
+				b.WriteByte(c)
+			default:
+				b.WriteString(l.src[i : i+2])
+			}
+			i += 2
+			continue
+		}
 		if i+1 < len(l.src) && l.src[i+1] == closer {
 			b.WriteByte(closer)
 			i += 2
 			continue
 		}
 		l.advance(i + 1 - l.pos)
+		l.spans = append(l.spans, [2]int{start, l.pos})
 		return b.String(), nil
 	}
+}
+
+func isASCIILetter(c byte) bool { return c|0x20 >= 'a' && c|0x20 <= 'z' }
+
+// dollarTag returns the length of a dollar quote's tag ($$ or $name$) at
+// pos, or 0. A $ right after a name character belongs to that name, as in
+// PostgreSQL, so a$b$ opens nothing; nor does $1, a parameter.
+func (l *lexer) dollarTag() int {
+	if l.at(0) != '$' {
+		return 0
+	}
+	if l.pos > 0 {
+		if c := l.src[l.pos-1]; c == '$' || c == '_' || c >= 0x80 || isDigit(c) || isASCIILetter(c) {
+			return 0
+		}
+	}
+	for i := l.pos + 1; i < len(l.src); i++ {
+		c := l.src[i]
+		switch {
+		case c == '$':
+			return i + 1 - l.pos
+		case c == '_' || isASCIILetter(c) || (isDigit(c) && i > l.pos+1):
+		default:
+			return 0
+		}
+	}
+	return 0
+}
+
+// dollarString reads a dollar-quoted string ($$...$$ or $tag$...$tag$)
+// whose tag of n bytes is at pos. Its content is taken as written.
+func (l *lexer) dollarString(n int) (string, error) {
+	line := l.line
+	start := l.pos
+	tag := l.src[l.pos : l.pos+n]
+	end := strings.Index(l.src[l.pos+n:], tag)
+	if end < 0 {
+		return "", &LexError{Line: line, Msg: msgDollar}
+	}
+	s := l.src[l.pos+n : l.pos+n+end]
+	l.advance(n + end + n)
+	l.spans = append(l.spans, [2]int{start, l.pos})
+	return s, nil
 }
 
 // number reads an integer, a decimal or a number with an exponent, if one
@@ -271,6 +365,7 @@ func (l *lexer) skip() {
 func DAX(src string) ([]Token, []Comment, error) {
 	l := newLexer(src)
 	for l.pos < len(src) {
+		l.start = l.pos
 		r, _ := l.rune()
 		var err error
 		switch {
@@ -333,6 +428,7 @@ func (l *lexer) daxColumn() error {
 func M(src string) ([]Token, []Comment, error) {
 	l := newLexer(src)
 	for l.pos < len(src) {
+		l.start = l.pos
 		r, _ := l.rune()
 		var err error
 		switch {
@@ -483,18 +579,73 @@ func init() {
 // a column.
 func IsSQLKeyword(w string) bool { return sqlKeywords[strings.ToLower(w)] }
 
-// SQL lexes SQL, reading "..." as dq says.
+// SQL lexes SQL, reading "..." as dq says, under the first reading: a quote
+// in a string is escaped only by doubling it, and # is not a comment.
+// Dollar-quoted strings ($$...$$, $tag$...$tag$) are strings.
 func SQL(src string, dq DoubleQuote) ([]Token, []Comment, error) {
-	l, err := lexSQL(src, dq)
+	l, err := lexSQL(src, dq, reading{})
 	if err != nil {
 		return nil, nil, err
 	}
 	return l.toks, l.coms, nil
 }
 
-func lexSQL(src string, dq DoubleQuote) (*lexer, error) {
+// SQLFirstReading lexes SQL, reading "..." as dq says, under the first of
+// SQLSites's readings that lexes. Its error is the first reading's, when
+// none does.
+func SQLFirstReading(src string, dq DoubleQuote) ([]Token, []Comment, error) {
+	var first error
+	for _, rd := range readingsOf(src) {
+		l, err := lexSQL(src, dq, rd)
+		if err == nil {
+			return l.toks, l.coms, nil
+		}
+		if first == nil {
+			first = err
+		}
+	}
+	return nil, nil, first
+}
+
+// reading is one way of lexing SQL that dialects disagree on (behavior.md,
+// "SQL files"). The zero reading is standard SQL.
+type reading struct {
+	bs   bool // a backslash escapes the next byte in '...' and "..." (MySQL, BigQuery, Spark)
+	hash bool // # starts a line comment (MySQL, BigQuery)
+	// body lexes a dollar-quoted string's content as SQL, its tags passed
+	// over, as a function body is: a string in it is a literal of its own.
+	// An unterminated dollar quote is still an error.
+	body bool
+}
+
+// readingsOf lists the readings src is lexed under, the zero reading first.
+// A reading that cannot differ from one before it, because src has no
+// backslash, no # or no $, is left out.
+func readingsOf(src string) []reading {
+	out := []reading{{}}
+	if strings.Contains(src, `\`) {
+		out = append(out, reading{bs: true})
+	}
+	if strings.Contains(src, "#") {
+		for _, rd := range out {
+			rd.hash = true
+			out = append(out, rd)
+		}
+	}
+	if strings.Contains(src, "$") {
+		for _, rd := range out {
+			rd.body = true
+			out = append(out, rd)
+		}
+	}
+	return out
+}
+
+func lexSQL(src string, dq DoubleQuote, rd reading) (*lexer, error) {
 	l := newLexer(src)
+	l.bs, l.hash = rd.bs, rd.hash
 	for l.pos < len(src) {
+		l.start = l.pos
 		r, _ := l.rune()
 		var err error
 		switch {
@@ -502,8 +653,27 @@ func lexSQL(src string, dq DoubleQuote) (*lexer, error) {
 			l.skip()
 		case l.has("--"):
 			l.lineComment(2)
+		case l.hash && r == '#':
+			l.lineComment(1)
 		case l.has("/*"):
 			err = l.blockComment()
+		case len(l.bodies) > 0 && l.has(l.bodies[len(l.bodies)-1]):
+			l.advance(len(l.bodies[len(l.bodies)-1]))
+			l.bodies = l.bodies[:len(l.bodies)-1]
+		case r == '$' && l.dollarTag() > 0 && rd.body:
+			tag := l.src[l.pos : l.pos+l.dollarTag()]
+			if !strings.Contains(l.src[l.pos+len(tag):], tag) {
+				err = &LexError{Line: l.line, Msg: msgDollar}
+				break
+			}
+			l.bodies = append(l.bodies, tag)
+			l.advance(len(tag))
+		case r == '$' && l.dollarTag() > 0:
+			line := l.line
+			var s string
+			if s, err = l.dollarString(l.dollarTag()); err == nil {
+				l.emit(Str, s, "", line)
+			}
 		case r == '\'':
 			line := l.line
 			var s string
@@ -529,6 +699,9 @@ func lexSQL(src string, dq DoubleQuote) (*lexer, error) {
 		if err != nil {
 			return nil, err
 		}
+	}
+	if len(l.bodies) > 0 {
+		return nil, &LexError{Line: l.line, Msg: msgDollar}
 	}
 	return l, nil
 }

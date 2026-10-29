@@ -1,0 +1,6 @@
+description = "a ref() or source() call in comment prose or in a string is not a read; a template block in a comment is"
+command     = "explain"
+args        = ["sql"]
+policy      = "default"
+exit        = 0
+sentinels   = ["Jane", "Doe", "Roe"]

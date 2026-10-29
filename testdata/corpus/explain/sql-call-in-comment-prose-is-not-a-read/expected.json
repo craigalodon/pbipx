@@ -1,0 +1,18 @@
+{
+  "files": [
+    {
+      "path": "sql/term_roster.sql",
+      "kind": "sql",
+      "creates": [],
+      "writes": [],
+      "reads": [
+        "stg_term",
+        "warehouse.dbo.enrollment"
+      ],
+      "reads_unqualified": [],
+      "literals": {
+        "sql": 1
+      }
+    }
+  ]
+}

@@ -197,9 +197,21 @@ Lexing:
   identifier that is not a keyword and is not followed by `(` is a column; in
   `a.b.c`, `c` is the column and `b` its table. `"..."` is read both ways in
   SQL files (a string in some dialects, an identifier in others) and the
-  associations are merged.
+  associations are merged. A dollar-quoted string (`$$...$$`,
+  `$tag$...$tag$`) is a string. In SQL files, dialects that disagree are
+  read every way (see "SQL files").
 - Unterminated strings, names, column references and block comments are
   errors. Unknown punctuation is skipped.
+
+**Limits.** Association is near-linear in the size of the code. What is left
+is bounded, and code past a bound is an error (`unlexable-sql` in a SQL file
+or a SQL value of YAML, `unparseable-tmdl` in a model), never association
+cut short and called clean:
+
+- one literal is associated with at most 256 distinct columns;
+- associating an expression of `n` tokens may take at most
+  `65536 + 64 * n` units of work (a token visited, a literal tied to a
+  group of columns, a column found for a literal).
 
 "Enter data" blobs are `Binary.FromText("<base64>", ...)`, usually raw
 deflate around JSON. Strings and numbers in the JSON are cells; booleans and
@@ -224,6 +236,31 @@ in dbt) is not rendered: its delimiters are blanked and the inside is lexed as
 SQL, so a value cannot hide in a template block. A template comment is a
 comment. An unterminated template comment, string or block comment is an
 error.
+
+Dialects disagree on two things a value can hide behind, so a SQL file is
+lexed under four readings, each with `"..."` read both ways:
+
+| Reading | A quote in a string | `#` |
+|---|---|---|
+| first | doubled (`''`) only | an operator (PostgreSQL) |
+| second | doubled, or after a backslash (`\'`: MySQL, BigQuery, Spark) | an operator |
+| third | doubled only | starts a line comment (MySQL, BigQuery) |
+| fourth | doubled, or after a backslash | starts a line comment |
+
+The literals and comments judged are the union of every reading that lexes,
+so `'O\'Doe' ... 'Doe, Jane'` cannot shift a name out of a literal, and the
+text after a `#` is judged as a comment either way. The file is an error only
+when no reading lexes. Under the backslash readings, `\'`, `\"` and `\\`
+stand for the quote or the backslash, and any other pair is kept as written.
+A reading is left out when the file has no backslash, or no `#`, for it to
+differ on.
+
+Dollar-quoted strings (`$$...$$`, `$tag$...$tag$`: PostgreSQL, Snowflake)
+are strings in every reading, and an unterminated one is an error. Because a
+dollar-quoted string is usually a function body, each reading is also run a
+second time with the body lexed as SQL, its tags passed over, so a value in
+it is a literal of its own. A `$` right after a name character, or before a
+digit (`$1`), opens none.
 
 ## YAML files
 
@@ -448,6 +485,11 @@ Gate reason classes: `finding`, `unvettable`, `scan-error`,
   context. A name with any shape prints as a placeholder.
 - **SQL:** relations created, written and read (qualified, unqualified or
   CTE, and template `ref()`/`source()` calls), and literal counts by context.
+  A `ref()` or `source()` call is a read only where it is code: inside a
+  template block (`{{ }}`, `{% %}`) outside the template's strings,
+  wherever the block stands, so `-- depends_on: {{ ref('x') }}` is a read;
+  or in the SQL outside every comment and string. A call in comment prose or
+  in a string is not a read.
   A name part is printed only if it is a plain identifier (letters, digits
   and `_`, not all digits) with no shape. Otherwise a placeholder, or a
   placeholder for a call whose arguments are not quoted names. `FROM` inside
@@ -528,6 +570,17 @@ behavior (2026-10-29).
 
 - In `s.full_name`, the recorded table is `s`, even when `s` is an alias.
 - Literals found by lexing a comment as SQL have the comment's context.
+- The readings of a SQL file (see "SQL files") keep locators stable. The
+  literals and comments of the first reading that lexes are numbered in
+  order, as they always were; one found only by a later reading is
+  numbered after them, in reading order. A literal at the same offset with
+  the same value under two readings is one literal, with the columns of
+  both. A file that every reading lexes alike has the locators it would
+  have with one reading.
+- A file's literal count in `explain` counts the union of the readings.
+- `explain` reads relations from the first reading that lexes.
+- A literal past the association limits (see "Association in code") is not
+  judged on fewer columns: the whole file is an error.
 - Unit-test rows have context `yaml`, including rows written as SQL. CSV
   rows are judged cell by cell.
 - An anchored node is judged where it is anchored, and again at each alias

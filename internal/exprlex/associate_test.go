@@ -30,6 +30,15 @@ func describe(sites []Site) []string {
 	return out
 }
 
+func mustAssociate(t *testing.T, toks []Token, concat string) []Site {
+	t.Helper()
+	s, err := AssociateChecked(toks, concat)
+	if err != nil {
+		t.Fatalf("AssociateChecked: %v", err)
+	}
+	return s
+}
+
 type assocCase struct {
 	name string
 	src  string
@@ -60,7 +69,7 @@ func sitesOf(t *testing.T, lang, src string) []Site {
 	if err != nil {
 		t.Fatalf("%s: %v", lang, err)
 	}
-	return Associate(toks, concat)
+	return mustAssociate(t, toks, concat)
 }
 
 func runAssoc(t *testing.T, lang string, cases []assocCase) {

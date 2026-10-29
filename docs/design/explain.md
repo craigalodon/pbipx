@@ -91,7 +91,9 @@ to the files under it.
   is described.
 - **SQL:** relations created (view or table), written and read, and a count
   of literals by context. A template's `ref()` and `source()` calls are
-  reads.
+  reads where they are code: inside a template block, even one in a SQL
+  comment, never in comment prose or a string
+  ([behavior.md](behavior.md#explain)).
 - Empty lists are written as `[]`; absent sections are omitted.
 
 ## Names and placeholders

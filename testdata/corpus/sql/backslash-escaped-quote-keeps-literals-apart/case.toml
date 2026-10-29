@@ -1,0 +1,6 @@
+description = "a backslash-escaped quote does not shift the literals after it, so a name between two of them still blocks"
+command     = "scan"
+args        = ["--all"]
+policy      = "default"
+exit        = 1
+sentinels   = ["Example\\'s campus", "Doe, Jane", "Roe\\'s note"]

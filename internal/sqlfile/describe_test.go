@@ -64,14 +64,39 @@ func TestDescribeTemplateCalls(t *testing.T) {
 	d := describe(t, `{{ config(materialized='view') }}
 {# built from {{ ref('legacy') }} #}
 -- see source('raw', 'term')
-select * from {{ ref('stg_student') }} s
+-- depends_on: {{ ref('stg_term') }}
+/* {{ log("ref('stg_log')") }} */
+select 'ref(''stg_quoted'')' as note, * from {{ ref('stg_student') }} s
 join {{ source("raw", "enrollment") }} e on e.id = s.id
 join {{ ref(var('m')) }} v on v.id = s.id
 join {{ ref('Doe, Jane') }} w on w.id = s.id
 join {{ source(schema, 'x') }} y on y.id = s.id`)
-	want := []string{shape.Dynamic, shape.NotIdentifier, "legacy", "raw.enrollment", "raw.term", "stg_student"}
+	// A call in a template comment, in comment prose or in a string, the
+	// template's or the SQL's, is not a read; a template block in a SQL
+	// comment is.
+	want := []string{shape.Dynamic, shape.NotIdentifier, "raw.enrollment", "stg_student", "stg_term"}
 	if !slices.Equal(d.Reads, want) {
 		t.Errorf("reads = %q, want %q", d.Reads, want)
+	}
+}
+
+func TestDescribeCallInCommentProseIsNotARead(t *testing.T) {
+	for _, src := range []string{
+		"-- checked with source('Jane', 'Doe') on Monday\nselect 1 from warehouse.dbo.term",
+		"/* ref('Doe') */ select 1 from warehouse.dbo.term",
+		"# source('Jane', 'Doe')\nselect 1 from warehouse.dbo.term",
+		"select 'source(''Jane'', ''Doe'')' from warehouse.dbo.term",
+		"select $$ref('Doe')$$ from warehouse.dbo.term",
+		`select 'it\'s ref(\'Doe\')' from warehouse.dbo.term`,
+	} {
+		d := describe(t, src)
+		if !slices.Equal(d.Reads, []string{"warehouse.dbo.term"}) {
+			t.Errorf("%q: reads = %q", src, d.Reads)
+		}
+	}
+	// Outside every template construct, a call in code is still a read.
+	if d := describe(t, "select * from ref('stg_student')"); !slices.Equal(d.Reads, []string{"stg_student"}) {
+		t.Errorf("reads = %q", d.Reads)
 	}
 }
 

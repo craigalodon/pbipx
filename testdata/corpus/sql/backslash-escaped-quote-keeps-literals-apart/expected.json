@@ -1,0 +1,15 @@
+{
+  "findings": [
+    {
+      "path": "sql/roster_labels.sql",
+      "context": "sql",
+      "column": null,
+      "tier": "block",
+      "reasons": [
+        "person-name-shape"
+      ]
+    }
+  ],
+  "accepted": 0,
+  "suppressed": 0
+}

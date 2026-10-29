@@ -47,10 +47,14 @@ func Describe(data []byte) (*Description, error) {
 	if err != nil {
 		return nil, ParseError(err)
 	}
+	calls, err := templateReads(src, blanked)
+	if err != nil {
+		return nil, ParseError(err)
+	}
 	d := &Description{
 		Creates:          append([]Created{}, rels.creates...),
 		Writes:           sortedSet(rels.writes),
-		Reads:            sortedSet(append(rels.qualified, templateReads(src)...)),
+		Reads:            sortedSet(append(rels.qualified, calls...)),
 		ReadsUnqualified: sortedSet(append(rels.unqualified, rels.cteReads...)),
 		Literals:         map[string]int{},
 	}
@@ -107,9 +111,10 @@ var statementWords = map[string]bool{
 }
 
 // relationsOf reads the relations of SQL text whose template delimiters are
-// already blanked. "..." is a quoted identifier.
+// already blanked, under the first reading that lexes. "..." is a quoted
+// identifier.
 func relationsOf(src string) (*relations, error) {
-	toks, _, err := exprlex.SQL(src, exprlex.QuoteIdent)
+	toks, _, err := exprlex.SQLFirstReading(src, exprlex.QuoteIdent)
 	if err != nil {
 		return nil, err
 	}
@@ -362,16 +367,98 @@ func cteNames(toks []exprlex.Token) map[string]bool {
 	return out
 }
 
-// templateCall finds a template's ref( or source( anywhere in the text,
-// comments included.
+// templateCall finds a template's ref( or source(; templateReads decides
+// whether it stands in code.
 var templateCall = regexp.MustCompile(`\b(?:ref|source)\(`)
+
+// Where a byte of a templated SQL text stands (templateWhere).
+const (
+	inSQL      byte = iota // outside every template construct
+	inTemplate             // code inside a {{ }} or {% %} block
+	inOther                // a template delimiter, comment or string
+)
+
+// templateWhere tells, for each byte of src, whether it is outside every
+// template construct, code inside a template block, or neither. A block's
+// strings run to their closing quote or the block's end, as blankTemplate
+// closes a block at its first closer.
+func templateWhere(src string) []byte {
+	where := make([]byte, len(src))
+	other := func(from, to int) {
+		for k := from; k < to && k < len(src); k++ {
+			where[k] = inOther
+		}
+	}
+	for i := 0; i < len(src); {
+		switch {
+		case strings.HasPrefix(src[i:], "{#"):
+			end := strings.Index(src[i+2:], "#}")
+			if end < 0 {
+				other(i, len(src))
+				return where
+			}
+			other(i, i+2+end+2)
+			i += 2 + end + 2
+		case strings.HasPrefix(src[i:], "{{"), strings.HasPrefix(src[i:], "{%"):
+			closer := "}}"
+			if src[i+1] == '%' {
+				closer = "%}"
+			}
+			other(i, i+2)
+			i += 2
+			var quote byte
+			for i < len(src) && !strings.HasPrefix(src[i:], closer) {
+				c := src[i]
+				switch {
+				case quote != 0:
+					where[i] = inOther
+					if c == '\\' && i+1 < len(src) {
+						i++
+						where[i] = inOther
+					} else if c == quote {
+						quote = 0
+					}
+				case c == '\'' || c == '"':
+					quote = c
+					where[i] = inOther
+				default:
+					where[i] = inTemplate
+				}
+				i++
+			}
+			other(i, i+2)
+			i += 2
+		default:
+			i++
+		}
+	}
+	return where
+}
 
 // templateReads is the relations the text's ref() and source() calls read:
 // the quoted names joined with dots, each part printable, or Dynamic for a
-// call whose arguments are not all quoted names.
-func templateReads(src string) []string {
+// call whose arguments are not all quoted names. A call counts where it is
+// code: inside a template block, wherever the block stands (dbt reads
+// -- depends_on: {{ ref('x') }}), or in the SQL outside every comment and
+// string. A call in comment prose or in a string is not a read. blanked is
+// src with its template delimiters blanked.
+func templateReads(src, blanked string) ([]string, error) {
+	where := templateWhere(src)
+	code, err := exprlex.SQLCode(blanked)
+	if err != nil {
+		return nil, err
+	}
 	var out []string
 	for _, loc := range templateCall.FindAllStringIndex(src, -1) {
+		switch i := loc[0]; where[i] {
+		case inTemplate:
+		case inSQL:
+			if !code[i] {
+				continue
+			}
+		default:
+			continue
+		}
 		parts, ok := quotedArgs(src[loc[1]:])
 		if !ok || len(parts) == 0 {
 			out = append(out, shape.Dynamic)
@@ -382,7 +469,7 @@ func templateReads(src string) []string {
 		}
 		out = append(out, strings.Join(parts, "."))
 	}
-	return out
+	return out, nil
 }
 
 // quotedArgs reads a call's arguments, from just after its parenthesis,
