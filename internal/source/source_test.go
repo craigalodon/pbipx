@@ -1,0 +1,274 @@
+package source
+
+import (
+	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/craigalodon/pbipx/internal/corpus"
+)
+
+// The value planted in these tests. It must never appear in an error.
+const sentinel = "Doe, Jane"
+
+// isolateGit removes every GIT_ variable for the test (a pre-commit hook
+// sets GIT_INDEX_FILE, which would point git at another index) and turns
+// off user and system configuration.
+func isolateGit(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not on PATH")
+	}
+	for _, kv := range os.Environ() {
+		name, value, _ := strings.Cut(kv, "=")
+		if strings.HasPrefix(name, "GIT_") {
+			t.Setenv(name, value) // restored after the test
+			_ = os.Unsetenv(name)
+		}
+	}
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+}
+
+// newRepo writes files into a fresh directory and commits them, leaving
+// untracked those listed.
+func newRepo(t *testing.T, files map[string]string, untracked ...string) string {
+	t.Helper()
+	isolateGit(t)
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, content := range files {
+		write(t, root, name, content)
+	}
+	if err := corpus.GitSetup(root, untracked, nil); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+func write(t *testing.T, root, name, content string) {
+	t.Helper()
+	path := filepath.Join(root, filepath.FromSlash(name))
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func gitIn(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...) //nolint:gosec // G204: the tests' own fixed git commands
+	cmd.Dir = dir
+	cmd.Env = corpus.GitEnv(os.Environ())
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("git %s: %v", args[0], err)
+	}
+}
+
+func open(t *testing.T, root string) *Repo {
+	t.Helper()
+	r, err := Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+func readAll(t *testing.T, s *Set) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	for _, p := range s.Paths {
+		data, err := s.Read(p)
+		if err != nil {
+			out[p] = "<unreadable>"
+			continue
+		}
+		out[p] = string(data)
+	}
+	return out
+}
+
+func TestOpenNotARepository(t *testing.T) {
+	isolateGit(t)
+	dir := t.TempDir()
+	t.Setenv("GIT_CEILING_DIRECTORIES", filepath.Dir(dir))
+	if _, err := Open(dir); !errors.Is(err, ErrNotARepository) {
+		t.Errorf("Open outside a repository: %v, want ErrNotARepository", err)
+	}
+}
+
+func TestOpenFromSubdirectory(t *testing.T) {
+	root := newRepo(t, map[string]string{"notes/a.md": "x\n"})
+	r := open(t, filepath.Join(root, "notes"))
+	if r.Root != root {
+		t.Errorf("Root = %q, want the work tree's root", r.Root)
+	}
+}
+
+func TestAll(t *testing.T) {
+	root := newRepo(t, map[string]string{
+		".gitignore":                "*.log\nbuild/\n",
+		"notes/tracked.md":          "tracked\n",
+		"notes/untracked.md":        "untracked\n",
+		"notes/ignored.log":         "ignored outside a root\n",
+		"pbip/A.Report/report.json": "{}",
+		"pbip/A.Report/debug.log":   "ignored under a root\n",
+		"pbip/build/cache.bin":      "ignored directory under a root\n",
+		"gone.md":                   "deleted from the working tree\n",
+	}, "notes/untracked.md", "pbip/A.Report/debug.log")
+	if err := os.Remove(filepath.Join(root, "gone.md")); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	write(t, outside, "secret.md", sentinel)
+	if err := os.Symlink(outside, filepath.Join(root, "pbip", "linked")); err != nil {
+		t.Skip("symlinks are not available")
+	}
+
+	set, err := open(t, root).All([]string{"pbip"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = set.Close() }()
+	want := []string{
+		".gitignore",
+		"notes/tracked.md",
+		"notes/untracked.md",
+		"pbip/A.Report/debug.log",
+		"pbip/A.Report/report.json",
+		"pbip/build/cache.bin",
+		"pbip/linked",
+	}
+	if !slices.Equal(set.Paths, want) {
+		t.Errorf("paths = %v, want %v", set.Paths, want)
+	}
+	got := readAll(t, set)
+	if got["pbip/linked"] != outside {
+		t.Errorf("a symlink reads as its target path, not through it")
+	}
+	if got["notes/untracked.md"] != "untracked\n" {
+		t.Errorf("an untracked file reads from disk")
+	}
+}
+
+func TestStagedReadsTheIndex(t *testing.T) {
+	root := newRepo(t, map[string]string{"notes/a.md": "committed\n"})
+	write(t, root, "notes/a.md", "staged\n")
+	write(t, root, "notes/b.md", "new and staged\n")
+	gitIn(t, root, "add", "--", "notes/a.md", "notes/b.md")
+	write(t, root, "notes/a.md", "working tree only\n")
+	write(t, root, "notes/c.md", "never staged\n")
+
+	set, err := open(t, root).Staged()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = set.Close() }()
+	got := readAll(t, set)
+	want := map[string]string{"notes/a.md": "staged\n", "notes/b.md": "new and staged\n"}
+	if len(got) != len(want) || got["notes/a.md"] != want["notes/a.md"] || got["notes/b.md"] != want["notes/b.md"] {
+		t.Errorf("staged content = %q, want %q", got, want)
+	}
+}
+
+func TestRev(t *testing.T) {
+	root := newRepo(t, map[string]string{"notes/a.md": "first\n", "notes/sub/b.md": "nested\n"})
+	write(t, root, "notes/a.md", "second\n")
+	r := open(t, root)
+
+	set, err := r.Rev("HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = set.Close() }()
+	got := readAll(t, set)
+	if got["notes/a.md"] != "first\n" || got["notes/sub/b.md"] != "nested\n" {
+		t.Errorf("HEAD's tree = %q", got)
+	}
+	if _, err := set.Read("notes/missing.md"); err == nil {
+		t.Error("a path not in the tree was read")
+	}
+
+	for _, rev := range []string{sentinel, "--output=" + sentinel, ""} {
+		_, err := r.Rev(rev)
+		if !errors.Is(err, ErrBadRevision) {
+			t.Errorf("a bad revision: %v, want ErrBadRevision", err)
+		}
+		if err != nil && strings.Contains(err.Error(), "Doe") {
+			t.Error("the error quotes the revision")
+		}
+	}
+}
+
+func TestPaths(t *testing.T) {
+	root := newRepo(t, map[string]string{
+		"notes/a.md":     "a\n",
+		"notes/sub/b.md": "b\n",
+		"other/c.md":     "c\n",
+	})
+	r := open(t, root)
+	set, err := r.Paths(filepath.Join(root, "notes"), []string{".", "../other/c.md"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = set.Close() }()
+	want := []string{"notes/a.md", "notes/sub/b.md", "other/c.md"}
+	if !slices.Equal(set.Paths, want) {
+		t.Errorf("paths = %v, want %v", set.Paths, want)
+	}
+
+	for _, arg := range []string{"../" + sentinel, filepath.Join(root, "notes", sentinel)} {
+		_, err := r.Paths(root, []string{"notes/a.md", arg})
+		var pe *PathError
+		if !errors.As(err, &pe) || pe.Index != 1 {
+			t.Errorf("a bad path: %v, want a PathError for path 2", err)
+		}
+		if err != nil && strings.Contains(err.Error(), "Doe") {
+			t.Error("the error quotes the path")
+		}
+	}
+}
+
+func TestPathsSkipsGitDirectory(t *testing.T) {
+	root := newRepo(t, map[string]string{"notes/a.md": "a\n"})
+	set, err := open(t, root).Paths(root, []string{"."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = set.Close() }()
+	for _, p := range set.Paths {
+		if strings.HasPrefix(p, ".git/") {
+			t.Fatalf("the walk entered .git: %s", p)
+		}
+	}
+}
+
+func TestSpecialFileIsNotRead(t *testing.T) {
+	root := newRepo(t, map[string]string{"pbip/a.json": "{}"})
+	if err := os.MkdirAll(filepath.Join(root, "pbip", "dir.json"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	d, err := open(t, root).disk()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = d.root.Close() }()
+	if _, err := d.read("pbip/dir.json"); err == nil {
+		t.Error("a directory was read as a file")
+	}
+}
+
+func TestGitErrorQuotesNothing(t *testing.T) {
+	err := &GitError{Op: "ls-files", Exit: 128}
+	if err.Error() != "git ls-files failed (exit 128)" {
+		t.Errorf("message = %q", err.Error())
+	}
+}
