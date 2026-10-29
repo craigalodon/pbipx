@@ -32,7 +32,11 @@ func (s *setup) shell(line string) Decision {
 	// Before anything else: changing Claude Code's settings in the
 	// repository, or approving the policy. Even the tool alone could
 	// redirect into a settings file.
+	ctl := loadControls()
 	for _, v := range w.views {
+		if what, ok := s.reachesControl(v, ctl); ok {
+			return deny(ReasonAgentSettings, "the command names a path %s; %s", what, controlWhy)
+		}
 		if s.viewNamesAgentSettings(v) || s.intoAgentDir(v) {
 			return deny(ReasonAgentSettings, "the command names a Claude Code settings file "+
 				"(.claude/settings.json or .claude/settings.local.json) or writes into a .claude directory; %s", agentSettingsWhy)
@@ -665,6 +669,27 @@ func (s *setup) viewNamesAgentSettings(v view) bool {
 	return false
 }
 
+// reachesControl reports whether v names a path outside the repository
+// that controls the gate (controls.target) in any word, or copies or
+// writes into a user-level Claude Code settings directory. It returns what
+// the path is, in words.
+func (s *setup) reachesControl(v view, ctl controls) (string, bool) {
+	for _, xw := range v.words {
+		abss, _ := s.wordSpellings(v, xw)
+		if what, ok := ctl.target(abss); ok {
+			return what, true
+		}
+	}
+	dests, _ := s.destinations(v)
+	for _, d := range dests {
+		abss, _ := s.wordSpellings(v, d)
+		if what, ok := ctl.dir(abss); ok {
+			return what, true
+		}
+	}
+	return "", false
+}
+
 // copiers write into their last argument, or into -t's.
 var copiers = map[string]string{
 	"cp": "S", "mv": "S", "ln": "S", "install": "mogS", "rsync": "efB",
@@ -676,7 +701,36 @@ var copiers = map[string]string{
 // repository), a file tee writes or dd's of=. A settings file can be made
 // there under any name the command does not show.
 func (s *setup) intoAgentDir(v view) bool {
-	var dests, sources []xword
+	dests, sources := s.destinations(v)
+	intoRepo := false
+	for _, d := range dests {
+		abss, _ := s.wordSpellings(v, d)
+		for _, a := range abss {
+			rel, ok := s.rel(a)
+			if !ok {
+				continue
+			}
+			intoRepo = true
+			if isAgentDir(rel) {
+				return true
+			}
+		}
+	}
+	if !intoRepo {
+		return false
+	}
+	for _, src := range sources {
+		if strings.EqualFold(path.Base(filepath.ToSlash(strings.TrimRight(src.text, `/\`))), ".claude") {
+			return true
+		}
+	}
+	return false
+}
+
+// destinations are the words v writes into: its redirection targets, the
+// destination of cp, mv, ln, install or rsync, the files tee writes and
+// dd's of=. sources are what a copier copies.
+func (s *setup) destinations(v view) (dests, sources []xword) {
 	for _, xw := range v.words {
 		if xw.redirect {
 			dests = append(dests, xw)
@@ -720,29 +774,7 @@ func (s *setup) intoAgentDir(v view) bool {
 			}
 		}
 	}
-	intoRepo := false
-	for _, d := range dests {
-		abss, _ := s.wordSpellings(v, d)
-		for _, a := range abss {
-			rel, ok := s.rel(a)
-			if !ok {
-				continue
-			}
-			intoRepo = true
-			if isAgentDir(rel) {
-				return true
-			}
-		}
-	}
-	if !intoRepo {
-		return false
-	}
-	for _, src := range sources {
-		if strings.EqualFold(path.Base(filepath.ToSlash(strings.TrimRight(src.text, `/\`))), ".claude") {
-			return true
-		}
-	}
-	return false
+	return dests, sources
 }
 
 // isAgentDir reports whether the repository-relative rel is a .claude

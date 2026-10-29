@@ -242,6 +242,7 @@ func TestSymlinkThenDotDot(t *testing.T) {
 }
 
 func TestShellAgentSettingsDirectory(t *testing.T) {
+	newControlDirs(t)
 	root := newRepo(t, settingsFiles())
 	outside := t.TempDir()
 	run(t, root, []decideCase{
@@ -270,6 +271,7 @@ func TestShellAgentSettingsDirectory(t *testing.T) {
 }
 
 func TestShellSelfApproval(t *testing.T) {
+	newControlDirs(t)
 	root := newRepo(t, settingsFiles())
 	run(t, root, []decideCase{
 		{"the tool", sh("pbipx policy approve"), gate.ReasonAgentSettings},
@@ -348,4 +350,25 @@ func TestMessagesHideNames(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestShellControlFiles(t *testing.T) {
+	c := newControlDirs(t)
+	root := newRepo(t, cleanFiles())
+	record := filepath.Join(c.store, "approved", strings.Repeat("0", 64))
+	run(t, root, []decideCase{
+		{"redirect into the store", sh("echo x > " + record), gate.ReasonAgentSettings},
+		{"cp into the store", sh("cp x " + filepath.Join(c.store, "approved") + "/"), gate.ReasonAgentSettings},
+		{"remove the store", sh("rm -rf " + c.store), gate.ReasonAgentSettings},
+		{"the store through PBIPX_CONFIG_DIR's value after cd", sh("cd " + c.store + " && echo x > approved/y"), gate.ReasonAgentSettings},
+		{"redirect into CLAUDE_CONFIG_DIR settings", sh("echo {} > " + filepath.Join(c.claude, "settings.json")), gate.ReasonAgentSettings},
+		{"tee into home settings", sh("echo {} | tee ~/.claude/settings.local.json"), gate.ReasonAgentSettings},
+		{"mv into home settings by $HOME", sh("mv x.json $HOME/.claude/settings.json"), gate.ReasonAgentSettings},
+		{"cp into the home Claude directory", sh("cp settings.json ~/.claude/"), gate.ReasonAgentSettings},
+		{"cp into CLAUDE_CONFIG_DIR", sh("cp x.json " + c.claude), gate.ReasonAgentSettings},
+		{"cd home, then redirect", sh("cd && cd .claude && echo {} > settings.json"), gate.ReasonAgentSettings},
+
+		{"another file in the Claude directory", sh("cat ~/.claude/keybindings.json"), ""},
+		{"cp a command into the Claude directory", sh("cp x.md ~/.claude/commands/"), ""},
+	})
 }

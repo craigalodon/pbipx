@@ -59,6 +59,18 @@ func (s *setup) namesAgentSettings(p string) (string, bool) {
 // inside the managed settings directory. It returns what the path is, in
 // words: the message never names a path outside the repository.
 func (s *setup) controlTarget(p string) (string, bool) {
+	return loadControls().target(s.spellings(p))
+}
+
+// controls are the places outside the repository that control the gate.
+type controls struct {
+	stores, userDirs, managed []string
+}
+
+// loadControls finds the approval store, the user-level Claude Code
+// settings directories and the managed settings directory, each as given
+// and resolved.
+func loadControls() controls {
 	var stores []string
 	if d, err := approval.ConfigDir(); err == nil {
 		stores = append(stores, d)
@@ -66,23 +78,43 @@ func (s *setup) controlTarget(p string) (string, bool) {
 	if base, err := os.UserConfigDir(); err == nil && base != "" {
 		stores = append(stores, filepath.Join(base, "pbipx"))
 	}
-	stores = expandAll(stores)
-	userDirs := expandAll(claudesetup.UserSettingsDirs())
-	managed := expandAll([]string{claudesetup.ManagedSettingsDir(runtime.GOOS)})
-	for _, a := range expandAll(s.spellings(p)) {
-		for _, d := range stores {
+	return controls{
+		stores:   expandAll(stores),
+		userDirs: expandAll(claudesetup.UserSettingsDirs()),
+		managed:  expandAll([]string{claudesetup.ManagedSettingsDir(runtime.GOOS)}),
+	}
+}
+
+// target is controlTarget for absolute spellings.
+func (c controls) target(spellings []string) (string, bool) {
+	for _, a := range expandAll(spellings) {
+		for _, d := range c.stores {
 			if approval.Within(d, a) {
 				return "in the pbipx approval store", true
 			}
 		}
-		for _, d := range userDirs {
+		for _, d := range c.userDirs {
 			if sameDir(d, filepath.Dir(a)) && claudesetup.IsUserSettingsName(filepath.Base(a)) {
 				return "a user-level Claude Code settings file", true
 			}
 		}
-		for _, d := range managed {
+		for _, d := range c.managed {
 			if approval.Within(d, a) {
 				return "in Claude Code's managed settings", true
+			}
+		}
+	}
+	return "", false
+}
+
+// dir reports whether one of the absolute spellings is a user-level Claude
+// Code settings directory: a destination a settings file can be copied or
+// moved into under any name.
+func (c controls) dir(spellings []string) (string, bool) {
+	for _, a := range expandAll(spellings) {
+		for _, d := range c.userDirs {
+			if sameDir(d, a) {
+				return "a user-level Claude Code settings directory", true
 			}
 		}
 	}
