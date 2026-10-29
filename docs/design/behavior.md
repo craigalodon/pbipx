@@ -512,6 +512,9 @@ behavior (2026-10-29).
   is reported as `{?}`, in every scanner (spaces and hyphens print). Such a
   name only decides a verdict when the policy lists or patterns it, so a
   printed name is schema the policy already names.
+  **Divergence (shaped names):** the predecessor prints table and column
+  names as written, treating every name as schema.
+  (Found by the predecessor's corpus runner, 2026-10-29.)
 - A shaped value on a warn column blocks with the shapes as its only reasons
   and no matched column. The warn reason does not join them.
 - Each literal that fires is one finding. Two findings with the same path,
@@ -655,3 +658,20 @@ behavior (2026-10-29).
 - Recording an acceptance under `CI` or `PRE_COMMIT` is an operational
   refusal (exit 3). Recording a block or an unknown finding is a usage error
   (exit 4).
+
+## Known predecessor bugs
+
+Found by the predecessor's corpus runner (2026-10-29). Each case is marked
+`known = "predecessor"`. pbipx handles them; the predecessor misses them
+until cutover replaces it. This list is the record of them; there is no
+separate issue tracker.
+
+| Case | What the predecessor misses |
+|---|---|
+| `tmdl/dax-function-body-blocks` | a DAX user-defined function body is judged as free text, without its columns |
+| `tmdl/query-partition-sql-comparison-blocks` | a legacy `query` partition's SQL is judged as free text, not lexed |
+| `sql/backslash-escaped-quote-keeps-literals-apart` | backslash-escaped quotes shift which text is read as a literal |
+| `sql/hash-comment-is-a-comment` | a `#` comment is lexed as code |
+| `sql/dollar-quoted-value-on-block-column-blocks` | a `$$` string is lexed as code |
+| `yaml/alias-takes-site-association` | an alias does not take the key at the alias site |
+| `yaml/tagged-scalar-judged-by-text` | tagged nulls and booleans are skipped; tagged numbers get no shape checks |
