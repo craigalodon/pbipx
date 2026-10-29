@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -27,8 +28,21 @@ func (s *setup) read(p string) Decision {
 	if p == "" {
 		return allow()
 	}
-	a := abs(s.cwd, p)
+	p = expandHome(p, s.home)
+	// The file the operating system opens: ".." after a symlink is
+	// applied to where the link points.
+	a := rawJoin(s.cwd, p)
 	info, statErr := os.Stat(a)
+	if s.fold && errors.Is(statErr, fs.ErrNotExist) {
+		// A file system that folds case opens the file as spelled on disk.
+		for _, rel := range s.rels(p) {
+			d := filepath.Join(s.repo.Root, filepath.FromSlash(s.diskCase(rel)))
+			if i, err := os.Stat(d); err == nil {
+				a, info, statErr = d, i, nil
+				break
+			}
+		}
+	}
 	if statErr == nil && info.IsDir() {
 		return allow()
 	}
@@ -37,10 +51,10 @@ func (s *setup) read(p string) Decision {
 		class, _ := s.policy.Classify(rel)
 		switch class {
 		case policy.LocalState:
-			return deny(ReasonLocalState, "%s is Power BI Desktop local state, which is never read", rel)
+			return deny(ReasonLocalState, "%s is Power BI Desktop local state, which is never read", displayPath(rel))
 		case policy.Unvettable:
 			return deny(ReasonUnvettable, "%s is under a protected root and no file class covers it, so it cannot be vetted%s",
-				rel, hint(rel))
+				displayPath(rel), hint(rel))
 		case policy.Scanned:
 			scanned = append(scanned, rel)
 		default: // outside, or allowed unscanned
@@ -53,13 +67,13 @@ func (s *setup) read(p string) Decision {
 	case errors.Is(statErr, fs.ErrNotExist):
 		return allow()
 	case statErr != nil:
-		return deny(ReasonScanError, "%s cannot be read, so it was not vetted", scanned[0])
+		return deny(ReasonScanError, "%s cannot be read, so it was not vetted", displayPath(scanned[0]))
 	case !info.Mode().IsRegular():
-		return deny(ReasonScanError, "%s is not a regular file, so it was not vetted", scanned[0])
+		return deny(ReasonScanError, "%s is not a regular file, so it was not vetted", displayPath(scanned[0]))
 	}
 	data, err := os.ReadFile(a) //nolint:gosec // G304: the path is the one the agent is about to read
 	if err != nil {
-		return deny(ReasonScanError, "%s cannot be read, so it was not vetted", scanned[0])
+		return deny(ReasonScanError, "%s cannot be read, so it was not vetted", displayPath(scanned[0]))
 	}
 	for _, rel := range scanned {
 		res := scan.Run([]string{rel}, content(data), s.scanOptions())
@@ -84,7 +98,7 @@ func (s *setup) search(p string) Decision {
 	if p == "" {
 		p = s.cwd
 	}
-	if !s.touches(p) {
+	if !s.touches(expandHome(p, s.home)) {
 		return allow()
 	}
 	return s.tree("a search over a protected root")
@@ -125,7 +139,7 @@ func verdict(res finding.Result, lead string) *Decision {
 	switch {
 	case len(blocks) > 0:
 		d := deny(ReasonFinding, "%s%s, which has a block finding (%s)%s; pbipx scan lists every finding, without values",
-			lead, blocks[0].Path, describeFinding(blocks[0]), more(blocks, errs))
+			lead, displayPath(blocks[0].Path), describeFinding(blocks[0]), more(blocks, errs))
 		return &d
 	case len(errs) > 0:
 		reason := ReasonScanError
@@ -133,7 +147,7 @@ func verdict(res finding.Result, lead string) *Decision {
 			reason = ReasonUnvettable
 		}
 		d := deny(reason, "%s%s, which could not be vetted (%s)%s; pbipx scan lists every finding",
-			lead, errs[0].Path, describeFinding(errs[0]), more(blocks, errs))
+			lead, displayPath(errs[0].Path), describeFinding(errs[0]), more(blocks, errs))
 		return &d
 	}
 	return nil

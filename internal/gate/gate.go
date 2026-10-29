@@ -109,6 +109,10 @@ type setup struct {
 	baseline *baseline.Baseline
 	cwd      string
 	now      time.Time
+	// fold is whether paths are compared without regard to case
+	// (foldCase); home is the gate's own home directory, "" when unknown.
+	fold bool
+	home string
 }
 
 // Decide decides one tool call. It never panics: a panic below it is a deny
@@ -189,7 +193,11 @@ func load(ev Event, opts Options) (*setup, *Decision) {
 	if now.IsZero() {
 		now = time.Now()
 	}
-	return &setup{repo: repo, policy: p, baseline: b, cwd: ev.Cwd, now: now}, nil
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = ""
+	}
+	return &setup{repo: repo, policy: p, baseline: b, cwd: ev.Cwd, now: now, fold: foldCase, home: home}, nil
 }
 
 // describe is a policy or baseline error as structure: the file's name, a

@@ -478,21 +478,47 @@ approve` likewise records the digest of the bytes it loaded.
 
 Decisions by tool. Every tool not listed is allowed.
 
-- **Read** of `file_path`: allowed if it is empty, outside the repository, a
+- **Read** of `file_path` (in pbipx, a leading `~` expanded from the gate's
+  home directory, and the file judged where the operating system opens it,
+  symlinks before `..`): allowed if it is empty, outside the repository, a
   directory, outside the protected roots and not in scan scope, or
   allowlisted. Denied if it is local state or unvettable, whether or not it
   exists. Allowed if it does not exist. Otherwise the file is scanned, strict,
   with the baseline: denied on a block or an error, allowed on warnings.
-- **Grep** of `path` (default: the working directory): if the path is a
+- **Grep** of `path` (default: the working directory; in pbipx a leading
+  `~` expanded): if the path is a
   protected root, inside one, or contains one, every file on disk under the
   protected roots is scanned, without following symlinks. Denied on any block
   or error, including an unvettable file anywhere there. Local state is
   skipped.
 - **Bash** `command`, split into simple commands at `;`, `&&`, `||`, `|`,
   `|&`, `&`, parentheses and newlines, with redirection targets dropped. With
-  unbalanced quotes it falls back to splitting on whitespace.
+  unbalanced quotes it falls back to splitting on whitespace. In pbipx the
+  line is read further, as a shell reads it (see Clarifications, "Gate",
+  divergence on reading a command line):
+  - words are dequoted (`pb""ip` is `pbip`); `$'...'` is decoded as bash
+    decodes it and `$"..."` read as `"..."`;
+  - reserved words and grouping tokens (`if then elif else fi do done while
+    until for in case esac ! { } time function`, and a `name()` definition)
+    are skipped before a command's program, for every rule, git's included;
+    the words of a `for`, `select` or `case` list run nothing;
+  - `cd X` and `pushd X` with a literal target move the working directory
+    for the commands after them (a subshell's scope is not kept: the move
+    carries forward). `cd` to a target that cannot be told (`cd $X`,
+    `cd -` with no earlier `cd`, `popd`, a bare name while `CDPATH` is set,
+    `cd` with `HOME` unknown) makes it unknown;
+  - `~`, `$HOME`, `${HOME}` (the gate process's home directory), `$PWD`,
+    `${PWD}` (the working directory as the line leaves it) and `$OLDPWD`
+    are expanded; any other expansion (`$X`, `${X:-y}`, `$1`, `$(...)`,
+    backticks) leaves its word unknown;
+  - `sh`, `bash`, `zsh` and kin with `-c`, `script -c`, `eval` and every
+    command substitution are read as nested lines, at most four deep, with
+    every rule applied to them. A deeper line, or one whose text is built
+    at run time (`bash -c "$CMD"`), counts as touching every protected
+    root. `eval`'s `cd` moves the line after it; the others' does not.
   1. The tool itself alone (one simple command, optionally after environment
      assignments, with no `$(` or backtick) is allowed: it redacts on its own.
+     `policy approve` is never the tool alone (below).
   2. A git command that prints file content is **denied** outright (git
      history cannot be vetted), unless its pathspecs provably avoid every
      protected root:
@@ -559,20 +585,57 @@ Decisions by tool. Every tool not listed is allowed.
        revision; for `add -p` and `restore -p`, every positional argument.
   3. If the working directory is inside a protected root, or the command
      names a root as a whole word, the protected tree is scanned as for Grep.
+     In pbipx the tree is scanned too when:
+     - any command runs from a working directory that is inside a root or
+       cannot be told;
+     - any word of any command, dequoted, expanded and resolved against
+       that command's working directory (relative to it or absolute,
+       symlinks resolved component by component before a `..` after them,
+       as the operating system walks the path; the stricter of that and the
+       path as written), is a protected root, is inside one, or contains
+       one. That includes the value of a `--flag=value`, what an unquoted
+       glob matches, and for a word with `**` (which zsh, and bash with
+       `globstar`, read as any depth) everything under its literal prefix;
+     - a word of a reading or searching command (`cat`, `head`, `less`,
+       the grep family, `rg`, `sed`, `awk`, `sort`, `jq`, `cp`, `tar` and
+       the like) is unknown;
+     - `find P ... -exec` (or `-execdir`, `-ok`, `-okdir`), or
+       `find P ... | xargs ...`, has a path P (default `.`) that touches a
+       root; `xargs` running a reading command counts as reading under its
+       working directory. The command `-exec` runs is judged as a command
+       of its own;
+     - a nested line is too deep or built at run time.
+
+     A root's name is compared without regard to case in these tests, on
+     every platform: they only decide whether the real roots are scanned.
   4. A recursive search (`grep`, `egrep` and `fgrep` with `-r` or `-R`;
      `rg`, `ag` and `ack` always) over a path that touches a root scans the
      tree. Its paths are the positional arguments after the pattern (unless
-     `-e` or `-f` gave it), default `.`.
+     `-e` or `-f` gave it), default `.`, from the command's working
+     directory.
   5. Otherwise allowed.
 
   Before rule 1, a command that names a Claude Code settings file in the
   repository (below) as a word, a redirection target, the value of a
   `--flag=value` or what an unquoted glob matches is **denied** with
   `agent-settings`. The message does not name the file: it can exist only in
-  the command's text.
+  the command's text. So, in pbipx, is a command that:
+  - writes into a `.claude` directory inside the repository: as a
+    redirection's target, the destination of `cp`, `mv`, `ln`, `install`
+    or `rsync` (the last argument, or `-t`/`--target-directory`), a file
+    `tee` writes or `dd`'s `of=`, or copies a directory named `.claude`
+    into the repository;
+  - names, in any word, a path inside the approval store or a user-level
+    or managed Claude Code settings file (the files the Write rule below
+    protects), or copies or writes into a user-level Claude Code settings
+    directory; the message says which and does not name it;
+  - runs `pbipx policy approve` (`policy`, then `approve`, by any path to
+    the tool, through a pipe, or under `script`, `expect` or `unbuffer`,
+    which give it a terminal): approval is a person's step (ADR-0006).
 - **Write**, **Edit** and **MultiEdit** of `file_path`, and **NotebookEdit**
-  of `notebook_path`: denied with `agent-settings` when the path, under any
-  spelling (relative to the working directory, absolute, symlinks
+  of `notebook_path` (in pbipx, a leading `~` expanded from the gate's home
+  directory, as for Read and Grep): denied with `agent-settings` when the
+  path, under any spelling (relative to the working directory, absolute, symlinks
   resolved), is a Claude Code settings file inside the repository:
   `.claude/settings.json` or `.claude/settings.local.json` in the
   repository root or any directory below it, names compared without regard
@@ -600,6 +663,11 @@ A deny writes the Claude Code decision JSON (`permissionDecision: deny` and a
 reason) to stdout, writes the reason to stderr, and exits 2. An allow writes
 nothing and exits 0. The reason names the file, the column and the reasons,
 and never a value.
+
+Every path a deny message prints, from the event, the command or the
+tree, is printed segment by segment as a finding prints a name: a segment
+with a personal-data shape or a control character is `{?}`. The command
+line is never printed.
 
 Gate reason classes: `finding`, `unvettable`, `scan-error`,
 `local-state`, `agent-settings` (pbipx only), `git-content`, `policy-error`,
@@ -826,6 +894,27 @@ behavior (2026-10-29).
   committed one that sets `disableAllHooks`, or whose `env` sets a variable
   that can defeat the hook, with `hooks-disabled`, because such a file
   turns off the gate's user-level hook. (Decided 2026-10-29.)
+- **Divergence (reading a command line):** the predecessor finds roots in a
+  Bash command only as literal whole words of the line, and a command's
+  program only as its first word. A command that reaches a root without
+  spelling it is allowed there: after `cd ..` from a subdirectory, with the
+  name split by quotes (`pb""ip`) or in another case, after `if`, `!` or
+  `{`, through `~`, `$HOME` or `$PWD`, a `**` glob, `find -exec`, `xargs`,
+  `sh -c` or `eval`, or through a symlink followed by `..`. pbipx reads the
+  line as a shell reads it, as the Bash rule above describes, and errs
+  towards scanning the tree when it cannot tell: an unknown working
+  directory or an unknown word of a reading command counts as touching
+  every root. It also denies writing into a `.claude` directory and running
+  `pbipx policy approve` with `agent-settings`. The corpus cases for it are
+  marked `known = "predecessor"`. (Decided 2026-10-29.)
+- **Divergence (case and paths):** on macOS and Windows, whose file systems
+  fold case, pbipx compares paths and root names without regard to case
+  everywhere the gate compares them (roots, local state, Claude Code
+  settings, the repository root itself); a path is classified as spelled
+  on disk and with each root as the policy writes it. Read, Grep and Write
+  expand a leading `~`. Symlinks are resolved component by component before
+  a `..` after them, so `notes/lnk/../x` with `notes/lnk` linking into a root
+  is judged where the operating system opens it. (Decided 2026-10-29.)
 
 ### Baseline
 

@@ -1,0 +1,7 @@
+description = "a search after a shell reserved word (if) is still a search over the protected tree"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
+known       = "predecessor"

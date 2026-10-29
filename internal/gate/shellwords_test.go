@@ -1,6 +1,8 @@
 package gate
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -11,8 +13,8 @@ import (
 func render(cmds []simple) []string {
 	out := make([]string, 0, len(cmds))
 	for _, c := range cmds {
-		words := make([]string, len(c))
-		for i, w := range c {
+		words := make([]string, len(c.words))
+		for i, w := range c.words {
 			words[i] = w.text
 			if w.redirect {
 				words[i] = ">" + w.text
@@ -42,7 +44,7 @@ func TestSplitCommands(t *testing.T) {
 		{"echo x # a comment; rm y", []string{"echo x"}},
 		{"echo a#b", []string{"echo a#b"}},
 		{"line \\\n continued", []string{"line continued"}},
-		{"pbipx scan $(echo pbip)", []string{"pbipx scan $", "echo pbip"}},
+		{"pbipx scan $(echo pbip)", []string{"pbipx scan $(echo pbip)"}},
 		// Unbalanced quotes fall back to whitespace.
 		{"cat 'pbip/x && rm y", []string{"cat 'pbip/x", "rm y"}},
 		{`echo "open`, []string{`echo "open`}},
@@ -61,7 +63,7 @@ func TestQuotedWords(t *testing.T) {
 		t.Fatalf("got %d commands", len(cmds))
 	}
 	var quoted []bool
-	for _, w := range cmds[0] {
+	for _, w := range cmds[0].words {
 		quoted = append(quoted, w.quoted)
 	}
 	if want := []bool{false, false, true, true, true}; !slices.Equal(quoted, want) {
@@ -165,6 +167,111 @@ func TestRevPath(t *testing.T) {
 		p, ok := revPath(tc.arg)
 		if p != tc.path || ok != tc.ok {
 			t.Errorf("revPath(%q) = %q %v", tc.arg, p, ok)
+		}
+	}
+}
+
+func TestSplitCommandsQuotingAndSubstitution(t *testing.T) {
+	for _, tc := range []struct {
+		line string
+		want []string
+	}{
+		{`echo $'a\'b' c`, []string{"echo a'b c"}},
+		{`echo $'\x41\101B\n'`, []string{"echo AAB\n"}},
+		{`pbipx scan $'\'' ; cat x #'`, []string{"pbipx scan '", "cat x"}},
+		{`echo $"a b"`, []string{"echo a b"}},
+		{`echo "$(cd x; ls)" y`, []string{"echo $(cd x; ls) y"}},
+		{"echo `ls` y", []string{"echo `ls` y"}},
+		{`echo ${HOME}/x $PWD ~/y ~`, []string{"echo ${HOME}/x $PWD ~/y ~"}},
+		{"echo a~b", []string{"echo a~b"}},
+	} {
+		if got := render(splitCommands(tc.line)); !slices.Equal(got, tc.want) {
+			t.Errorf("splitCommands(%q) = %q, want %q", tc.line, got, tc.want)
+		}
+	}
+	cmds := splitCommands("echo \"$(cd x; ls)\" `pwd`; a | b |& c || d")
+	if len(cmds) != 5 || !slices.Equal(cmds[0].subs, []string{"cd x; ls", "pwd"}) {
+		t.Fatalf("substitutions = %q", cmds[0].subs)
+	}
+	var pipes []bool
+	for _, c := range cmds {
+		pipes = append(pipes, c.pipeIn)
+	}
+	if want := []bool{false, false, true, true, false}; !slices.Equal(pipes, want) {
+		t.Errorf("pipeIn = %v, want %v", pipes, want)
+	}
+}
+
+func TestWordParts(t *testing.T) {
+	w := splitCommands(`x ~/a$HOME"$PWD"'$X'${Y}$1`)[0].words[1]
+	var kinds []partKind
+	for _, p := range w.parts {
+		kinds = append(kinds, p.kind)
+	}
+	want := []partKind{tildePart, litPart, paramPart, litPart, paramPart, litPart, paramPart, opaquePart}
+	if !slices.Equal(kinds, want) {
+		t.Errorf("parts = %v, want %v", kinds, want)
+	}
+}
+
+func TestStripKeywordsAndCommand(t *testing.T) {
+	for _, tc := range []struct {
+		line, name string
+		under      []string
+	}{
+		{"if git diff", "git", nil},
+		{"! time git diff", "git", []string{"time"}},
+		{"{ rg x", "rg", nil},
+		{"function f { rg x", "rg", nil},
+		{"for f in a b", "", nil},
+		{"xargs -n 1 -I {} cat {}", "cat", []string{"xargs"}},
+		{"sudo -u nobody env A=1 cat x", "cat", []string{"sudo", "env"}},
+	} {
+		name, _, under := command(splitCommands(tc.line)[0].args())
+		if name != tc.name || !slices.Equal(under, tc.under) {
+			t.Errorf("command(%q) = %q %q, want %q %q", tc.line, name, under, tc.name, tc.under)
+		}
+	}
+}
+
+func TestResolvePath(t *testing.T) {
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{"a/b/c", "x"} {
+		if err := os.MkdirAll(filepath.Join(dir, d), 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join("..", "a", "b", "c"), filepath.Join(dir, "x", "lnk")); err != nil {
+		t.Skip("symlinks are not available")
+	}
+	raw := dir + "/x/lnk/../c"
+	want := filepath.Join(dir, "a", "b", "c")
+	if got := resolvePath(raw); got != want {
+		t.Errorf("resolvePath = %q, want %q", got, want)
+	}
+	// filepath.EvalSymlinks resolves the link before the "..", too.
+	if got, err := filepath.EvalSymlinks(raw); err != nil || got != want {
+		t.Errorf("EvalSymlinks = %q %v, want %q", got, err, want)
+	}
+	// A missing tail is applied lexically.
+	if got := resolvePath(dir + "/x/lnk/../missing/../d"); got != filepath.Join(dir, "a", "b", "d") {
+		t.Errorf("resolvePath with a missing tail = %q", got)
+	}
+}
+
+func TestDisplayPath(t *testing.T) {
+	for in, want := range map[string]string{
+		"pbip/A.Report/x.json":   "pbip/A.Report/x.json",
+		"pbip/Doe, Jane/.pbi":    "pbip/{?}/.pbi",
+		"a/jane.doe@example.com": "a/{?}",
+		"a/b\x07c":               "a/{?}",
+		".":                      ".",
+	} {
+		if got := displayPath(in); got != want {
+			t.Errorf("displayPath(%q) = %q, want %q", in, got, want)
 		}
 	}
 }
