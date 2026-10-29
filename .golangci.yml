@@ -45,6 +45,10 @@ linters:
       - path: ^internal/secret/
         linters: [forbidigo]
         text: secret\.Reveal
+      # The one caller: --show-values, after every refusal check.
+      - path: ^cmd/pbipx/reveal\.go$
+        linters: [forbidigo]
+        text: secret\.Reveal
 
 formatters:
   enable:

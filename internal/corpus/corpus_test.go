@@ -20,7 +20,7 @@ const corpusDir = "../../testdata/corpus"
 // here, in the change that makes it pass (docs/ROADMAP.md, phase 2). Until
 // then its cases are skipped by TestCorpus, but still validated by
 // TestCorpusValid.
-var enabledAreas = []string{}
+var enabledAreas = []string{"text"}
 
 // areasEnv overrides enabledAreas for local work: a comma-separated list of
 // areas, or "all".

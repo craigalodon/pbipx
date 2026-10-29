@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/craigalodon/pbipx/internal/finding"
 )
 
 // sentinel stands for a value typed on a command line. It must never be
@@ -18,22 +20,22 @@ func TestRun(t *testing.T) {
 		wantStdout string
 		wantStderr string
 	}{
-		{"no command", nil, exitUsage, "", "Usage:"},
+		{"no command", nil, finding.ExitUsage, "", "Usage:"},
 		{"version", []string{"version"}, 0, "pbipx dev\n", ""},
 		{"version flag", []string{"--version"}, 0, "pbipx dev\n", ""},
 		{"help", []string{"help"}, 0, "Usage:", ""},
 		{"help flag", []string{"--help"}, 0, "Usage:", ""},
 		{"help for a command", []string{"help", "version"}, 0, "print the version", ""},
-		{"unknown command", []string{sentinel}, exitUsage, "", "usage error"},
-		{"unknown help topic", []string{"help", sentinel}, exitUsage, "", "usage error"},
-		{"unknown flag", []string{"--" + sentinel}, exitUsage, "", "usage error"},
-		{"flag with a value", []string{"--name=" + sentinel}, exitUsage, "", "usage error"},
-		{"extra argument", []string{"version", sentinel}, exitUsage, "", "usage error"},
+		{"unknown command", []string{sentinel}, finding.ExitUsage, "", "usage error"},
+		{"unknown help topic", []string{"help", sentinel}, finding.ExitUsage, "", "usage error"},
+		{"unknown flag", []string{"--" + sentinel}, finding.ExitUsage, "", "usage error"},
+		{"flag with a value", []string{"--name=" + sentinel}, finding.ExitUsage, "", "usage error"},
+		{"extra argument", []string{"version", sentinel}, finding.ExitUsage, "", "usage error"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
-			code := run(tt.args, &stdout, &stderr)
+			code := run(tt.args, strings.NewReader(""), &stdout, &stderr)
 			if code != tt.wantCode {
 				t.Errorf("exit = %d, want %d", code, tt.wantCode)
 			}
