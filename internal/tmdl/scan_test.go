@@ -140,6 +140,10 @@ func TestScanDAX(t *testing.T) {
 		block(finding.TMDLDAX, "student.last_name", "block-column", "table[pick]/calculationGroup/multipleOrEmptySelectionExpression#lit0"),
 		block(finding.TMDLDAX, "student.student_id", "block-column", "table[pick]/calculationGroup/multipleOrEmptySelectionExpression/expression#lit0"))
 
+	check(t, "a table's default detail rows are DAX", scanTMDL(t,
+		"table student\n\tdefaultDetailRowsDefinition = FILTER(student, student[full_name] = \"x\")\n"),
+		block(finding.TMDLDAX, "student.full_name", "block-column", "table[student]/defaultDetailRowsDefinition#lit0"))
+
 	check(t, "role table permission", scanTMDL(t,
 		"role self\n\ttablePermission student = student[email] = \"jane.doe@example.com\"\n"),
 		block(finding.TMDLDAX, "student.email", "block-column,email-shape", "role[self]/tablePermission[student]#lit0"))

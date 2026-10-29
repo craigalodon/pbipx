@@ -76,7 +76,7 @@ const (
 // daxKinds are the declarations whose body is DAX, lowercased.
 var daxKinds = map[string]bool{
 	"measure": true, "column": true, "calculationitem": true, "tablepermission": true,
-	"formatstringdefinition": true, "detailrowsdefinition": true,
+	"formatstringdefinition": true, "detailrowsdefinition": true, "defaultdetailrowsdefinition": true,
 	"targetexpression": true, "statusexpression": true, "trendexpression": true,
 	"multipleoremptyselectionexpression": true, "noselectionexpression": true,
 }
