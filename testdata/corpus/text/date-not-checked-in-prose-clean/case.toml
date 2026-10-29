@@ -1,0 +1,6 @@
+description = "must stay clean: ISO and US dates in prose, in years the date shape accepts, are not checked, because dates in prose identify no one (principle 5)"
+command     = "scan-text"
+args        = ["notes/review.md"]
+policy      = "default"
+exit        = 0
+sentinels   = ["2101-03-15", "6/30/2101"]
