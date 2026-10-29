@@ -363,8 +363,10 @@ func (r *mResult) lists() (connectors, reads, native []string) {
 	paths = slices.Compact(paths)
 	reads = []string{}
 	for _, p := range paths {
-		extended := slices.ContainsFunc(paths, func(q string) bool { return strings.HasPrefix(q, p+".") })
-		if !extended {
+		// paths is sorted, so the first path at or after p+"." is one
+		// that extends p, if any does.
+		i, _ := slices.BinarySearch(paths, p+".")
+		if i == len(paths) || !strings.HasPrefix(paths[i], p+".") {
 			reads = append(reads, p)
 		}
 	}
@@ -404,7 +406,7 @@ func (m *model) query(name string) *mResult {
 // eval reads an M expression: its connectors, the native SQL in its
 // strings, and the path of each let step.
 func (m *model) eval(toks []exprlex.Token) *mResult {
-	e := &mEval{m: m, toks: toks, steps: map[string]mPath{}, res: newResult()}
+	e := &mEval{m: m, toks: toks, steps: map[string]mPath{}, res: newResult(), ends: stepEnds(toks)}
 	for i, t := range toks {
 		if t.Kind == exprlex.Ident && i+1 < len(toks) && toks[i+1].Kind == exprlex.Open && toks[i+1].Text == "(" {
 			if name, ok := connector(t.Text); ok {
@@ -436,6 +438,7 @@ type mEval struct {
 	toks  []exprlex.Token
 	steps map[string]mPath
 	res   *mResult
+	ends  []int // stepEnds(toks)
 }
 
 func (e *mEval) word(i int, w string) bool {
@@ -447,24 +450,49 @@ func (e *mEval) open(i int, text string) bool {
 }
 
 // end is the index of the comma, closing bracket or `in` that ends the
-// expression starting at s, at its own depth.
+// expression starting at s, at its own depth, or limit when none does
+// before it.
 func (e *mEval) end(s, limit int) int {
-	depth := 0
-	for k := s; k < limit; k++ {
-		t := e.toks[k]
+	if s >= limit || e.ends[s] >= limit {
+		return limit
+	}
+	return e.ends[s]
+}
+
+// stepEnds maps each token index to the index of the comma, closing
+// bracket or `in` that ends the expression starting there, at its own
+// depth, or len(toks). A bracket or `let` opens a level; a closing bracket
+// or `in` closes one. The end of the expression at k is the first such
+// token at or after k on k's level: to fall below that level, the
+// expression must first pass a closer on it. One backward pass finds them
+// all, so nested let expressions are read in linear time.
+func stepEnds(toks []exprlex.Token) []int {
+	isWord := func(t exprlex.Token, w string) bool { return t.Kind == exprlex.Ident && strings.EqualFold(t.Text, w) }
+	level := make([]int, len(toks))
+	d := 0
+	for k, t := range toks {
+		level[k] = d
 		switch {
-		case t.Kind == exprlex.Open, e.word(k, "let"):
-			depth++
-		case t.Kind == exprlex.Close, e.word(k, "in"):
-			if depth == 0 {
-				return k
-			}
-			depth--
-		case t.Kind == exprlex.Comma && depth == 0:
-			return k
+		case t.Kind == exprlex.Open, isWord(t, "let"):
+			d++
+		case t.Kind == exprlex.Close, isWord(t, "in"):
+			d--
 		}
 	}
-	return limit
+	ends := make([]int, len(toks))
+	next := map[int]int{} // each level's nearest terminator from k on
+	for k := len(toks) - 1; k >= 0; k-- {
+		t := toks[k]
+		if t.Kind == exprlex.Close || t.Kind == exprlex.Comma || isWord(t, "in") {
+			next[level[k]] = k
+		}
+		j, ok := next[level[k]]
+		if !ok {
+			j = len(toks)
+		}
+		ends[k] = j
+	}
+	return ends
 }
 
 // body evaluates toks[s:limit]: a let expression's steps and its result, or

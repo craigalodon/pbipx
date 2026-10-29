@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/craigalodon/pbipx/internal/finding"
 	"github.com/craigalodon/pbipx/internal/judge"
@@ -237,6 +238,39 @@ func TestDescribeLexErrorIsTheFilesError(t *testing.T) {
 	}
 	if errs[1] != nil {
 		t.Errorf("the other file failed too")
+	}
+}
+
+// nestedLets is an M partition source of at least size bytes whose let
+// expressions nest, each step holding the next: let a = let a = ... in a.
+func nestedLets(size int) string {
+	const open, closeIn = "let a = ", " in a"
+	n := size / (len(open) + len(closeIn))
+	return "table t\n\tpartition t = m\n\t\tsource = " +
+		strings.Repeat(open, n) + "Sql.Database(\"h\", \"d\"){[Item = \"x\"]}[Data]" + strings.Repeat(closeIn, n) + "\n"
+}
+
+// Reading nested let expressions is linear: each level's step is found in
+// one pass, not by scanning the rest of the expression again.
+func TestDescribeNestedLetsIsLinear(t *testing.T) {
+	src := nestedLets(256 << 10)
+	root, err := Parse([]byte(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	descs, errs := Describe([]*Node{root})
+	elapsed := time.Since(start)
+	if errs[0] != nil {
+		t.Fatal(errs[0])
+	}
+	if p := descs[0].Tables[0].Partitions[0]; !slices.Equal(p.Reads, []string{"d.x"}) {
+		t.Errorf("reads = %v", p.Reads)
+	}
+	// Quadratic, this took about half a minute; linear, a fraction of a
+	// second, most of it lexing.
+	if !raceEnabled && elapsed > time.Second {
+		t.Errorf("256KB of nested lets took %v", elapsed)
 	}
 }
 
