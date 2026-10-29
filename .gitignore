@@ -11,3 +11,6 @@
 # The maintainer's private-terms list belongs outside the repository; this is
 # a second line of defence in case one is copied in.
 private-terms.txt
+
+# Agent worktrees created by Claude Code.
+/.claude/worktrees/
