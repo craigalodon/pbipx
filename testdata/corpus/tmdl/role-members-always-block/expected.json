@@ -1,0 +1,24 @@
+{
+  "findings": [
+    {
+      "path": "pbip/School.SemanticModel/definition/roles/advisors.tmdl",
+      "context": "tmdl-role-member",
+      "column": null,
+      "tier": "block",
+      "reasons": [
+        "role-member"
+      ]
+    },
+    {
+      "path": "pbip/School.SemanticModel/definition/roles/advisors.tmdl",
+      "context": "tmdl-role-member",
+      "column": null,
+      "tier": "block",
+      "reasons": [
+        "role-member"
+      ]
+    }
+  ],
+  "accepted": 0,
+  "suppressed": 0
+}

@@ -1,0 +1,6 @@
+description = "a block comment inside native SQL is lexed as SQL, so a commented-out filter still ties its literal to its column; the live filter is on a column that is not listed"
+command     = "scan"
+args        = ["--all"]
+policy      = "default"
+exit        = 1
+sentinels   = ["Doe", "Active", "contoso.example.cloud"]

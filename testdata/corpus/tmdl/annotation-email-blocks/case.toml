@@ -1,0 +1,6 @@
+description = "an annotation body is free text, judged on shape in context tmdl-text"
+command     = "scan"
+args        = ["--all"]
+policy      = "default"
+exit        = 1
+sentinels   = ["jane.doe@example.com"]

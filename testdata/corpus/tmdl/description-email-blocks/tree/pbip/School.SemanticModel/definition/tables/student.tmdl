@@ -1,0 +1,5 @@
+table student
+
+	/// Owner: jane.doe@example.com
+	measure 'Active Rows' = COUNTROWS(student)
+		formatString: 0
