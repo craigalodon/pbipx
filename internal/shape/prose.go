@@ -20,14 +20,19 @@ import (
 // nesting.
 var leadMarkers = regexp.MustCompile(`^(?:` + ws + `*(?:>|#{1,6}` + ws + `|[-*+]` + ws + `|\d{1,9}[.)]` + ws + `|\[[ xX]\]` + ws + `))*`)
 
-// aloneRE is a name standing alone: the name shape, then the first name and
-// at most two more words, and nothing else. The extra words need not be
+// wordTail continues a word: letters, marks, digits, "_", apostrophes, "."
+// and "-". A comma ends a word and is not part of one.
+const wordTail = `[\p{L}\p{M}\p{N}_'’.\-]*`
+
+// aloneRE is a name standing alone: Word, Word, then at most two more words
+// separated by whitespace, and nothing else. The first two words have the
+// name shape; the extra words start with a letter but need not be
 // capitalized.
-var aloneRE = regexp.MustCompile(`^` + last + `,` + ws + `+` + initial + `[^\s\p{Zs}]*(?:` + ws + `+[^\s\p{Zs}]+){0,2}$`)
+var aloneRE = regexp.MustCompile(`^` + last + `,` + ws + `+` + initial + wordTail + `(?:` + ws + `+\p{L}` + wordTail + `){0,2}$`)
 
 // ProseLine returns the shapes one line of prose has, in reason order,
-// skipping those sw turns off. Each literal in allow is removed from the line
-// before it is checked.
+// skipping those sw turns off. Each literal in allow is replaced with a space
+// before the line is checked.
 func ProseLine(line string, allow []string, sw Switches) []finding.Reason {
 	line = clean(line, allow)
 	var reasons []finding.Reason
@@ -41,7 +46,8 @@ func ProseLine(line string, allow []string, sw Switches) []finding.Reason {
 	return reasons
 }
 
-// clean removes allowlisted literals and un-doubles apostrophes. Removal runs
+// clean replaces each allowlisted literal with a space, so the words around
+// it cannot join into a new match, and un-doubles apostrophes. Removal runs
 // before and after un-doubling, so an allowlisted name matches whether the
 // line quotes it SQL-style or not. Longer literals go first, so one that
 // contains another is removed whole.
@@ -51,7 +57,7 @@ func clean(line string, allow []string) string {
 	remove := func(s string) string {
 		for _, a := range sorted {
 			if a != "" {
-				s = strings.ReplaceAll(s, a, "")
+				s = strings.ReplaceAll(s, a, " ")
 			}
 		}
 		return s
@@ -117,7 +123,7 @@ type Hit struct {
 
 // ProseOptions configures Prose.
 type ProseOptions struct {
-	Allow    []string // allowlisted literals, removed from each line
+	Allow    []string // allowlisted literals, replaced with a space in each line
 	Switches Switches
 	// SkipComments skips lines starting with "#", as git does for a commit
 	// message.
