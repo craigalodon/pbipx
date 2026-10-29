@@ -1,0 +1,6 @@
+description = "a tree with no policy file fails; the case plants no value"
+command     = "scan"
+args        = ["--all"]
+policy      = "tree"
+exit        = 3
+sentinels   = []

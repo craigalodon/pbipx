@@ -3,6 +3,7 @@ package corpus
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"os"
 	"path"
@@ -45,8 +46,15 @@ func (c *Corpus) Validate(cs *Case) []error {
 type validator struct {
 	corpus *Corpus
 	cs     *Case
-	// files maps each tree file's slash path to its content.
-	files map[string][]byte
+	// files are the regular files of tree/ and after/tree/.
+	files []treeFile
+}
+
+// treeFile is one fixture file. rel is its path in the root; label names it
+// in a problem, from the case directory.
+type treeFile struct {
+	rel, label string
+	data       []byte
 }
 
 func (v *validator) addf(file, format string, args ...any) { v.cs.addf(file, format, args...) }
@@ -73,7 +81,7 @@ func (v *validator) run() {
 			v.addf(caseFile, "env has a key that is not an environment variable name")
 		}
 	}
-	if s.Command != commandGate && s.Exit != exitUsage {
+	if s.Command != commandGate && s.HasResult() {
 		for i, a := range s.Args {
 			if a == "--format" || strings.HasPrefix(a, "--format=") {
 				v.addf(caseFile, "args[%d] sets --format, which the runner owns", i)
@@ -85,6 +93,7 @@ func (v *validator) run() {
 	}
 
 	v.checkPolicy()
+	v.checkBaseline()
 	v.checkGit()
 	v.checkExit()
 	v.checkSentinels()
@@ -92,13 +101,18 @@ func (v *validator) run() {
 	v.checkFindingPaths()
 }
 
-// readTree loads every regular file under tree/.
+// readTree loads every regular file under tree/ and after/tree/.
 func (v *validator) readTree() {
-	v.files = map[string][]byte{}
-	if !v.cs.HasTree {
-		return
+	if v.cs.HasTree {
+		v.readDir(v.cs.TreeDir(), treeDir)
 	}
-	tree := os.DirFS(v.cs.TreeDir())
+	if v.cs.HasAfter {
+		v.readDir(v.cs.AfterTreeDir(), afterDir+"/"+treeDir)
+	}
+}
+
+func (v *validator) readDir(dir, label string) {
+	tree := os.DirFS(dir)
 	err := fs.WalkDir(tree, ".", func(rel string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -110,21 +124,30 @@ func (v *validator) readTree() {
 		if err != nil {
 			return err
 		}
-		v.files[rel] = data
+		v.files = append(v.files, treeFile{rel: rel, label: label + "/" + rel, data: data})
 		return nil
 	})
 	if err != nil {
-		v.addf(treeDir, "cannot be read")
+		v.addf(label, "cannot be read")
 	}
 }
 
 // inTree reports whether a slash path exists under tree/, as a file,
 // directory or link.
 func (v *validator) inTree(rel string) bool {
-	if !v.cs.HasTree || !validRelPath(rel) {
+	return v.cs.HasTree && existsIn(v.cs.TreeDir(), rel)
+}
+
+// inTrees reports whether a slash path exists under tree/ or after/tree/.
+func (v *validator) inTrees(rel string) bool {
+	return v.inTree(rel) || (v.cs.HasAfter && existsIn(v.cs.AfterTreeDir(), rel))
+}
+
+func existsIn(dir, rel string) bool {
+	if !validRelPath(rel) {
 		return false
 	}
-	_, err := os.Lstat(filepath.Join(v.cs.TreeDir(), filepath.FromSlash(rel)))
+	_, err := os.Lstat(filepath.Join(dir, filepath.FromSlash(rel)))
 	return err == nil
 }
 
@@ -133,7 +156,9 @@ func (v *validator) checkPolicy() {
 	treePolicy := v.inTree(policyFile)
 	switch {
 	case s.Policy == policyInTree:
-		if !treePolicy {
+		// A case may leave the policy out to show that a missing one fails.
+		missingOK := v.cs.Expected != nil && v.cs.Expected.Failure == "policy-error"
+		if !treePolicy && !missingOK {
 			v.addf(caseFile, "policy is %q but tree/%s does not exist", policyInTree, policyFile)
 		}
 	case !kebab.MatchString(s.Policy):
@@ -146,6 +171,69 @@ func (v *validator) checkPolicy() {
 		if treePolicy {
 			v.addf(caseFile, "tree/%s exists but policy is not %q; the runner would overwrite it", policyFile, policyInTree)
 		}
+	}
+}
+
+// checkBaseline checks [[baseline]], [fingerprint] and after/tree/
+// (corpus.md, "Baseline cases").
+func (v *validator) checkBaseline() {
+	s := &v.cs.Spec
+	for i := range s.Baseline {
+		e := &s.Baseline[i]
+		what := fmt.Sprintf("baseline[%d]", i)
+		v.checkRef(e.Ref(), what)
+		if e.Severity == "" {
+			v.addf(caseFile, "%s.severity is missing", what)
+		}
+		if e.Expires == "" {
+			v.addf(caseFile, "%s.expires is missing", what)
+		}
+	}
+	if s.Fingerprint != nil {
+		v.checkRef(*s.Fingerprint, "fingerprint")
+	}
+	uses := slices.ContainsFunc(s.Args, func(a string) bool { return strings.Contains(a, fingerprintPlaceholder) })
+	switch {
+	case uses && s.Fingerprint == nil:
+		v.addf(caseFile, "args use %s, but there is no [fingerprint]", fingerprintPlaceholder)
+	case !uses && s.Fingerprint != nil:
+		v.addf(caseFile, "[fingerprint] is set, but no argument uses %s", fingerprintPlaceholder)
+	}
+	if v.cs.HasAfter && !s.NeedsResolve() {
+		v.addf(afterDir, "is applied only in a case with [[baseline]] or [fingerprint]")
+	}
+}
+
+// checkRef checks a finding description. It must name a finding of tree/,
+// which the setup scan reads before after/tree/ is applied.
+func (v *validator) checkRef(r FindingRef, what string) {
+	switch {
+	case !validRelPath(r.Path):
+		v.addf(caseFile, "%s.path is not a clean relative path with forward slashes", what)
+	case !v.inTree(r.Path):
+		v.addf(caseFile, "%s.path names no path in tree/", what)
+	}
+	if _, ok := v.corpus.Vocab.Contexts[r.Context]; !ok {
+		v.addf(caseFile, "%s.context is not one of the vocabulary's contexts", what)
+	}
+	if r.Column != nil && *r.Column == "" {
+		v.addf(caseFile, "%s.column is empty (omit it for a null column)", what)
+	}
+	if len(r.Reasons) == 0 {
+		v.addf(caseFile, "%s.reasons is empty", what)
+	}
+	last := -1
+	for j, reason := range r.Reasons {
+		rank, ok := v.corpus.Vocab.reasonRank[reason]
+		if !ok {
+			v.addf(caseFile, "%s.reasons[%d] is not one of the vocabulary's finding reasons", what, j)
+			return
+		}
+		if rank <= last {
+			v.addf(caseFile, "%s.reasons is not in the vocabulary's reason-order, or repeats one", what)
+			return
+		}
+		last = rank
 	}
 }
 
@@ -188,16 +276,13 @@ func (v *validator) checkExit() {
 		return
 	}
 	hasExpected := cs.expectedRaw != nil
-	if s.Command == commandGate {
-		if !hasExpected {
-			v.addf(expectedFile, "missing: a gate case needs a decision")
-		}
-	} else if (s.Exit == exitUsage) == hasExpected {
-		if hasExpected {
-			v.addf(expectedFile, "present, but a case with exit = 4 has none")
-		} else {
-			v.addf(expectedFile, "missing: only a case with exit = 4 has none")
-		}
+	switch {
+	case s.Command == commandGate && !hasExpected:
+		v.addf(expectedFile, "missing: a gate case needs a decision")
+	case hasExpected && !s.HasResult():
+		v.addf(expectedFile, "present, but a usage error, baseline record or baseline verify case has none")
+	case !hasExpected && s.HasResult():
+		v.addf(expectedFile, "missing: only a usage error, baseline record or baseline verify case has none")
 	}
 	res := cs.Expected
 	if res == nil {
@@ -250,15 +335,14 @@ func (v *validator) checkSentinels() {
 		if slices.Index(s.Sentinels, sen) < i {
 			v.addf(caseFile, "sentinels[%d] repeats an earlier sentinel", i)
 		}
-		b := []byte(sen)
-		found := bytes.Contains(cs.Stdin, b) || bytes.Contains(args, b)
-		for _, data := range v.files {
-			found = found || bytes.Contains(data, b)
+		found := planted(cs.Stdin, "", sen) || planted(args, "", sen)
+		for _, f := range v.files {
+			found = found || planted(f.data, f.rel, sen)
 		}
 		if !found {
-			v.addf(caseFile, "sentinels[%d] appears nowhere in tree/, stdin or args", i)
+			v.addf(caseFile, "sentinels[%d] appears nowhere in tree/, after/tree/, stdin or args", i)
 		}
-		if bytes.Contains(cs.expectedRaw, b) {
+		if containsAny(cs.expectedRaw, sentinelForms(sen)) {
 			v.addf(expectedFile, "contains sentinels[%d]; a normalized result never holds a value", i)
 		}
 		if strings.Contains(s.Description, sen) {
@@ -293,30 +377,34 @@ func (v *validator) checkReportFixtures() {
 		}
 		exemptAll = res.Reason == "scan-error"
 	}
-	for _, rel := range sortedKeys(v.files) {
-		if !isReportFixture(rel) {
+	for _, f := range v.files {
+		if !isReportFixture(f.rel) {
 			continue
 		}
-		data := v.files[rel]
-		if bytes.HasSuffix(data, []byte("\n")) {
-			v.addf(treeDir+"/"+rel, "report JSON ends with a newline; Desktop writes none")
+		if bytes.HasSuffix(f.data, []byte("\n")) {
+			v.addf(f.label, "report JSON ends with a newline; Desktop writes none")
 		}
-		if !errPaths[rel] && !exemptAll && !json.Valid(data) {
-			v.addf(treeDir+"/"+rel, "report JSON does not parse, and the case expects no error for it")
+		if !errPaths[f.rel] && !exemptAll && !json.Valid(f.data) {
+			v.addf(f.label, "report JSON does not parse, and the case expects no error for it")
 		}
 	}
 }
 
-// checkFindingPaths requires every expected finding to name a path in the
-// tree, or the policy file the runner writes.
+// checkFindingPaths requires every expected finding to name a path in
+// tree/ or after/tree/, or the policy file the runner writes. A scan-text
+// case with a stdin file may also report "-", standard input.
 func (v *validator) checkFindingPaths() {
 	res := v.cs.Expected
 	if res == nil {
 		return
 	}
+	stdinOK := v.cs.Spec.Command == commandScanText && v.cs.HasStdin
 	for i, f := range res.Findings {
-		if f.Path != policyFile && !v.inTree(f.Path) {
-			v.addf(expectedFile, "findings[%d].path names no path in tree/", i)
+		if f.Path == stdinPath && stdinOK {
+			continue
+		}
+		if f.Path != policyFile && !v.inTrees(f.Path) {
+			v.addf(expectedFile, "findings[%d].path names no path in tree/ or after/tree/", i)
 		}
 	}
 }

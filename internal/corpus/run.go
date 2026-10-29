@@ -27,36 +27,66 @@ const (
 // rootPlaceholder is replaced with the root's absolute path in args and stdin.
 const rootPlaceholder = "{root}"
 
+// stdinPath is the path of a finding read from standard input.
+const stdinPath = "-"
+
+// fingerprintPlaceholder is replaced in args with the fingerprint of the
+// finding [fingerprint] describes.
+const fingerprintPlaceholder = "{fingerprint}"
+
 // commandTimeout bounds one run of the binary.
 const commandTimeout = 2 * time.Minute
 
 // redactionEnv is unset for every command unless a case's env sets it.
 var redactionEnv = []string{"CI", "PRE_COMMIT", "PBIPX_NO_REVEAL"}
 
-// Prepare builds a case's root (corpus.md, "Running a case", steps 1 to 3):
-// it copies tree/, writes the policy and, unless git = false, commits the
-// tree. root must be an empty directory.
-func (c *Corpus) Prepare(cs *Case, root string) error {
+// Prepared is a case's root, ready to run in.
+type Prepared struct {
+	Root string
+	// Fingerprint is the resolved fingerprint of the case's [fingerprint],
+	// empty when it has none.
+	Fingerprint string
+}
+
+// Prepare builds a case's root (corpus.md, "Running a case", steps 1 to 3,
+// and "Baseline cases"): it copies tree/ (a case without one starts from an
+// empty root) and writes the policy. A case with [[baseline]] or
+// [fingerprint] then has its findings resolved by a scan with binary, its
+// baseline written and after/tree/ copied over the root. Last, unless
+// git = false, the root is committed. root must be an empty directory;
+// binary is needed only to resolve findings.
+func (c *Corpus) Prepare(cs *Case, root, binary string) (*Prepared, error) {
+	p := &Prepared{Root: root}
 	if cs.HasTree {
 		if err := copyTree(cs.TreeDir(), root); err != nil {
-			return fmt.Errorf("%s: copying tree/: %w", cs.ID(), err)
+			return nil, fmt.Errorf("%s: copying tree/: %w", cs.ID(), err)
 		}
 	}
 	if cs.Spec.Policy != policyInTree {
 		data, err := readIn(filepath.Join(c.Dir, policiesDir), cs.Spec.Policy+".toml")
 		if err != nil {
-			return fmt.Errorf("%s: reading the policy: %w", cs.ID(), err)
+			return nil, fmt.Errorf("%s: reading the policy: %w", cs.ID(), err)
 		}
 		if err := writeIn(root, policyFile, data); err != nil {
-			return fmt.Errorf("%s: writing the policy: %w", cs.ID(), err)
+			return nil, fmt.Errorf("%s: writing the policy: %w", cs.ID(), err)
+		}
+	}
+	if cs.Spec.NeedsResolve() {
+		if err := c.resolve(cs, binary, p); err != nil {
+			return nil, fmt.Errorf("%s: %w", cs.ID(), err)
+		}
+		if cs.HasAfter {
+			if err := copyTree(cs.AfterTreeDir(), root); err != nil {
+				return nil, fmt.Errorf("%s: copying after/tree/: %w", cs.ID(), err)
+			}
 		}
 	}
 	if cs.Spec.UsesGit() {
 		if err := GitSetup(root, cs.Spec.Untracked, cs.Spec.Staged); err != nil {
-			return fmt.Errorf("%s: %w", cs.ID(), err)
+			return nil, fmt.Errorf("%s: %w", cs.ID(), err)
 		}
 	}
-	return nil
+	return p, nil
 }
 
 // GitSetup makes root a git repository and commits every file in it that git
@@ -133,15 +163,16 @@ func CommandEnv(base []string, spec *Spec) []string {
 	return env
 }
 
-// CommandArgs is the binary's command line for a case run in root: the
-// command, the case's args with {root} replaced, and, except for the gate and
-// a usage-error case, --format json.
-func CommandArgs(cs *Case, root string) []string {
+// CommandArgs is the binary's command line for a prepared case: the command,
+// the case's args with {root} and {fingerprint} replaced, and, for a case
+// other than the gate that has an expected.json, --format json.
+func CommandArgs(cs *Case, p *Prepared) []string {
 	args := []string{cs.Spec.Command}
 	for _, a := range cs.Spec.Args {
-		args = append(args, strings.ReplaceAll(a, rootPlaceholder, root))
+		a = strings.ReplaceAll(a, rootPlaceholder, p.Root)
+		args = append(args, strings.ReplaceAll(a, fingerprintPlaceholder, p.Fingerprint))
 	}
-	if cs.Spec.Command != commandGate && cs.Spec.Exit != exitUsage {
+	if cs.Spec.Command != commandGate && cs.Spec.HasResult() {
 		args = append(args, "--format", "json")
 	}
 	return args
@@ -154,15 +185,28 @@ type Outcome struct {
 	Stderr []byte
 }
 
-// Execute runs binary for a prepared case in root (steps 4 and 5).
-func Execute(cs *Case, binary, root string) (Outcome, error) {
+// Execute runs binary for a prepared case (steps 4 and 5).
+func Execute(cs *Case, binary string, p *Prepared) (Outcome, error) {
+	var stdin []byte
+	if cs.HasStdin {
+		stdin = bytes.ReplaceAll(cs.Stdin, []byte(rootPlaceholder), []byte(p.Root))
+	}
+	out, err := runBinary(binary, p.Root, CommandArgs(cs, p), CommandEnv(os.Environ(), &cs.Spec), stdin)
+	if err != nil {
+		return out, fmt.Errorf("%s: %w", cs.ID(), err)
+	}
+	return out, nil
+}
+
+// runBinary runs binary in dir and returns what it produced.
+func runBinary(binary, dir string, args, env []string, stdin []byte) (Outcome, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, binary, CommandArgs(cs, root)...) //nolint:gosec // G204: the binary is the one this test built
-	cmd.Dir = root
-	cmd.Env = CommandEnv(os.Environ(), &cs.Spec)
-	if cs.HasStdin {
-		cmd.Stdin = bytes.NewReader(bytes.ReplaceAll(cs.Stdin, []byte(rootPlaceholder), []byte(root)))
+	cmd := exec.CommandContext(ctx, binary, args...) //nolint:gosec // G204: the binary is the one the test built
+	cmd.Dir = dir
+	cmd.Env = env
+	if stdin != nil {
+		cmd.Stdin = bytes.NewReader(stdin)
 	}
 	var out Outcome
 	var stdout, stderr bytes.Buffer
@@ -175,7 +219,7 @@ func Execute(cs *Case, binary, root string) (Outcome, error) {
 	case errors.As(err, &exitErr) && exitErr.ExitCode() >= 0:
 		out.Exit = exitErr.ExitCode()
 	default:
-		return out, fmt.Errorf("%s: running the binary: %w", cs.ID(), err)
+		return out, fmt.Errorf("running the binary: %w", err)
 	}
 	return out, nil
 }
@@ -227,34 +271,14 @@ func (c *Corpus) Check(cs *Case, out Outcome) []error {
 	return errs
 }
 
-// containsSentinel reports whether s appears in data as written or as a JSON
-// string body, escaped either way json.Marshal can escape it.
-func containsSentinel(data []byte, s string) bool {
-	if bytes.Contains(data, []byte(s)) {
-		return true
-	}
-	for _, html := range []bool{true, false} {
-		var buf bytes.Buffer
-		enc := json.NewEncoder(&buf)
-		enc.SetEscapeHTML(html)
-		if enc.Encode(s) != nil {
-			continue
-		}
-		body := bytes.TrimSuffix(bytes.TrimSpace(buf.Bytes()), []byte(`"`))
-		body = bytes.TrimPrefix(body, []byte(`"`))
-		if bytes.Contains(data, body) {
-			return true
-		}
-	}
-	return false
-}
-
 // denyClass is how pbipx starts a deny reason: "pbipx: <class>:".
 var denyClass = regexp.MustCompile(`^pbipx: ([a-z][a-z0-9-]*):`)
 
 // GateResult normalizes a gate run. Exit 0 is an allow; exit 2 a deny, whose
-// class is read from the start of permissionDecisionReason in the hook JSON
-// on stdout or, when stdout carries none, from the first line of stderr.
+// class is read from the first line of stderr, "pbipx: <class>:", which is
+// authoritative: Claude Code ignores stdout when a hook exits 2. Only when
+// stderr has no class is it read from permissionDecisionReason in the hook
+// JSON on stdout.
 func GateResult(exit int, stdout, stderr []byte) (*Result, error) {
 	switch exit {
 	case 0:
@@ -269,19 +293,20 @@ func GateResult(exit int, stdout, stderr []byte) (*Result, error) {
 			PermissionDecisionReason string `json:"permissionDecisionReason"`
 		} `json:"hookSpecificOutput"`
 	}
-	reason := ""
-	if len(bytes.TrimSpace(stdout)) > 0 {
-		if json.Unmarshal(stdout, &hook) != nil {
-			return nil, errors.New("the gate's stdout is not hook JSON")
-		}
-		if d := hook.HookSpecificOutput.PermissionDecision; d != decisionDeny {
-			return nil, errors.New("the gate exited 2, but its hook JSON is not a deny")
-		}
-		reason = hook.HookSpecificOutput.PermissionDecisionReason
-	} else {
-		reason, _, _ = strings.Cut(string(stderr), "\n")
+	line, _, _ := strings.Cut(string(stderr), "\n")
+	if m := denyClass.FindStringSubmatch(line); m != nil {
+		return &Result{Decision: decisionDeny, Reason: m[1]}, nil
 	}
-	m := denyClass.FindStringSubmatch(reason)
+	if len(bytes.TrimSpace(stdout)) == 0 {
+		return nil, errors.New("the deny has no reason: stderr does not start with \"pbipx: <class>:\" and stdout is empty")
+	}
+	if json.Unmarshal(stdout, &hook) != nil {
+		return nil, errors.New("the gate's stdout is not hook JSON")
+	}
+	if d := hook.HookSpecificOutput.PermissionDecision; d != decisionDeny {
+		return nil, errors.New("the gate exited 2, but its hook JSON is not a deny")
+	}
+	m := denyClass.FindStringSubmatch(hook.HookSpecificOutput.PermissionDecisionReason)
 	if m == nil {
 		return nil, errors.New("the deny reason does not start with \"pbipx: <class>:\"")
 	}

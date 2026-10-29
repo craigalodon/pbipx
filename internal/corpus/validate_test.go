@@ -49,8 +49,8 @@ func findCase(t *testing.T, c *Corpus, id string) *Case {
 
 func TestValidateAcceptsTestCorpus(t *testing.T) {
 	c := openTest(t, testCorpusDir)
-	if len(c.Cases) != 4 {
-		t.Fatalf("loaded %d cases, want 4", len(c.Cases))
+	if len(c.Cases) != 8 {
+		t.Fatalf("loaded %d cases, want 8", len(c.Cases))
 	}
 	for _, e := range c.Problems() {
 		t.Error(e)
@@ -112,8 +112,8 @@ func TestValidateRules(t *testing.T) {
 		{"empty sentinels unexplained", staging, replace("case.toml", "; no value is planted", ""), "does not say the case plants no value"},
 		{"exit not a gate exit", gate, replace("case.toml", "exit        = 2", "exit = 1"), "gate-exit-codes"},
 		{"exit not an exit code", slicer, replace("case.toml", "exit        = 1", "exit = 9"), "exit-codes"},
-		{"usage error with a result", usage, write("expected.json", `{"findings": []}`), "present, but a case with exit = 4"},
-		{"result missing", slicer, remove("expected.json"), "missing: only a case with exit = 4"},
+		{"usage error with a result", usage, write("expected.json", `{"findings": []}`), "present, but a usage error, baseline record or baseline verify case has none"},
+		{"result missing", slicer, remove("expected.json"), "missing: only a usage error, baseline record or baseline verify case has none"},
 		{"gate without stdin", gate, remove("stdin"), "a gate case needs its hook event"},
 		{"gate decision against exit", gate, write("expected.json", `{"decision": "allow"}`), "does not match exit"},
 		{"gate allow with a reason", gate, write("expected.json", `{"decision": "allow", "reason": "finding"}`), "an allow has no reason"},

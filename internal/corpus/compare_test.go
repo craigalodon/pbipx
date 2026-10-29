@@ -124,7 +124,8 @@ func TestGateResult(t *testing.T) {
 	}{
 		{"allow", 0, "", "", "allow"},
 		{"deny from hook JSON", 2, hook("deny", "pbipx: finding: a.json student.full_name"), "", "deny/finding"},
-		{"hook JSON wins over stderr", 2, hook("deny", "pbipx: unvettable: a.bin"), "pbipx: finding: x\n", "deny/unvettable"},
+		{"stderr wins over hook JSON", 2, hook("deny", "pbipx: unvettable: a.bin"), "pbipx: finding: x\n", "deny/finding"},
+		{"hook JSON when stderr has no class", 2, hook("deny", "pbipx: unvettable: a.bin"), "denied\n", "deny/unvettable"},
 		{"deny from stderr", 2, "", "pbipx: policy-error: line 3\nmore\n", "deny/policy-error"},
 		{"deny without a class", 2, hook("deny", "denied"), "", "error"},
 		{"hook JSON that allows", 2, hook("allow", "pbipx: finding: a"), "", "error"},

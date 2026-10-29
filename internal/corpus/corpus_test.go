@@ -87,10 +87,11 @@ func TestCorpus(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := c.Prepare(cs, root); err != nil {
+			prepared, err := c.Prepare(cs, root, bin)
+			if err != nil {
 				t.Fatal(err)
 			}
-			out, err := corpus.Execute(cs, bin, root)
+			out, err := corpus.Execute(cs, bin, prepared)
 			if err != nil {
 				t.Fatal(err)
 			}

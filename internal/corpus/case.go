@@ -36,6 +36,7 @@ const (
 	expectedFile = "expected.json"
 	stdinFile    = "stdin"
 	treeDir      = "tree"
+	afterDir     = "after"
 
 	policyFile     = ".pbipx.toml"
 	policyInTree   = "tree"
@@ -64,6 +65,53 @@ type Spec struct {
 	Staged      []string          `toml:"staged"`
 	Env         map[string]string `toml:"env"`
 	Known       string            `toml:"known"`
+
+	// Baseline and Fingerprint describe findings the runner resolves to
+	// fingerprints (corpus.md, "Baseline cases").
+	Baseline    []BaselineEntry `toml:"baseline"`
+	Fingerprint *FindingRef     `toml:"fingerprint"`
+}
+
+// FindingRef describes one finding by what every implementation agrees on.
+// A nil Column is a null column.
+type FindingRef struct {
+	Path    string   `toml:"path"`
+	Context string   `toml:"context"`
+	Column  *string  `toml:"column"`
+	Reasons []string `toml:"reasons"`
+}
+
+// BaselineEntry is one [[baseline]] entry: a finding, and the severity and
+// expiry its baseline entry is written with, as given.
+type BaselineEntry struct {
+	Path     string   `toml:"path"`
+	Context  string   `toml:"context"`
+	Column   *string  `toml:"column"`
+	Reasons  []string `toml:"reasons"`
+	Severity string   `toml:"severity"`
+	Expires  string   `toml:"expires"`
+}
+
+// Ref is the finding the entry describes.
+func (e *BaselineEntry) Ref() FindingRef {
+	return FindingRef{Path: e.Path, Context: e.Context, Column: e.Column, Reasons: e.Reasons}
+}
+
+// NeedsResolve reports whether the case describes findings that the runner
+// must resolve before the command runs.
+func (s *Spec) NeedsResolve() bool { return len(s.Baseline) > 0 || s.Fingerprint != nil }
+
+// HasResult reports whether the case is meant to have an expected.json: every
+// gate case, and every other case except a usage error and baseline record
+// and verify.
+func (s *Spec) HasResult() bool {
+	if s.Command == commandGate {
+		return true
+	}
+	if s.Command == commandBaseline && len(s.Args) > 0 && (s.Args[0] == "record" || s.Args[0] == "verify") {
+		return false
+	}
+	return s.Exit != exitUsage
 }
 
 // requiredKeys must appear in every case.toml.
@@ -85,6 +133,9 @@ type Case struct {
 	HasStdin bool
 	Stdin    []byte
 	HasTree  bool
+	// HasAfter is set when the case has after/tree/, copied over the root
+	// once its findings are resolved.
+	HasAfter bool
 
 	// expectedRaw is expected.json as read, for checks on its text.
 	expectedRaw []byte
@@ -99,6 +150,9 @@ func (c *Case) ID() string { return c.Area + "/" + c.Name }
 
 // TreeDir is the case's tree/ directory.
 func (c *Case) TreeDir() string { return filepath.Join(c.Dir, treeDir) }
+
+// AfterTreeDir is the case's after/tree/ directory.
+func (c *Case) AfterTreeDir() string { return filepath.Join(c.Dir, afterDir, treeDir) }
 
 func (c *Case) addf(file, format string, args ...any) {
 	where := c.ID()
@@ -186,8 +240,10 @@ func loadCase(dir, area, name string, vocab *Vocabulary) *Case {
 				c.addf(treeDir, "is not a directory")
 			}
 			c.HasTree = e.IsDir()
+		case afterDir:
+			c.loadAfter(dir)
 		default:
-			c.addf("", "unexpected entry %q (a case holds case.toml, expected.json, stdin and tree/)", e.Name())
+			c.addf("", "unexpected entry %q (a case holds case.toml, expected.json, stdin, tree/ and after/tree/)", e.Name())
 		}
 	}
 
@@ -223,6 +279,25 @@ func loadCase(dir, area, name string, vocab *Vocabulary) *Case {
 		}
 	}
 	return c
+}
+
+// loadAfter checks that after/ holds exactly a tree/ directory.
+func (c *Case) loadAfter(dir string) {
+	entries, err := os.ReadDir(filepath.Join(dir, afterDir))
+	if err != nil {
+		c.addf(afterDir, "is not a readable directory")
+		return
+	}
+	for _, e := range entries {
+		if e.Name() != treeDir || !e.IsDir() {
+			c.addf(afterDir, "unexpected entry %q (after/ holds only tree/)", e.Name())
+			continue
+		}
+		c.HasAfter = true
+	}
+	if !c.HasAfter {
+		c.addf(afterDir, "has no tree/")
+	}
 }
 
 // decodeSpec parses case.toml: first loosely, to find missing keys, then

@@ -1,0 +1,1 @@
+{"name":"0001","visual":{"visualType":"slicer","objects":{"general":[{"properties":{"filter":{"filter":{"Where":[{"Condition":{"In":{"Expressions":[{"Column":{"Expression":{"SourceRef":{"Entity":"enrollment"}},"Property":"cohort_year"}}],"Values":[[{"Literal":{"Value":"'Fall 2151'"}}]]}}}]}}}}]}}}
