@@ -141,3 +141,15 @@ func (p *Policy) Accepts(f finding.Finding) bool {
 func underPrefix(path, prefix string) bool {
 	return path == prefix || strings.HasPrefix(path, prefix+"/")
 }
+
+// AllowedValues returns the allow list, sorted. A prose line has no literal
+// boundaries, so its scanner removes each allowed literal from the line
+// rather than asking AllowsValue about the whole line.
+func (p *Policy) AllowedValues() []string {
+	out := make([]string, 0, len(p.allow))
+	for v := range p.allow {
+		out = append(out, v)
+	}
+	slices.Sort(out)
+	return out
+}
