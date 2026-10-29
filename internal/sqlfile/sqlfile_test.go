@@ -187,6 +187,60 @@ func TestJinja(t *testing.T) {
 	}
 }
 
+func TestDialects(t *testing.T) {
+	tests := []struct {
+		name  string
+		src   string
+		wants []want
+	}{
+		{"backslash-escaped quotes", `select 'O\'Pat' as a, 'Doe, Jane' as b, 'D\'Sam' as c`,
+			[]want{{ctx: finding.SQL, tier: finding.Block, reasons: name, locator: "lit5"}}},
+		{"escaped quote in a compared value", `where first_name = 'O\'Pat'`,
+			// Only the backslash reading lexes.
+			[]want{{ctx: finding.SQL, column: "first_name", tier: finding.Block, reasons: blockCol, locator: "lit0"}}},
+		{"hash comment", "select 1 # Doe, Jane\nfrom t",
+			[]want{{ctx: finding.SQLComment, tier: finding.Block, reasons: name, locator: "comment0"}}},
+		{"hash comment numbered after the others", "-- Doe, Jane\nselect 1 # Roe, Richard\n-- x",
+			[]want{{ctx: finding.SQLComment, tier: finding.Block, reasons: name, locator: "comment0"},
+				{ctx: finding.SQLComment, tier: finding.Block, reasons: name, locator: "comment2"}}},
+		{"filter after a hash", "select 1\n# where student_id = 7041293",
+			// Code under the first reading, a comment under the third.
+			[]want{{ctx: finding.SQL, column: "student_id", tier: finding.Block, reasons: blockCol, locator: "lit1"},
+				{ctx: finding.SQLComment, column: "student_id", tier: finding.Block, reasons: blockCol, locator: "comment0.compared0"}}},
+		{"dollar-quoted value", "where full_name = $$Pat$$",
+			[]want{{ctx: finding.SQL, column: "full_name", tier: finding.Block, reasons: blockCol, locator: "lit0"}}},
+		{"dollar-quoted body", "create function f() returns text as $body$ select 'Doe, Jane'$body$",
+			// The body is a string, and its own literal is found by the body
+			// reading.
+			[]want{{ctx: finding.SQL, tier: finding.Block, reasons: name, locator: "lit1"}}},
+		{"unterminated dollar quote", "select 1\n# $body$\nwhere full_name = 'Pat'",
+			// Unterminated in every reading but the third, where it is in a
+			// comment.
+			[]want{{ctx: finding.SQL, column: "full_name", tier: finding.Block, reasons: blockCol}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			check(t, scanSQL(t, tt.src), tt.wants...)
+		})
+	}
+}
+
+func TestAssociationLimitIsAnError(t *testing.T) {
+	cols := make([]string, 300)
+	for i := range cols {
+		cols[i] = "c" + strings.Repeat("x", i)
+	}
+	src := "select 1\nwhere 'Doe, Jane' = coalesce(" + strings.Join(cols, ", ") + ")"
+	got, err := sqlfile.Scan(testPath, []byte(src), loadPolicy(t))
+	var perr *judge.ParseError
+	if got != nil || !errors.As(err, &perr) || perr.Reason != finding.UnlexableSQL || perr.Line != 2 {
+		t.Fatalf("got %d findings, err %v; want an unlexable-sql error on line 2", len(got), err)
+	}
+	if strings.Contains(err.Error(), "Doe") {
+		t.Error("the error message carries source text")
+	}
+}
+
 func TestJinjaKeepsLines(t *testing.T) {
 	src := "{{\n  config()\n}}\n{#\n\n#}\nselect 1\nwhere full_name = 'Doe, Jane\n"
 	_, err := sqlfile.Scan(testPath, []byte(src), loadPolicy(t))

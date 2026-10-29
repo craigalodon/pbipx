@@ -83,7 +83,7 @@ func TestNativeSQLInM(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := describe(Associate(sqlToks, "||")); !slices.Equal(got, []string{"Active=student.status"}) {
+	if got := describe(mustAssociate(t, sqlToks, "||")); !slices.Equal(got, []string{"Active=student.status"}) {
 		t.Errorf("sites %q", got)
 	}
 	if len(coms) != 1 {

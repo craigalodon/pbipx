@@ -183,7 +183,11 @@ func (s *scanner) dax(src string, line int, at string, sc scope, calculated bool
 	if calculated {
 		braces = exprlex.InBraces(toks)
 	}
-	for _, site := range exprlex.Associate(toks, "&") {
+	sites, err := exprlex.AssociateChecked(toks, "&")
+	if err != nil {
+		return lexError(err, line)
+	}
+	for _, site := range sites {
 		cols := site.Columns
 		if h, ok := headers[site.Index]; ok {
 			for _, name := range h {
@@ -209,7 +213,11 @@ func (s *scanner) m(src string, line int, at string, sc scope) error {
 	}
 	blobs := blobLiterals(toks)
 	blobN := 0
-	for _, site := range exprlex.Associate(toks, "&") {
+	sites, err := exprlex.AssociateChecked(toks, "&")
+	if err != nil {
+		return lexError(err, line)
+	}
+	for _, site := range sites {
 		siteLine := line + site.Line - 1
 		if tok, ok := blobs[site.Index]; ok {
 			// The blob is judged as the table it encodes, not as a string.
@@ -249,7 +257,11 @@ func (s *scanner) nativeSQL(src string, line int, at string) error {
 		return lexError(err, line)
 	}
 	at += "/sql"
-	for _, site := range exprlex.Associate(toks, "||") {
+	sites, err := exprlex.AssociateChecked(toks, "||")
+	if err != nil {
+		return lexError(err, line)
+	}
+	for _, site := range sites {
 		s.literal(site.Value, kindOf(site.Number), site.Columns, finding.TMDLNativeSQL, lit(at, site.Index))
 	}
 	s.comments(coms, at, true)

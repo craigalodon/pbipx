@@ -131,9 +131,20 @@ func Values(src string) ([]Value, error) {
 		}
 		out = append(out, Value{Text: s.Value, Kind: kind, Columns: s.Columns, Locator: "lit" + strconv.Itoa(s.Index)})
 	}
-	coms = append(tcoms, coms...)
-	slices.SortStableFunc(coms, func(a, b exprlex.Comment) int { return a.Line - b.Line })
-	for i, c := range coms {
+	// A comment found only under a later reading of the SQL (a # comment) is
+	// numbered after the others, so the locators of a file that every
+	// reading lexes alike do not move.
+	var extra []exprlex.Comment
+	first := tcoms
+	for _, c := range coms {
+		if c.Extra {
+			extra = append(extra, c)
+		} else {
+			first = append(first, c)
+		}
+	}
+	slices.SortStableFunc(first, func(a, b exprlex.Comment) int { return a.Line - b.Line })
+	for i, c := range slices.Concat(first, extra) {
 		loc := "comment" + strconv.Itoa(i)
 		out = append(out, Value{Text: c.Text, Kind: judge.String, Comment: true, Locator: loc})
 		for _, r := range Readings(c.Text, true, loc) {
