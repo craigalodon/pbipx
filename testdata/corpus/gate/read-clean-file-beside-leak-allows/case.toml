@@ -1,0 +1,6 @@
+description = "Read of a clean report file allows even when another file under the root leaks: a Read scans only its file"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = ["Doe, Jane"]

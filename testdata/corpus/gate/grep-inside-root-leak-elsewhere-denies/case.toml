@@ -1,0 +1,6 @@
+description = "Grep inside a root scans every protected file: a leak in another report denies"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]

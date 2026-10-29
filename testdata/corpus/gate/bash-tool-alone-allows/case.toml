@@ -1,0 +1,6 @@
+description = "The tool alone allows while the tree leaks: it redacts on its own"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = ["Doe, Jane"]

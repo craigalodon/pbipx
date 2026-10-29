@@ -1,0 +1,6 @@
+description = "cat of a file under a root names the root, so the protected tree is scanned and the leak denies"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]

@@ -1,0 +1,6 @@
+description = "The tool chained with a cat of a protected file is not waved through; the cat names the root and the leak denies"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]

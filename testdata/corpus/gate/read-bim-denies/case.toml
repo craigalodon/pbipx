@@ -1,0 +1,6 @@
+description = "Read of a model saved as TMSL (.bim) under a root denies as unvettable. Plants no value"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []

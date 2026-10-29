@@ -1,0 +1,6 @@
+description = "Grep over the protected tree denies while an unvettable file exists there. Plants no value"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []

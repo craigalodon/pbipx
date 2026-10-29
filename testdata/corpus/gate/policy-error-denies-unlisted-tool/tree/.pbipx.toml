@@ -1,0 +1,6 @@
+version = 1
+protected_roots = ["pbip"]
+unknown_key = true
+
+[scan]
+report = ["pbip/**/*.json"]

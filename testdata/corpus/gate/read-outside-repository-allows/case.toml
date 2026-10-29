@@ -1,0 +1,6 @@
+description = "Read of a path outside the repository allows, while the tree leaks"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = ["Doe, Jane"]

@@ -1,0 +1,6 @@
+description = "Read with an empty file_path allows, while the tree leaks"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = ["Doe, Jane"]

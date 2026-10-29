@@ -1,0 +1,6 @@
+description = "A non-recursive grep of a file outside the roots allows while the tree leaks"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = ["Doe, Jane"]

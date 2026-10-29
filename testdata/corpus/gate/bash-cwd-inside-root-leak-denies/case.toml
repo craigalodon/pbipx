@@ -1,0 +1,6 @@
+description = "Any command with its working directory inside a root scans the protected tree"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]

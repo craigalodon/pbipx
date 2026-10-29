@@ -1,0 +1,6 @@
+description = "git diff --stat prints no content, so it allows while the tree leaks"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = ["Doe, Jane"]

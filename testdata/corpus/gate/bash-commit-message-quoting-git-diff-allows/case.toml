@@ -1,0 +1,6 @@
+description = "A commit message that mentions git diff inside quotes is not a git diff; allows while the tree leaks"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = ["Doe, Jane"]

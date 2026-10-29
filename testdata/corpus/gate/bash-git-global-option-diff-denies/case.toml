@@ -1,0 +1,6 @@
+description = "git -C . diff: the global option consumes its argument and diff is still found. Plants no value"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []

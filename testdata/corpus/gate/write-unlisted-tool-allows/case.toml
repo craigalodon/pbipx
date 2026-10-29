@@ -1,0 +1,6 @@
+description = "Write is not a gated tool and allows, even into a root while the tree leaks"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = ["Doe, Jane"]
