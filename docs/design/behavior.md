@@ -240,8 +240,8 @@ Contexts `yaml`, `yaml-key`, `yaml-comment` and `yaml-sql`.
   nothing and judged on shape only, whether given as YAML, CSV or SQL.
 - Comments are `#` at a line start or after whitespace, outside any scalar.
 - Quoted runs inside a value are judged for the name shape.
-- Anchors and aliases are walked once. Several documents in one file are
-  scanned.
+- An anchored node is walked where it is anchored and again at each alias,
+  with the alias's association. Several documents in one file are scanned.
 - A YAML error reports its kind and position only. A parser's message can
   quote the source.
 
@@ -517,7 +517,16 @@ behavior (2026-10-29).
 - Literals found by lexing a comment as SQL have the comment's context.
 - Unit-test rows have context `yaml`, including rows written as SQL. CSV
   rows are judged cell by cell.
-- An anchored node is judged once however many aliases refer to it.
+- An anchored node is judged where it is anchored, and again at each alias
+  with the alias site's key and column association: `student_id: *id` ties
+  the anchored value to `student_id`, an aliased `values` list is tied to
+  the accepted_values column, and an aliased string under `where` is lexed
+  as SQL. A judgement the new association does not change (a key's shape, a
+  quoted run, a value with the same columns) is not repeated. At one alias
+  site, an alias inside the walked node to a node that site has already
+  walked is not followed, so cycles end. A file whose aliases walk more than
+  100,000 nodes in all is one `unparseable-yaml` error at the alias that
+  crossed the cap. (This replaces "an anchored node is judged once".)
 - An explicit tag is not trusted. A tagged scalar (`!!null`, `!!bool`,
   `!!int`, a custom `!tag`) is judged by its text: as a string, column
   verdict and shapes, unless its text read as a plain scalar is a number.
