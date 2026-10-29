@@ -1,0 +1,10 @@
+table student
+
+	column student_id
+		dataType: string
+
+	partition student = query
+		mode: import
+		source
+			query = SELECT student_id, full_name FROM enrollment.student WHERE student_id = 'S-1001'
+			dataSource: School

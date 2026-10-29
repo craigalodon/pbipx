@@ -350,3 +350,57 @@ func TestScanLocatorsCarryNoValue(t *testing.T) {
 		t.Errorf("member locator %q", member.Locator)
 	}
 }
+
+func TestScanFunctions(t *testing.T) {
+	check(t, "a function body is DAX", scanTMDL(t,
+		"function Pick = (x) => IF([student_id] = \"S-1001\", 1, 0)\n"),
+		block(finding.TMDLDAX, "student_id", "block-column", "function[Pick]#lit0"))
+
+	check(t, "a typed function body over lines", scanTMDL(t,
+		"function Pick =\n\t\t( x : STRING ) =>\n\t\tCALCULATE(1, student[full_name] = \"Doe, Jane\") // Roe, Richard\n"),
+		block(finding.TMDLDAX, "student.full_name", "block-column,person-name-shape", "function[Pick]#lit1"),
+		block(finding.TMDLComment, "", "person-name-shape", "function[Pick]#comment0"))
+}
+
+func TestScanQueryPartitions(t *testing.T) {
+	check(t, "a query property under a source", scanTMDL(t,
+		"table student\n\tpartition student = query\n\t\tmode: import\n\t\tsource\n"+
+			"\t\t\tquery = SELECT student_id FROM enrollment.student WHERE student_id = 'S-1001'\n"+
+			"\t\t\tdataSource: School\n"),
+		block(finding.TMDLNativeSQL, "student_id", "block-column", "table[student]/partition[student]/source/query#lit0"))
+
+	check(t, "the source of a query partition", scanTMDL(t,
+		"table student\n\tpartition student = query\n\t\tsource =\n"+
+			"\t\t\t\tSELECT a FROM t s\n"+
+			"\t\t\t\tWHERE s.full_name = \"Doe, Jane\" -- and last_name = 'Roe'\n"),
+		// "..." is read as a string and as a name, as in a SQL file.
+		block(finding.TMDLNativeSQL, "s.full_name", "block-column,person-name-shape", "table[student]/partition[student]/source#lit0"),
+		block(finding.TMDLComment, "last_name", "block-column", "table[student]/partition[student]/source#comment0.compared0"))
+
+	src := "table student\n\tpartition student = query\n\t\tsource\n\t\t\tquery =\n\t\t\t\t\tSELECT a FROM t\n\t\t\t\t\tWHERE b = 'Doe, Jane\n"
+	fs, err := tmdl.Scan(scanPath, []byte(src), loadScanPolicy(t))
+	var pe *judge.ParseError
+	if !errors.As(err, &pe) || len(fs) != 0 || pe.Reason != finding.UnparseableTMDL || pe.Line != 6 {
+		t.Errorf("an unterminated string in query SQL: %v", err)
+	}
+	if err != nil && strings.Contains(err.Error(), "Doe") {
+		t.Error("the error carries source text")
+	}
+}
+
+// A table name with a shape is judged by its real name and printed as
+// {?}, so the column a finding prints, and the fingerprint that hashes it,
+// carry no text that is not schema.
+func TestScanColumnsArePrintable(t *testing.T) {
+	check(t, "a quoted table in DAX", scanTMDL(t,
+		"table 'Doe, Jane'\n\tmeasure m = CALCULATE(1, 'Doe, Jane'[full_name] = \"S-1\")\n"),
+		block(finding.TMDLDAX, "{?}.full_name", "block-column", "table[{?}]/measure[m]#lit1"))
+
+	check(t, "the declared table in M", scanTMDL(t,
+		"table 'Doe, Jane'\n\tpartition p = m\n\t\tsource = Table.SelectRows(S, each [last_name] = \"x\")\n"),
+		block(finding.TMDLM, "{?}.last_name", "block-column", "table[{?}]/partition[p]/source#lit0"))
+
+	check(t, "a DATATABLE header", scanTMDL(t,
+		"table 'Doe, Jane'\n\tpartition p = calculated\n\t\tsource = DATATABLE(\"full_name\", STRING, {{\"x\"}})\n"),
+		block(finding.TMDLDAX, "{?}.full_name", "block-column", "table[{?}]/partition[p]/source#lit1"))
+}

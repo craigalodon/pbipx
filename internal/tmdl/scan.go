@@ -17,6 +17,7 @@ import (
 	"github.com/craigalodon/pbipx/internal/judge"
 	"github.com/craigalodon/pbipx/internal/policy"
 	"github.com/craigalodon/pbipx/internal/shape"
+	"github.com/craigalodon/pbipx/internal/sqlfile"
 )
 
 var _ judge.Scanner = Scan
@@ -74,6 +75,7 @@ const (
 	langDAX
 	langCalculated // DAX that declares a calculated table's rows
 	langM
+	langSQL // a legacy query partition's native SQL
 )
 
 // daxKinds are the declarations whose body is DAX, lowercased.
@@ -82,6 +84,7 @@ var daxKinds = map[string]bool{
 	"formatstringdefinition": true, "detailrowsdefinition": true, "defaultdetailrowsdefinition": true,
 	"targetexpression": true, "statusexpression": true, "trendexpression": true,
 	"multipleoremptyselectionexpression": true, "noselectionexpression": true,
+	"function": true,
 }
 
 // language decides how the body of n, a child of parent, is read.
@@ -96,6 +99,8 @@ func language(n, parent *Node) lang {
 			return langM
 		case "calculated":
 			return langCalculated
+		case "query":
+			return langSQL
 		}
 		return langText
 	case kind == "expression" && n.Name != "":
@@ -104,6 +109,8 @@ func language(n, parent *Node) lang {
 		return langDAX
 	case kind == "sourceexpression", kind == "pollingexpression":
 		return langM
+	case kind == "query":
+		return langSQL
 	case daxKinds[kind]:
 		return langDAX
 	}
@@ -161,6 +168,8 @@ func (s *scanner) node(n, parent *Node, at string, sc scope) error {
 			err = s.dax(n.Value, n.ValueLine, at, sc, true)
 		case langM:
 			err = s.m(n.Value, n.ValueLine, at, sc)
+		case langSQL:
+			err = s.querySQL(n.Value, n.ValueLine, at)
 		case langText:
 			s.text(n.Value, at)
 		}
@@ -256,6 +265,22 @@ func (s *scanner) nativeSQL(src string, line int, at string) error {
 	return nil
 }
 
+// querySQL judges the native SQL of a legacy query partition, starting on
+// line: a `query` expression, or the source of a `query` partition. It is
+// SQL as written, so "..." is read both as a string and as a name, as in a
+// SQL file. A bare column stays bare.
+func (s *scanner) querySQL(src string, line int, at string) error {
+	sites, coms, err := exprlex.SQLSites(src)
+	if err != nil {
+		return lexError(err, line)
+	}
+	for _, site := range sites {
+		s.literal(site.Value, kindOf(site.Number), site.Columns, finding.TMDLNativeSQL, lit(at, site.Index))
+	}
+	s.comments(coms, at, true)
+	return nil
+}
+
 // comments judges each comment whole, then its free-text readings; a
 // comment in SQL is also lexed as SQL.
 func (s *scanner) comments(coms []exprlex.Comment, at string, sql bool) {
@@ -306,13 +331,21 @@ func (s *scanner) text(body, at string) {
 	}
 }
 
-// literal judges one value and keeps its finding, if it fires.
+// literal judges one value and keeps its finding, if it fires. The columns
+// are judged by their names as written; the finding's column is then
+// printable (sqlfile.Printable). A table name comes from a declaration, a
+// 'Table'[col] reference or a DATATABLE header, and is text from the file
+// that could hold a value.
 func (s *scanner) literal(value string, kind judge.Kind, cols []finding.Column, ctx finding.Context, loc string) {
 	if s.counts != nil {
 		s.counts[ctx]++
 		return
 	}
 	if v, ok := judge.Literal(value, kind, cols, s.p); ok {
+		if v.Column != nil {
+			c := sqlfile.Printable(*v.Column)
+			v.Column = &c
+		}
 		s.out = append(s.out, v.Finding(s.path, ctx, loc, value))
 	}
 }
