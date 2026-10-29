@@ -322,6 +322,54 @@ func TestCommitMessages(t *testing.T) {
 	}
 }
 
+// shallowClone commits four messages, the oldest holding the sentinel, and
+// clones them two deep: the clone lacks the two oldest commits.
+func shallowClone(t *testing.T) string {
+	t.Helper()
+	origin := newRepo(t, map[string]string{"notes/a.md": "a\n"})
+	gitIn(t, origin, "commit", "--allow-empty", "-m", "subject\n\nbody "+sentinel)
+	gitIn(t, origin, "commit", "--allow-empty", "-m", "third")
+	gitIn(t, origin, "commit", "--allow-empty", "-m", "fourth")
+	clone, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, clone, "clone", "--quiet", "--depth=2", "file://"+filepath.ToSlash(origin), ".")
+	return clone
+}
+
+func TestCommitMessagesRefusesShallowClone(t *testing.T) {
+	r := open(t, shallowClone(t))
+	for _, rng := range []string{"HEAD~1..HEAD", "HEAD"} {
+		got, err := r.CommitMessages(rng)
+		if !errors.Is(err, ErrIncompleteHistory) {
+			t.Errorf("%s in a shallow clone: %d commits, %v; want ErrIncompleteHistory", rng, len(got), err)
+		}
+		if err != nil && strings.Contains(err.Error(), "HEAD") {
+			t.Error("the error quotes the range")
+		}
+	}
+}
+
+func TestCommitMessagesRefusesMissingParent(t *testing.T) {
+	root := shallowClone(t)
+	// Without its shallow file the clone no longer says it is shallow, and
+	// its oldest commit's parent is simply missing. git log stops at it (a
+	// bad range) or the parent check does (incomplete history); either way
+	// nothing is listed.
+	if err := os.Remove(filepath.Join(root, ".git", "shallow")); err != nil {
+		t.Fatal(err)
+	}
+	r := open(t, root)
+	got, err := r.CommitMessages("HEAD")
+	if err == nil {
+		t.Fatalf("a range whose parent is missing listed %d commits", len(got))
+	}
+	if !errors.Is(err, ErrIncompleteHistory) && !errors.Is(err, ErrBadRange) {
+		t.Errorf("a missing parent: %v", err)
+	}
+}
+
 func TestGitErrorQuotesNothing(t *testing.T) {
 	err := &GitError{Op: "ls-files", Exit: 128}
 	if err.Error() != "git ls-files failed (exit 128)" {

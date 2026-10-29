@@ -456,6 +456,32 @@ func TestScanTextCommits(t *testing.T) {
 	}
 }
 
+// A shallow clone lists only the commits it has, so --commits there would
+// pass a range it scanned in part. It is refused, without echoing the range.
+func TestScanTextCommitsRefusesShallowClone(t *testing.T) {
+	origin := newRepo(t, "origin")
+	commitOnBase("subject\n\n"+sentinel+"\n", "second", "third")(t, origin)
+	clone := filepath.Join(filepath.Dir(origin), "clone")
+	gitIn(t, filepath.Dir(origin), "clone", "--quiet", "--depth=1", "--no-single-branch",
+		"file://"+filepath.ToSlash(origin), "clone")
+	t.Chdir(clone)
+	for _, args := range [][]string{
+		{"scan-text", "--commits", "base..HEAD"},
+		{"scan-text", "--format", "json", "--commits", "HEAD"},
+	} {
+		o := runIn(t, "", args...)
+		if o.code != finding.ExitOperational {
+			t.Errorf("%v: exit %d, want %d (stderr %q)", args, o.code, finding.ExitOperational, o.stderr)
+		}
+		if o.stderr != "pbipx: error: "+msgIncompleteHistory+"\n" {
+			t.Errorf("%v: stderr %q", args, o.stderr)
+		}
+		if o.leaks() != "" || strings.Contains(o.stderr, "base") {
+			t.Errorf("%v: output carries a planted value or the range", args)
+		}
+	}
+}
+
 func TestScanTextCommitsNeedsARepository(t *testing.T) {
 	isolate(t)
 	dir := t.TempDir()

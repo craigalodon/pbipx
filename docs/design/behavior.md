@@ -350,7 +350,8 @@ expanded to the files under it. Flags: `--strict`, `--format human|json`, `--sho
 `scan-text` reads files, `-` for standard input, or `--commits <range>`;
 `--commit-msg` skips comment lines (pbipx: scans them, up to the scissors line;
 see Clarifications). With nothing to scan it is a usage error.
-It exits 1 on any finding.
+It exits 1 on any finding. `--commits` in a shallow clone is refused with
+exit 3 (Clarifications, "Prose").
 
 Redaction:
 
@@ -536,6 +537,12 @@ behavior (2026-10-29).
   which git discards with everything below it. The comment character is
   read from `core.commentString` or `core.commentChar`; `auto`, or no
   setting, is `#`. (Decided by the user, 2026-10-29.)
+- `--commits` needs the repository's full history. In a shallow clone git
+  lists only the commits it has, so a range would pass scanned in part. A
+  shallow repository, or a listed commit whose parent is missing, is an
+  operational error (exit 3) with a fixed message that says to fetch the
+  full history, and never echoes the range. A CI job that runs it checks out
+  with `fetch-depth: 0`.
 
 ### Gate
 
