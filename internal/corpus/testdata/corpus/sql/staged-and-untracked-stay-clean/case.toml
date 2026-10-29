@@ -1,0 +1,8 @@
+description = "staged and untracked files with no literal stay clean; no value is planted"
+command     = "scan"
+args        = ["--all"]
+policy      = "minimal"
+exit        = 0
+sentinels   = []
+untracked   = ["sql/untracked.sql"]
+staged      = ["sql/staged.sql"]

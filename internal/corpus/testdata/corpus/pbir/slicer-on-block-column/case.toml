@@ -1,0 +1,6 @@
+description = "slicer selection on a block column blocks"
+command     = "scan"
+args        = ["--all"]
+policy      = "minimal"
+exit        = 1
+sentinels   = ["Doe, Jane"]
