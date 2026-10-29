@@ -1,0 +1,6 @@
+description = "a name filling a whole cell of a pipe table blocks, though the line does not start with it"
+command     = "scan-text"
+args        = ["notes/review.md"]
+policy      = "default"
+exit        = 1
+sentinels   = ["Doe, Jane"]

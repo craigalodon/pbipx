@@ -1,0 +1,6 @@
+description = "a name inside straight double quotes, backticks or curly double quotes is a field of its own and blocks, one finding per line"
+command     = "scan-text"
+args        = ["notes/review.md"]
+policy      = "default"
+exit        = 1
+sentinels   = ["Doe, Jane", "Roe, Richard", "Example, Pat"]

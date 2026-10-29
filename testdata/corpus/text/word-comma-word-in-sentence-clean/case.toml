@@ -1,0 +1,6 @@
+description = "must stay clean: Word, Word inside an ordinary sentence on standard input is not a name standing alone (principle 5)"
+command     = "scan-text"
+args        = ["-"]
+policy      = "default"
+exit        = 0
+sentinels   = ["Fall, Spring"]

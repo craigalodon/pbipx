@@ -1,0 +1,6 @@
+description = "a name after a Markdown quote marker stands alone and blocks"
+command     = "scan-text"
+args        = ["notes/review.md"]
+policy      = "default"
+exit        = 1
+sentinels   = ["Example, Pat"]

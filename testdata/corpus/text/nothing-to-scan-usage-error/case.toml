@@ -1,0 +1,6 @@
+description = "scan-text with no file, no - and no --commits has nothing to scan: a usage error; the case plants no value"
+command     = "scan-text"
+args        = []
+policy      = "default"
+exit        = 4
+sentinels   = []

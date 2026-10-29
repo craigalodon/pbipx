@@ -1,0 +1,17 @@
+{
+  "findings": [
+    {
+      "path": "notes/review.md",
+      "context": "text",
+      "column": null,
+      "tier": "block",
+      "reasons": [
+        "person-name-shape",
+        "email-shape",
+        "phone-shape"
+      ]
+    }
+  ],
+  "accepted": 0,
+  "suppressed": 0
+}

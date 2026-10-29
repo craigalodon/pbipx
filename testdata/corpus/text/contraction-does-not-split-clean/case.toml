@@ -1,0 +1,6 @@
+description = "must stay clean: apostrophes inside words (contractions) do not split a line into fields, so Word, Word followed by more than two words is not cut down to a name"
+command     = "scan-text"
+args        = ["notes/review.md"]
+policy      = "default"
+exit        = 0
+sentinels   = ["Budget, Review"]

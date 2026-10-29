@@ -1,0 +1,6 @@
+description = "must stay clean: a sentence wrapped after a comma leaves a line starting Word, Word, followed by more than two words"
+command     = "scan-text"
+args        = ["notes/review.md"]
+policy      = "default"
+exit        = 0
+sentinels   = ["Term, School"]

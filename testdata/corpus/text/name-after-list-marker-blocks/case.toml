@@ -1,0 +1,6 @@
+description = "a name after a list bullet, and a name after a list number, each stand alone and block, one finding per line"
+command     = "scan-text"
+args        = ["notes/review.md"]
+policy      = "default"
+exit        = 1
+sentinels   = ["Doe, Jane", "Roe, Richard"]

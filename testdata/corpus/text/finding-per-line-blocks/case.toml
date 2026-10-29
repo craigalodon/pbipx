@@ -1,0 +1,6 @@
+description = "findings are per line: two emails on one line are one finding, an email on another line is a second"
+command     = "scan-text"
+args        = ["-"]
+policy      = "default"
+exit        = 1
+sentinels   = ["jane.doe@example.com", "richard.roe@example.org", "pat@example.net"]

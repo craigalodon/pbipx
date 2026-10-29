@@ -1,0 +1,6 @@
+description = "a doubled apostrophe is un-doubled before checking, so a quoted SQL literal holding a name with an apostrophe blocks"
+command     = "scan-text"
+args        = ["notes/review.md"]
+policy      = "default"
+exit        = 1
+sentinels   = ["O''Doe, Jane", "O'Doe, Jane"]

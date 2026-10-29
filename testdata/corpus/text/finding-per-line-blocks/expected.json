@@ -1,0 +1,24 @@
+{
+  "findings": [
+    {
+      "path": "-",
+      "context": "text",
+      "column": null,
+      "tier": "block",
+      "reasons": [
+        "email-shape"
+      ]
+    },
+    {
+      "path": "-",
+      "context": "text",
+      "column": null,
+      "tier": "block",
+      "reasons": [
+        "email-shape"
+      ]
+    }
+  ],
+  "accepted": 0,
+  "suppressed": 0
+}
