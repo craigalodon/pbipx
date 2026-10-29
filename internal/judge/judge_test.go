@@ -96,3 +96,15 @@ func TestParseErrorCarriesNoText(t *testing.T) {
 		t.Errorf("got %q", e.Error())
 	}
 }
+
+func TestFindingHidesShapedNames(t *testing.T) {
+	v := Verdict{Tier: finding.Block, Reasons: []finding.Reason{finding.BlockColumn},
+		Column: &finding.Column{Table: "Doe, Jane", Name: "Full Name"}}
+	f := v.Finding("a.json", finding.Filter, "x", "S-1001")
+	if f.Column == nil || f.Column.String() != "{?}.Full Name" {
+		t.Errorf("column = %v", f.Column)
+	}
+	if v.Column.Table != "Doe, Jane" {
+		t.Error("Finding changed the verdict's column")
+	}
+}

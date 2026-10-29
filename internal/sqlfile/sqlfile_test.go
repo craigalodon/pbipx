@@ -304,7 +304,9 @@ func TestLocatorsCarryNoValue(t *testing.T) {
 func TestPrintable(t *testing.T) {
 	tests := []struct{ in, want finding.Column }{
 		{finding.Column{Table: "student", Name: "full_name"}, finding.Column{Table: "student", Name: "full_name"}},
-		{finding.Column{Name: "full-name"}, finding.Column{Name: "{?}"}},
+		{finding.Column{Name: "full-name"}, finding.Column{Name: "full-name"}},
+		{finding.Column{Table: "s t", Name: "Full Name"}, finding.Column{Table: "s t", Name: "Full Name"}},
+		{finding.Column{Name: "a\tb"}, finding.Column{Name: "{?}"}},
 		{finding.Column{Table: "Doe, Jane", Name: "Doe, Jane"}, finding.Column{Table: "{?}", Name: "{?}"}},
 	}
 	for _, tt := range tests {
@@ -312,12 +314,12 @@ func TestPrintable(t *testing.T) {
 			t.Errorf("Printable(%v) = %v, want %v", tt.in, got, tt.want)
 		}
 	}
-	// A quoted identifier is judged by its name and printed as {?}.
+	// A quoted identifier is judged by its name and printed with it.
 	check(t, scanSQL(t, "where `full name` = 'Pat'"))
 	v := sqlfile.Value{Text: "Pat", Columns: []finding.Column{{Table: "s t", Name: "first_name"}}}
 	got, ok := v.Judge(loadPolicy(t))
-	if !ok || got.Column == nil || got.Column.String() != "{?}.first_name" {
-		t.Errorf("Judge = %+v, %v; want a block on {?}.first_name", got, ok)
+	if !ok || got.Column == nil || got.Column.String() != "s t.first_name" {
+		t.Errorf("Judge = %+v, %v; want a block on s t.first_name", got, ok)
 	}
 }
 

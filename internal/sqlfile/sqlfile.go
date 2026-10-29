@@ -86,16 +86,14 @@ func (v Value) Judge(p *policy.Policy) (judge.Verdict, bool) {
 	return verdict, ok
 }
 
-// Printable is c as a finding may print it: a table or column name that
-// shape.PrintableKey refuses is written {?}. A name read from a quoted
-// identifier or a YAML key is text from the file, and could hold a value.
+// Printable is c as a finding may print it (shape.DisplayName): a table or
+// column name with a personal-data shape or a control character is written
+// {?}. Names from code and model declarations are schema, spaces included.
 func Printable(c finding.Column) finding.Column {
-	if c.Table != "" && !shape.PrintableKey(c.Table) {
-		c.Table = "{?}"
+	if c.Table != "" {
+		c.Table = shape.DisplayName(c.Table)
 	}
-	if !shape.PrintableKey(c.Name) {
-		c.Name = "{?}"
-	}
+	c.Name = shape.DisplayName(c.Name)
 	return c
 }
 

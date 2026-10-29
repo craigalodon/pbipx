@@ -508,6 +508,10 @@ behavior (2026-10-29).
   the first in association order. In a report filter, that is the order the
   walk meets them, with the filter entry's own field column last.
 - A column is reported as written in the file. Only matching is lowercased.
+  A table or column name with a personal-data shape or a control character
+  is reported as `{?}`, in every scanner (spaces and hyphens print). Such a
+  name only decides a verdict when the policy lists or patterns it, so a
+  printed name is schema the policy already names.
 - A shaped value on a warn column blocks with the shapes as its only reasons
   and no matched column. The warn reason does not join them.
 - Each literal that fires is one finding. Two findings with the same path,

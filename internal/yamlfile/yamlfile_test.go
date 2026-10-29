@@ -598,8 +598,10 @@ func TestUnlexableSQLValueIsAnError(t *testing.T) {
 	}
 }
 
-// A key or column name that is not printable is still judged by its name;
-// only the finding prints it as {?}.
+// A key or column name that is not a plain identifier is still judged by its
+// name. A name that decided a verdict is on the policy's lists, so the
+// finding prints it unless it has a shape; only a key in a locator is held
+// to shape.PrintableKey.
 func TestNonPrintableNamesAssociate(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -607,24 +609,24 @@ func TestNonPrintableNamesAssociate(t *testing.T) {
 		wants []want
 	}{
 		{"key with a hyphen", "meta:\n  full-name: Pat\n",
-			[]want{{ctx: finding.YAML, column: "{?}", tier: finding.Block, reasons: blockCol, locator: "meta.{?}"}}},
+			[]want{{ctx: finding.YAML, column: "full-name", tier: finding.Block, reasons: blockCol, locator: "meta.{?}"}}},
 		{"key with a space", "meta:\n  Full Name: Pat\n",
-			[]want{{ctx: finding.YAML, column: "{?}", tier: finding.Block, reasons: blockCol}}},
+			[]want{{ctx: finding.YAML, column: "Full Name", tier: finding.Block, reasons: blockCol}}},
 		{"columns[].name", `
 columns:
   - name: Full Name
     data_tests:
       - accepted_values:
           values: [Pat]
-`, []want{{ctx: finding.YAML, column: "{?}", tier: finding.Block, reasons: blockCol}}},
+`, []want{{ctx: finding.YAML, column: "Full Name", tier: finding.Block, reasons: blockCol}}},
 		{"column_name", `
 data_tests:
   - accepted_values:
       column_name: full-name
       values: [Pat]
-`, []want{{ctx: finding.YAML, column: "{?}", tier: finding.Block, reasons: blockCol}}},
+`, []want{{ctx: finding.YAML, column: "full-name", tier: finding.Block, reasons: blockCol}}},
 		{"quoted SQL identifier", "where: '\"full-name\" = ''Pat'''\n",
-			[]want{{ctx: finding.YAMLSQL, column: "{?}", tier: finding.Block, reasons: blockCol}}},
+			[]want{{ctx: finding.YAMLSQL, column: "full-name", tier: finding.Block, reasons: blockCol}}},
 		{"printable names print", "meta:\n  full_name: Pat\n",
 			[]want{{ctx: finding.YAML, column: "full_name", tier: finding.Block, reasons: blockCol}}},
 		{"an unlisted name stays clean", "meta:\n  Nick Name: Pat\n", nil},

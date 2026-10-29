@@ -46,3 +46,17 @@ func IdentifierPart(part string) string {
 	}
 	return part
 }
+
+// HiddenName replaces a table or column name a finding will not print.
+const HiddenName = "{?}"
+
+// DisplayName is a table or column name as a finding prints it: the name
+// itself, or HiddenName when it is empty, has a personal-data shape, or
+// holds a control character. Names with spaces, which Power BI models use
+// freely, are printed.
+func DisplayName(name string) string {
+	if ObjectName(name) == Withheld {
+		return HiddenName
+	}
+	return name
+}
