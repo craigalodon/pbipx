@@ -193,6 +193,12 @@ func (r *Repo) Rev(rev string) (*Set, error) {
 // list.
 var ErrBadRange = errors.New("the range does not name commits")
 
+// ErrIncompleteHistory is returned when --commits cannot be listed whole:
+// the repository is a shallow clone, or a listed commit's parent is not in
+// it. git would list only the commits it has, and a range scanned in part
+// must not pass as scanned.
+var ErrIncompleteHistory = errors.New("the repository's history is incomplete")
+
 // Commit is one commit's message.
 type Commit struct {
 	ID      string // the full object name
@@ -205,16 +211,25 @@ var commitID = regexp.MustCompile(`^(?:[0-9a-f]{40}|[0-9a-f]{64})$`)
 // CommitMessages is the message of every commit in rng, a range as git log
 // takes it (base..head), newest first. The range is passed after
 // --end-of-options, and one that starts with "-" is refused before git
-// runs.
+// runs. A shallow clone, or a listed commit whose parent is missing, is
+// ErrIncompleteHistory: the range could hold commits git cannot list.
 func (r *Repo) CommitMessages(rng string) ([]Commit, error) {
 	if rng == "" || strings.HasPrefix(rng, "-") {
 		return nil, ErrBadRange
 	}
+	shallow, err := git(r.Root, "rev-parse", "rev-parse", "--is-shallow-repository")
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(string(shallow)) != "false" {
+		return nil, ErrIncompleteHistory
+	}
 	// -z ends each record with a NUL, and the format puts a NUL between
-	// the object name and the message. A signature check would print to
-	// standard output, so it is turned off whatever the configuration says.
+	// the object name, the parents and the message. A signature check
+	// would print to standard output, so it is turned off whatever the
+	// configuration says.
 	out, err := git(r.Root, "log", "log", "-z", "--no-show-signature", "--no-color",
-		"--format=%H%x00%B", "--end-of-options", rng, "--")
+		"--format=%H%x00%P%x00%B", "--end-of-options", rng, "--")
 	if err != nil {
 		var ge *GitError
 		if errors.As(err, &ge) && ge.Exit > 0 {
@@ -223,20 +238,60 @@ func (r *Repo) CommitMessages(rng string) ([]Commit, error) {
 		return nil, err
 	}
 	fields := strings.Split(string(out), "\x00")
-	if len(fields)%2 != 1 || fields[len(fields)-1] != "" {
+	if len(fields)%3 != 1 || fields[len(fields)-1] != "" {
 		return nil, &GitError{Op: "log", Exit: 0}
 	}
-	commits := make([]Commit, 0, len(fields)/2)
-	for i := 0; i+1 < len(fields); i += 2 {
+	commits := make([]Commit, 0, len(fields)/3)
+	var parents []string
+	for i := 0; i+2 < len(fields); i += 3 {
 		// A message holding a NUL would shift every field after it; that
 		// shows as a field that is not an object name, and nothing is
 		// returned rather than a misread message.
 		if !commitID.MatchString(fields[i]) {
 			return nil, &GitError{Op: "log", Exit: 0}
 		}
-		commits = append(commits, Commit{ID: fields[i], Message: []byte(fields[i+1])})
+		for _, p := range strings.Fields(fields[i+1]) {
+			if !commitID.MatchString(p) {
+				return nil, &GitError{Op: "log", Exit: 0}
+			}
+			parents = append(parents, p)
+		}
+		commits = append(commits, Commit{ID: fields[i], Message: []byte(fields[i+2])})
+	}
+	if err := r.haveCommits(parents); err != nil {
+		return nil, err
 	}
 	return commits, nil
+}
+
+// haveCommits returns ErrIncompleteHistory unless every id names a commit
+// in the object store.
+func (r *Repo) haveCommits(ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	slices.Sort(ids)
+	ids = slices.Compact(ids)
+	cmd := exec.Command("git", "cat-file", "--batch-check=%(objectname) %(objecttype)")
+	cmd.Dir = r.Root
+	cmd.Stderr = nil
+	cmd.Stdin = strings.NewReader(strings.Join(ids, "\n") + "\n")
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	if err := cmd.Run(); err != nil {
+		return gitError("cat-file", err)
+	}
+	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
+	if len(lines) != len(ids) {
+		return &GitError{Op: "cat-file", Exit: 0}
+	}
+	for _, l := range lines {
+		// "<oid> commit", or "<oid> missing".
+		if f := strings.Fields(l); len(f) != 2 || f[1] != "commit" {
+			return ErrIncompleteHistory
+		}
+	}
+	return nil
 }
 
 // objectSet is a set read from git's object store. A key may carry a stage

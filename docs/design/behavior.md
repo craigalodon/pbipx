@@ -141,9 +141,9 @@ structure, never source text.
 
 | Slug | What |
 |---|---|
-| `tmdl-dax` | DAX: `measure`, `column`, `calculationItem` and `tablePermission` expressions; the DAX-valued properties (format string, detail rows, KPI target, status and trend expressions, field-parameter selection expressions); an unnamed `expression`; `calculated` partition sources |
+| `tmdl-dax` | DAX: `measure`, `column`, `calculationItem`, `tablePermission` and `function` expressions; the DAX-valued properties (format string, detail rows, KPI target, status and trend expressions, field-parameter selection expressions); an unnamed `expression`; `calculated` partition sources |
 | `tmdl-m` | M: named `expression`s, `sourceExpression`, `pollingExpression`, and `m` and `policyRange` partition sources |
-| `tmdl-native-sql` | a string inside M that looks like SQL (`select ... from`), lexed as SQL |
+| `tmdl-native-sql` | a string inside M that looks like SQL (`select ... from`), lexed as SQL; a legacy `query` partition's SQL (its `source`, or a `query` expression) |
 | `tmdl-enter-data` | each cell of an "Enter data" table |
 | `tmdl-property` | every `kind: value` property value, on shape |
 | `tmdl-description` | every `///` description |
@@ -350,7 +350,8 @@ expanded to the files under it. Flags: `--strict`, `--format human|json`, `--sho
 `scan-text` reads files, `-` for standard input, or `--commits <range>`;
 `--commit-msg` skips comment lines (pbipx: scans them, up to the scissors line;
 see Clarifications). With nothing to scan it is a usage error.
-It exits 1 on any finding.
+It exits 1 on any finding. `--commits` in a shallow clone is refused with
+exit 3 (Clarifications, "Prose").
 
 Redaction:
 
@@ -509,6 +510,18 @@ behavior (2026-10-29).
   result string with a shape still blocks on the shape (principle 6;
   2026-10-29).
 - A bare flag (`isHidden`) is a valid declaration.
+- A DAX user-defined function (`function name = (x) => ...`) is DAX: its
+  body's literals are associated as in a measure, in context `tmdl-dax`.
+- A legacy `query` partition's SQL, the `source` of a partition declared
+  `= query` or a `query` expression under its `source`, is read as SQL in
+  a SQL file is (`"..."` both ways, the associations merged), in context
+  `tmdl-native-sql`. A bare column stays bare. Its comments are
+  `tmdl-comment` and are also lexed as SQL. SQL that does not lex is
+  `unparseable-tmdl`.
+- A table or column name in a finding's column is printed only when it is
+  an identifier with no personal-data shape, and otherwise as `{?}`
+  (`{?}.full_name`), as in SQL and YAML. The verdict is decided on the
+  name as written.
 
 ### SQL and YAML
 
@@ -536,6 +549,12 @@ behavior (2026-10-29).
   which git discards with everything below it. The comment character is
   read from `core.commentString` or `core.commentChar`; `auto`, or no
   setting, is `#`. (Decided by the user, 2026-10-29.)
+- `--commits` needs the repository's full history. In a shallow clone git
+  lists only the commits it has, so a range would pass scanned in part. A
+  shallow repository, or a listed commit whose parent is missing, is an
+  operational error (exit 3) with a fixed message that says to fetch the
+  full history, and never echoes the range. A CI job that runs it checks out
+  with `fetch-depth: 0`.
 
 ### Gate
 

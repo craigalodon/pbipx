@@ -1,0 +1,6 @@
+description = "a DAX user-defined function's body is read as DAX, so a string compared with a block column there blocks in context tmdl-dax"
+command     = "scan"
+args        = ["--all"]
+policy      = "default"
+exit        = 1
+sentinels   = ["S-1001"]

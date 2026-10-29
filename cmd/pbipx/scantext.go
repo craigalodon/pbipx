@@ -119,14 +119,21 @@ func runScanText(cmd *cobra.Command, args []string, f *scanTextFlags) error {
 	return exitWith(res.ExitCode(false))
 }
 
+// msgIncompleteHistory refuses --commits in a shallow clone, or with a
+// commit's parent missing, where git would list only part of the range.
+const msgIncompleteHistory = "--commits needs the repository's full history, and this clone is shallow or missing commits; fetch it in full (git fetch --unshallow, or fetch-depth: 0 in CI) and run again"
+
 // scanCommits scans the message of every commit in the range --commits
 // names, each as --commit-msg scans one: every line, up to git's scissors
-// line. A range git cannot list is a usage error that does not echo it.
+// line. A range git cannot list is a usage error that does not echo it. A
+// history git cannot list whole is an operational error (exit 3).
 func scanCommits(cmd *cobra.Command, repo *source.Repo, p *policy.Policy, f *scanTextFlags) error {
 	list, err := repo.CommitMessages(f.commits)
 	switch {
 	case errors.Is(err, source.ErrBadRange):
 		return usageError{"--commits does not name a range of commits"}
+	case errors.Is(err, source.ErrIncompleteHistory):
+		return operational(cmd, msgIncompleteHistory)
 	case err != nil:
 		return operational(cmd, gitDetail(err))
 	}

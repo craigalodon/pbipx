@@ -1,0 +1,3 @@
+table 'Doe, Jane'
+
+	measure 'Picked Rows' = CALCULATE(COUNTROWS('Doe, Jane'), 'Doe, Jane'[full_name] = "S-1001")
