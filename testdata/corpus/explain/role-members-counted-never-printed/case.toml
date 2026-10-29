@@ -1,0 +1,6 @@
+description = "a role is described by the tables it filters and a count of its members; no member is printed"
+command     = "explain"
+args        = ["pbip"]
+policy      = "default"
+exit        = 0
+sentinels   = ["jane.doe@example.com", "Advising Staff"]

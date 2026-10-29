@@ -1,0 +1,6 @@
+description = "a table file is described by its columns, measures and M partition: connector, navigation path and literal counts"
+command     = "explain"
+args        = ["pbip"]
+policy      = "default"
+exit        = 0
+sentinels   = ["contoso.example.cloud", "Doe, Jane"]

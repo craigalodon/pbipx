@@ -1,0 +1,5 @@
+expression Server = "contoso.example.cloud" meta [IsParameterQuery = true, Type = "Text", IsParameterQueryRequired = true]
+	lineageTag: 00000000-0000-0000-0000-000000000010
+
+expression Database = "warehouse" meta [IsParameterQuery = true, Type = "Text", IsParameterQueryRequired = true]
+	lineageTag: 00000000-0000-0000-0000-000000000011

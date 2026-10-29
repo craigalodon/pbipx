@@ -1,0 +1,6 @@
+description = "a partition's navigation reads through a parameter defined in expressions.tmdl, which is described as a parameter"
+command     = "explain"
+args        = ["pbip"]
+policy      = "default"
+exit        = 0
+sentinels   = ["contoso.example.cloud"]

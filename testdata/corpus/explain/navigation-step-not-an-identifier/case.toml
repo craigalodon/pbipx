@@ -1,0 +1,6 @@
+description = "a navigation step or database that is not a plain identifier is described as not an identifier"
+command     = "explain"
+args        = ["pbip"]
+policy      = "default"
+exit        = 0
+sentinels   = ["contoso.example.cloud", "Doe, Jane", "school-2105"]

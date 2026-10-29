@@ -1,0 +1,19 @@
+{
+  "files": [
+    {
+      "path": "sql/adhoc/lookup.sql",
+      "kind": "sql",
+      "creates": [],
+      "writes": [],
+      "reads": [
+        "warehouse.<not an identifier>"
+      ],
+      "reads_unqualified": [
+        "<not an identifier>"
+      ],
+      "literals": {
+        "sql": 2
+      }
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+table student
+
+	column student_id
+		dataType: string
+		summarizeBy: none
+		sourceColumn: student_id

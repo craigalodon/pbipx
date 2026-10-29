@@ -1,0 +1,21 @@
+table 'Doe, Jane'
+
+	measure 'Calls to 212-555-0142' = COUNTROWS('Doe, Jane')
+
+	column 'jane.doe@example.com'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: contact
+
+	column grade
+		dataType: int64
+		summarizeBy: none
+		sourceColumn: grade
+
+	partition 'Doe, Jane' = m
+		mode: import
+		source =
+				let
+					Source = Csv.Document(File.Contents("grades.csv"))
+				in
+					Source

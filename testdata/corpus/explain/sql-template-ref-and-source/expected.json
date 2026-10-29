@@ -1,0 +1,19 @@
+{
+  "files": [
+    {
+      "path": "sql/models/roster.sql",
+      "kind": "sql",
+      "creates": [],
+      "writes": [],
+      "reads": [
+        "legacy_roster",
+        "raw.enrollment",
+        "stg_student"
+      ],
+      "reads_unqualified": [],
+      "literals": {
+        "sql": 4
+      }
+    }
+  ]
+}

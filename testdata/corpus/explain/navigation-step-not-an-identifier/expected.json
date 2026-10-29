@@ -1,0 +1,38 @@
+{
+  "files": [
+    {
+      "path": "pbip/School.SemanticModel/definition/tables/roster.tmdl",
+      "kind": "model",
+      "tables": [
+        {
+          "name": "roster",
+          "columns": [
+            {
+              "name": "student_id",
+              "type": "string",
+              "calculated": false
+            }
+          ],
+          "measures": [],
+          "partitions": [
+            {
+              "name": "roster",
+              "source": "m",
+              "mode": "import",
+              "connectors": [
+                "Sql.Database"
+              ],
+              "reads": [
+                "<not an identifier>.dbo.<not an identifier>.<not an identifier>"
+              ],
+              "native_sql_reads": []
+            }
+          ]
+        }
+      ],
+      "literals": {
+        "tmdl-m": 5
+      }
+    }
+  ]
+}

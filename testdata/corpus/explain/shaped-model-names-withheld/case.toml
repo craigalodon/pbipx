@@ -1,0 +1,6 @@
+description = "a table, column, measure and partition whose names have a personal-data shape are described as withheld"
+command     = "explain"
+args        = ["pbip"]
+policy      = "default"
+exit        = 0
+sentinels   = ["Doe, Jane", "jane.doe@example.com", "212-555-0142"]

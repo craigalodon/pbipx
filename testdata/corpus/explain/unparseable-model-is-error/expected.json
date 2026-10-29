@@ -1,0 +1,28 @@
+{
+  "files": [
+    {
+      "path": "pbip/School.SemanticModel/definition/tables/broken.tmdl",
+      "kind": "model",
+      "error": "unparseable-tmdl"
+    },
+    {
+      "path": "pbip/School.SemanticModel/definition/tables/student.tmdl",
+      "kind": "model",
+      "tables": [
+        {
+          "name": "student",
+          "columns": [
+            {
+              "name": "student_id",
+              "type": "string",
+              "calculated": false
+            }
+          ],
+          "measures": [],
+          "partitions": []
+        }
+      ],
+      "literals": {}
+    }
+  ]
+}

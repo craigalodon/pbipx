@@ -1,0 +1,6 @@
+description = "template ref() and source() calls are reads, in the SQL and in a comment; plants no value"
+command     = "explain"
+args        = ["sql"]
+policy      = "default"
+exit        = 0
+sentinels   = []

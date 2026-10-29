@@ -1,0 +1,15 @@
+table enrollment
+
+	column enrollment_id
+		dataType: int64
+		summarizeBy: none
+		sourceColumn: enrollment_id
+
+	partition enrollment = m
+		mode: import
+		source =
+				let
+					Source = Sql.Database(Server, Database),
+					enrollment = Source{[Schema = "dbo", Item = "enrollment"]}[Data]
+				in
+					enrollment
