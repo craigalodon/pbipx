@@ -232,7 +232,16 @@ func TestProseHonorsPolicy(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Errorf("prose = %v, want %v", got, want)
 	}
-	if got := File("notes/a.md", []byte(text), CommitMessage, p); len(got) != 0 {
-		t.Errorf("commit message: comment line was checked: %v", summarize(got))
+	// A commit message's comment lines are scanned; the scissors line ends
+	// it.
+	if got := summarize(File("-", []byte(text), CommitMessage("#"), p)); len(got) != 1 {
+		t.Errorf("commit message: comment line was not checked: %v", got)
+	}
+	cut := "subject\n# ------------------------ >8 ------------------------\n" + text
+	if got := File("-", []byte(cut), CommitMessage("#"), p); len(got) != 0 {
+		t.Errorf("commit message: lines below the scissors were checked: %v", summarize(got))
+	}
+	if got := File("-", []byte(cut), CommitMessage(";"), p); len(got) != 1 {
+		t.Errorf("commit message: a scissors line with another comment character stopped the scan")
 	}
 }

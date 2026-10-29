@@ -155,10 +155,18 @@ type Hit struct {
 type ProseOptions struct {
 	Allow    []string // allowlisted literals, replaced with a space in each line
 	Switches Switches
-	// SkipComments skips lines starting with "#", as git does for a commit
-	// message.
-	SkipComments bool
+	// Scissors, when not empty, is a commit message's scissors line (see
+	// ScissorsLine): scanning stops before the first line equal to it, as
+	// git discards that line and everything below. Comment lines are
+	// scanned: a hook cannot tell which of them git's cleanup will keep.
+	Scissors string
 }
+
+// scissorsMark follows the comment character on git's scissors line.
+const scissorsMark = " ------------------------ >8 ------------------------"
+
+// ScissorsLine is git's scissors line for a comment character (or string).
+func ScissorsLine(comment string) string { return comment + scissorsMark }
 
 // bom is the UTF-8 byte order mark.
 const bom = "\xef\xbb\xbf"
@@ -171,8 +179,8 @@ func Prose(text string, opts ProseOptions) []Hit {
 	var hits []Hit
 	for i, line := range strings.Split(text, "\n") {
 		line = strings.TrimSuffix(line, "\r")
-		if opts.SkipComments && strings.HasPrefix(line, "#") {
-			continue
+		if opts.Scissors != "" && line == opts.Scissors {
+			break
 		}
 		if reasons := ProseLine(line, opts.Allow, opts.Switches); len(reasons) > 0 {
 			hits = append(hits, Hit{Line: i + 1, Reasons: reasons, Text: secret.New(line)})

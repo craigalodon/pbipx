@@ -175,16 +175,30 @@ func TestProse(t *testing.T) {
 			{7, email, "Send the export to pat@example.net."},
 		})
 	})
-	t.Run("skipping comment lines", func(t *testing.T) {
-		check(t, Prose(text, ProseOptions{SkipComments: true}), []want{
+	t.Run("comment lines are scanned with a scissors line set", func(t *testing.T) {
+		check(t, Prose(text, ProseOptions{Scissors: ScissorsLine("#")}), []want{
 			{3, name, "- Doe, Jane"},
 			{4, email, "Copy jane.doe@example.com and richard.roe@example.org."},
+			{6, email, "# Author: Roe, Richard <richard.roe@example.org>"},
 			{7, email, "Send the export to pat@example.net."},
 		})
 	})
-	t.Run("only a line starting with # is a comment", func(t *testing.T) {
-		check(t, Prose(" # pat@example.net", ProseOptions{SkipComments: true}), []want{
-			{1, email, " # pat@example.net"},
+	t.Run("scanning stops at the scissors line", func(t *testing.T) {
+		msg := "Subject jane.doe@example.com\n" + ScissorsLine("#") + "\r\n- Doe, Jane\npat@example.net\n"
+		check(t, Prose(msg, ProseOptions{Scissors: ScissorsLine("#")}), []want{
+			{1, email, "Subject jane.doe@example.com"},
+		})
+	})
+	t.Run("a scissors line with another comment character does not stop", func(t *testing.T) {
+		msg := ScissorsLine(";") + "\npat@example.net\n"
+		check(t, Prose(msg, ProseOptions{Scissors: ScissorsLine("#")}), []want{
+			{2, email, "pat@example.net"},
+		})
+	})
+	t.Run("without the option the scissors line is prose", func(t *testing.T) {
+		msg := ScissorsLine("#") + "\npat@example.net\n"
+		check(t, Prose(msg, ProseOptions{}), []want{
+			{2, email, "pat@example.net"},
 		})
 	})
 	t.Run("allow list and switches", func(t *testing.T) {

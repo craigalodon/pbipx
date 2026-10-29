@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/craigalodon/pbipx/internal/finding"
+	"github.com/craigalodon/pbipx/internal/judge"
 	"github.com/craigalodon/pbipx/internal/policy"
 	"github.com/craigalodon/pbipx/internal/shape"
 )
@@ -11,20 +12,26 @@ import (
 // Prose is the scanner for prose files (notes): one block finding per line
 // with a shape, in context text (docs/design/behavior.md, "Prose").
 func Prose(path string, data []byte, p *policy.Policy) ([]finding.Finding, error) {
-	return proseFindings(path, data, p, false), nil
+	return proseFindings(path, data, p, ""), nil
 }
 
-// CommitMessage scans a commit message: prose, with lines starting with "#"
-// skipped as git skips them.
-func CommitMessage(path string, data []byte, p *policy.Policy) ([]finding.Finding, error) {
-	return proseFindings(path, data, p, true), nil
+// CommitMessage is the scanner for a commit message whose comment
+// character (or string) is comment. Every line is scanned, comment lines
+// included, because a hook cannot tell which of them git's cleanup will
+// keep (`git commit -m` keeps them). Scanning stops at the scissors line,
+// which git discards with everything below it.
+func CommitMessage(comment string) judge.Scanner {
+	scissors := shape.ScissorsLine(comment)
+	return func(path string, data []byte, p *policy.Policy) ([]finding.Finding, error) {
+		return proseFindings(path, data, p, scissors), nil
+	}
 }
 
-func proseFindings(path string, data []byte, p *policy.Policy, skipComments bool) []finding.Finding {
+func proseFindings(path string, data []byte, p *policy.Policy, scissors string) []finding.Finding {
 	hits := shape.Prose(string(data), shape.ProseOptions{
-		Allow:        p.AllowedValues(),
-		Switches:     switches(p.Shapes()),
-		SkipComments: skipComments,
+		Allow:    p.AllowedValues(),
+		Switches: switches(p.Shapes()),
+		Scissors: scissors,
 	})
 	out := make([]finding.Finding, 0, len(hits))
 	for _, h := range hits {

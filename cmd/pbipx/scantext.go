@@ -36,7 +36,7 @@ Exit codes: 0 clean, 1 a finding, 3 an error or a failure, 4 a usage error.`,
 			return runScanText(cmd, args, &f)
 		},
 	}
-	cmd.Flags().BoolVar(&f.commitMsg, "commit-msg", false, "skip lines starting with #, as git does for a commit message")
+	cmd.Flags().BoolVar(&f.commitMsg, "commit-msg", false, "scan a commit message: every line, comment lines included, up to git's scissors line")
 	cmd.Flags().StringVar(&f.policy, "policy", "", "the policy file (default: .pbipx.toml at the repository root)")
 	f.out.register(cmd, true)
 	return cmd
@@ -71,7 +71,11 @@ func runScanText(cmd *cobra.Command, args []string, f *scanTextFlags) error {
 
 	scanner := scan.Prose
 	if f.commitMsg {
-		scanner = scan.CommitMessage
+		comment := "#"
+		if repo != nil {
+			comment = repo.CommentChar()
+		}
+		scanner = scan.CommitMessage(comment)
 	}
 	var findings []finding.Finding
 	for i, a := range args {

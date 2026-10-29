@@ -266,6 +266,22 @@ func TestSpecialFileIsNotRead(t *testing.T) {
 	}
 }
 
+func TestCommentChar(t *testing.T) {
+	root := newRepo(t, map[string]string{"notes/a.md": "a\n"})
+	r := open(t, root)
+	if got := r.CommentChar(); got != "#" {
+		t.Errorf("default = %q, want #", got)
+	}
+	gitIn(t, root, "config", "core.commentChar", ";")
+	if got := r.CommentChar(); got != ";" {
+		t.Errorf("core.commentChar = %q, want ;", got)
+	}
+	gitIn(t, root, "config", "core.commentChar", "auto")
+	if got := r.CommentChar(); got != "#" {
+		t.Errorf("auto = %q, want #", got)
+	}
+}
+
 func TestGitErrorQuotesNothing(t *testing.T) {
 	err := &GitError{Op: "ls-files", Exit: 128}
 	if err.Error() != "git ls-files failed (exit 128)" {

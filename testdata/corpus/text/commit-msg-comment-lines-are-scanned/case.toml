@@ -1,0 +1,7 @@
+description = "with --commit-msg, lines starting with # are scanned, because git commit -m keeps them and a hook cannot tell which ones git's cleanup will strip, so an email in a comment line blocks"
+command     = "scan-text"
+args        = ["--commit-msg", "message.txt"]
+policy      = "default"
+exit        = 1
+sentinels   = ["Doe, Jane", "jane.doe@example.com"]
+known       = "predecessor"

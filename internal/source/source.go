@@ -80,6 +80,31 @@ func Open(dir string) (*Repo, error) {
 	return &Repo{Root: root}, nil
 }
 
+// defaultComment is git's default comment character.
+const defaultComment = "#"
+
+// CommentChar is the comment string git uses for this repository's commit
+// messages: core.commentString, else core.commentChar, else "#". "auto"
+// (git picks a character the message does not use) and any failure to read
+// the configuration give "#": a scissors line written with another
+// character then does not stop a scan, which fails towards scanning more.
+func (r *Repo) CommentChar() string {
+	for _, key := range []string{"core.commentString", "core.commentChar"} {
+		out, err := git(r.Root, "config", "config", "--get", key)
+		if err != nil {
+			continue
+		}
+		v := strings.TrimRight(string(out), "\r\n")
+		switch {
+		case v == "auto":
+			return defaultComment
+		case v != "" && !strings.ContainsAny(v, "\r\n"):
+			return v
+		}
+	}
+	return defaultComment
+}
+
 // Set is the files of one scan: their repository-relative paths, sorted,
 // with forward slashes, and a way to read each.
 type Set struct {

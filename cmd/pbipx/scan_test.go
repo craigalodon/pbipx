@@ -168,7 +168,17 @@ func TestNoOutputCarriesAValue(t *testing.T) {
 		{"scan paths", nil, "", []string{"scan", "notes", "pbip/A.Report/definition/warn.json"}, finding.ExitBlock},
 		{"scan-text file", nil, "", []string{"scan-text", "notes/review.md"}, finding.ExitBlock},
 		{"scan-text stdin", nil, "Roe, Richard\n" + sentinel + "\n", []string{"scan-text", "-", "--format", "json"}, finding.ExitBlock},
-		{"scan-text commit message", nil, "# " + sentinel + "\nsubject\n", []string{"scan-text", "--commit-msg", "-"}, finding.ExitClean},
+		{"scan-text commit message comment", nil, "# " + sentinel + "\nsubject\n", []string{"scan-text", "--commit-msg", "-"}, finding.ExitBlock},
+		{"scan-text commit message scissors", nil, "subject\n# ------------------------ >8 ------------------------\n" + sentinel + "\n",
+			[]string{"scan-text", "--commit-msg", "-"}, finding.ExitClean},
+		{"scan-text commit message comment char", func(t *testing.T, root string) {
+			cmd := exec.Command("git", "config", "core.commentChar", ";")
+			cmd.Dir = root
+			if err := cmd.Run(); err != nil {
+				t.Fatal(err)
+			}
+		}, "subject\n; ------------------------ >8 ------------------------\n" + sentinel + "\n",
+			[]string{"scan-text", "--commit-msg", "-"}, finding.ExitClean},
 		// An argument that names no file is reported by position, never
 		// echoed.
 		{"scan-text missing file", nil, "", []string{"scan-text", sentinel}, finding.ExitOperational},

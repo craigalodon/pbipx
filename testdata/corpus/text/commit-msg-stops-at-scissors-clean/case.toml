@@ -1,0 +1,7 @@
+description = "must stay clean: with --commit-msg, scanning stops at git's scissors line, which git discards with everything below it, so an email below it is not checked"
+command     = "scan-text"
+args        = ["--commit-msg", "message.txt"]
+policy      = "default"
+exit        = 0
+sentinels   = ["Roe, Richard", "richard.roe@example.org"]
+known       = "predecessor"
