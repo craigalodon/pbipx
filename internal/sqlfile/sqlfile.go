@@ -18,6 +18,7 @@ import (
 	"github.com/craigalodon/pbipx/internal/finding"
 	"github.com/craigalodon/pbipx/internal/judge"
 	"github.com/craigalodon/pbipx/internal/policy"
+	"github.com/craigalodon/pbipx/internal/shape"
 )
 
 var _ judge.Scanner = Scan
@@ -71,12 +72,31 @@ type Value struct {
 	Locator string
 }
 
-// Judge decides v's verdict under p.
+// Judge decides v's verdict under p. Columns are judged by their names as
+// written; the verdict's column is then printable (see Printable).
 func (v Value) Judge(p *policy.Policy) (judge.Verdict, bool) {
 	if v.NameOnly {
 		return NameShape(v.Text, p)
 	}
-	return judge.Literal(v.Text, v.Kind, v.Columns, p)
+	verdict, ok := judge.Literal(v.Text, v.Kind, v.Columns, p)
+	if ok && verdict.Column != nil {
+		c := Printable(*verdict.Column)
+		verdict.Column = &c
+	}
+	return verdict, ok
+}
+
+// Printable is c as a finding may print it: a table or column name that
+// shape.PrintableKey refuses is written {?}. A name read from a quoted
+// identifier or a YAML key is text from the file, and could hold a value.
+func Printable(c finding.Column) finding.Column {
+	if c.Table != "" && !shape.PrintableKey(c.Table) {
+		c.Table = "{?}"
+	}
+	if !shape.PrintableKey(c.Name) {
+		c.Name = "{?}"
+	}
+	return c
 }
 
 // NameShape judges a quoted run inside free text for the person-name shape

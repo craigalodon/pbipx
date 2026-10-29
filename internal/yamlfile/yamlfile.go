@@ -8,7 +8,8 @@
 // test is on, where and expression values are lexed as SQL, and unit-test
 // rows are tied to nothing. Comments and the quoted runs inside values are
 // judged as free text. An anchored node is walked once, and every document
-// of a file is scanned.
+// of a file is scanned. A key or column name is judged as written, and a
+// finding prints it as {?} unless shape.PrintableKey allows it.
 //
 // The parser is go.yaml.in/yaml/v3, through its Node API. Its error
 // messages can quote the source, so none of one is kept: a file that does
@@ -36,8 +37,8 @@ import (
 var _ judge.Scanner = Scan
 
 // Scan judges every key, scalar and comment of one YAML file. A file that
-// does not parse returns a *judge.ParseError (unparseable-yaml) with its
-// line, and no findings.
+// does not parse, or holds a SQL value that does not lex, returns a
+// *judge.ParseError (unparseable-yaml) with its line, and no findings.
 func Scan(path string, data []byte, p *policy.Policy) ([]finding.Finding, error) {
 	docs, err := parse(data)
 	if err != nil {
@@ -50,6 +51,9 @@ func Scan(path string, data []byte, p *policy.Policy) ([]finding.Finding, error)
 			base = "doc[" + strconv.Itoa(i) + "]"
 		}
 		w.node(doc, state{path: base})
+	}
+	if w.err != nil {
+		return nil, w.err
 	}
 	for i, c := range comments(string(data)) {
 		loc := "comment[" + strconv.Itoa(i) + "]"
@@ -90,8 +94,9 @@ func parse(data []byte) ([]*yaml.Node, error) {
 // state is what a node inherits from the nodes above it.
 type state struct {
 	path string // the locator: keys that shape.PrintableKey allows, or {?}
-	// key is the nearest mapping key, when it may name a column: a scalar
-	// key that shape.PrintableKey allows. Sequences pass it through.
+	// key is the nearest scalar mapping key, which names the column the
+	// node is tied to. Sequences pass it through. It is judged as written;
+	// a finding prints it only if shape.PrintableKey allows it.
 	key string
 	// untied is set inside unit-test rows, which are tied to nothing.
 	untied bool
@@ -115,6 +120,9 @@ type walker struct {
 	path string
 	p    *policy.Policy
 	out  []finding.Finding
+	// err is the first SQL value that does not lex. The file then has not
+	// been vetted, and is reported by this error alone.
+	err *judge.ParseError
 }
 
 func (w *walker) judge(ctx finding.Context, v sqlfile.Value) {
@@ -149,7 +157,7 @@ func (w *walker) node(n *yaml.Node, s state) {
 func (w *walker) mapping(n *yaml.Node, s state) {
 	if s.key == "columns" && !s.untied {
 		// An item of a model's columns: the tests below it are on its name.
-		if name := scalarOf(n, "name"); shape.PrintableKey(name) {
+		if name := scalarOf(n, "name"); name != "" {
 			s.column = name
 		}
 	}
@@ -167,7 +175,7 @@ func (w *walker) mapping(n *yaml.Node, s state) {
 			w.key(k, s)
 			cs.path = join(s.path, k.Value)
 			cs.key = ""
-			if !s.untied && shape.PrintableKey(k.Value) {
+			if !s.untied {
 				cs.key = k.Value
 			}
 		}
@@ -193,7 +201,7 @@ func (w *walker) mapping(n *yaml.Node, s state) {
 		}
 		w.node(v, cs)
 		if (name == "where" || name == "expression") && isString(v) {
-			w.sql(v.Value, cs.path, finding.YAMLSQL, false)
+			w.sql(v, cs.path, finding.YAMLSQL, false)
 		}
 	}
 }
@@ -232,19 +240,20 @@ func (w *walker) scalar(n *yaml.Node, s state) {
 }
 
 // sql judges a SQL-valued string: its literals with their columns, and its
-// comments. A value that does not lex degrades to free text, read best
-// effort as SQL (principle 10). untied drops every column, for unit-test
-// rows.
-func (w *walker) sql(src, path string, ctx finding.Context, untied bool) {
-	vals, err := sqlfile.Values(src)
+// comments. untied drops every column, for unit-test rows. A value that
+// does not lex has not been vetted: the file is then reported by one
+// unparseable-yaml error at the value's line, and nothing else (principle
+// 10).
+func (w *walker) sql(n *yaml.Node, path string, ctx finding.Context, untied bool) {
+	vals, err := sqlfile.Values(n.Value)
 	if err != nil {
-		vals = sqlfile.Readings(src, true, path+"#text")
-	} else {
-		for i := range vals {
-			vals[i].Locator = path + "#" + vals[i].Locator
+		if w.err == nil {
+			w.err = &judge.ParseError{Reason: finding.UnparseableYAML, Line: n.Line, Msg: "a SQL value does not lex"}
 		}
+		return
 	}
 	for _, v := range vals {
+		v.Locator = path + "#" + v.Locator
 		if untied {
 			if v.Comment && len(v.Columns) > 0 {
 				continue // a comment's reading kept only for its columns
@@ -264,7 +273,7 @@ func (w *walker) rows(v *yaml.Node, s state, format string) {
 		return
 	}
 	if strings.EqualFold(format, "sql") {
-		w.sql(v.Value, s.path, finding.YAML, true)
+		w.sql(v, s.path, finding.YAML, true)
 		return
 	}
 	for r, rec := range csvRecords(v.Value) {
@@ -304,7 +313,7 @@ func acceptedColumn(test *yaml.Node, column string) string {
 			name = scalarOf(args, "column_name")
 		}
 	}
-	if name != "" && shape.PrintableKey(name) {
+	if name != "" {
 		return name
 	}
 	return column

@@ -203,6 +203,12 @@ func TestNoOutputCarriesAValue(t *testing.T) {
 		{"path missing", nil, "", []string{"scan", "notes/" + sentinel}, finding.ExitUsage},
 		{"two sources", nil, "", []string{"scan", "--staged", "notes/" + sentinel}, finding.ExitUsage},
 		{"bad format", nil, "", []string{"scan", "--format", sentinel}, finding.ExitUsage},
+		// A YAML key that is the value itself, matched by the block pattern:
+		// it blocks, and its column prints as {?}.
+		{"yaml key as a column", yamlFile("models/a.yml", "meta:\n  "+sentinel+": x\n"), "",
+			[]string{"scan", "--format", "json", "models/a.yml"}, finding.ExitBlock},
+		{"yaml SQL that does not lex", yamlFile("models/a.yml", "where: \"full_name = '"+sentinel+"\"\n"), "",
+			[]string{"scan", "models/a.yml"}, finding.ExitOperational},
 		{"scan-text commits", commitOnBase("subject\n\n- " + sentinel + "\nmail " + plantedEmail + "\n"), "",
 			[]string{"scan-text", "--commits", "base..HEAD"}, finding.ExitBlock},
 		{"scan-text commits json", commitOnBase("subject\n\n" + sentinel + "\n"), "",
@@ -373,6 +379,18 @@ func TestScanTextNeedsInput(t *testing.T) {
 	newRepo(t, "repo")
 	if o := runIn(t, "", "scan-text"); o.code != finding.ExitUsage {
 		t.Errorf("exit = %d, want %d", o.code, finding.ExitUsage)
+	}
+}
+
+// yamlFile adds YAML to the policy's scan, with a block pattern that
+// matches the planted name, and writes one YAML file.
+func yamlFile(name, content string) func(t *testing.T, root string) {
+	return func(t *testing.T, root string) {
+		t.Helper()
+		p := strings.Replace(testPolicy, `prose  = ["notes/**/*.md"]`, `prose  = ["notes/**/*.md"]`+"\nyaml   = [\"models/**/*.yml\"]", 1)
+		p = strings.Replace(p, `warn  = ["cohort_year"]`, `warn  = ["cohort_year"]`+"\nblock_pattern = \"doe\"", 1)
+		writeFile(t, root, policy.FileName, p)
+		writeFile(t, root, name, content)
 	}
 }
 

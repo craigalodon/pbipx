@@ -19,7 +19,7 @@ protected_roots = ["pbip"]
 [scan]
 yaml = ["models/**/*.yml", "pbip/**/*.yml"]
 [columns]
-block = ["full_name", "first_name", "student_id", "preferred_name"]
+block = ["full_name", "first_name", "student_id", "preferred_name", "full-name", "full name"]
 block_pattern = "(^|_)email(_|$)"
 warn  = ["cohort_year"]
 [values]
@@ -144,7 +144,7 @@ func TestKeys(t *testing.T) {
 	}{
 		{"key with a shape", "reviewers:\n  jane.doe@example.com: approved\n",
 			[]want{{ctx: finding.YAMLKey, tier: finding.Block, reasons: email, locator: "reviewers.{?}#key"}}},
-		{"a key that is not printable names no column", "\"Doe, Jane\": [x]\nfull_name_jane.doe@example.com: Pat\n",
+		{"keys that are not printable", "\"Doe, Jane\": [x]\nfull_name_jane.doe@example.com: Pat\n",
 			[]want{
 				{ctx: finding.YAMLKey, tier: finding.Block, reasons: email, locator: "{?}#key"},
 				{ctx: finding.YAMLKey, tier: finding.Block, reasons: name, locator: "{?}#key"},
@@ -227,8 +227,6 @@ func TestSQLValues(t *testing.T) {
 			}},
 		{"a SQL comment", "where: |\n  -- Doe, Jane\n  1 = 1\n",
 			[]want{{ctx: finding.YAMLSQL, tier: finding.Block, reasons: name}}},
-		{"unlexable degrades to free text", "where: \"the student's first_name = 'Pat'\"\n",
-			[]want{{ctx: finding.YAMLSQL, column: "first_name", tier: finding.Block, reasons: blockCol}}},
 		{"other keys are not SQL", "description: \"first_name = 'Pat'\"\n", nil},
 	}
 	for _, tt := range tests {
@@ -420,5 +418,77 @@ unit_tests:
 				t.Errorf("column %s carries source text", f.Column)
 			}
 		}
+	}
+}
+
+func TestUnlexableSQLValueIsAnError(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+		line int
+	}{
+		{"where", "version: 2\nfull_name: Doe, Jane\nconfig:\n  where: \"full_name = 'Doe, Jane\"\n", 4},
+		{"expression", "a:\n  expression: |\n    first_name = 'Doe, Jane\n", 2},
+		{"unterminated template comment", "where: \"{# Doe, Jane\"\n", 1},
+		{"unit-test SQL rows", "unit_tests:\n  - expect:\n      format: sql\n      rows: \"select 'Doe, Jane\"\n", 4},
+	}
+	p := loadPolicy(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := yamlfile.Scan(testPath, []byte(tt.src), p)
+			if got != nil {
+				t.Errorf("findings returned with an error")
+			}
+			var perr *judge.ParseError
+			if !errors.As(err, &perr) {
+				t.Fatalf("err = %v, want *judge.ParseError", err)
+			}
+			if perr.Reason != finding.UnparseableYAML || perr.Line != tt.line {
+				t.Errorf("reason %s line %d, want %s line %d", perr.Reason, perr.Line, finding.UnparseableYAML, tt.line)
+			}
+			for _, s := range []string{"Doe", "Jane"} {
+				if strings.Contains(err.Error(), s) {
+					t.Errorf("the error message carries source text")
+				}
+			}
+		})
+	}
+}
+
+// A key or column name that is not printable is still judged by its name;
+// only the finding prints it as {?}.
+func TestNonPrintableNamesAssociate(t *testing.T) {
+	tests := []struct {
+		name  string
+		src   string
+		wants []want
+	}{
+		{"key with a hyphen", "meta:\n  full-name: Pat\n",
+			[]want{{ctx: finding.YAML, column: "{?}", tier: finding.Block, reasons: blockCol, locator: "meta.{?}"}}},
+		{"key with a space", "meta:\n  Full Name: Pat\n",
+			[]want{{ctx: finding.YAML, column: "{?}", tier: finding.Block, reasons: blockCol}}},
+		{"columns[].name", `
+columns:
+  - name: Full Name
+    data_tests:
+      - accepted_values:
+          values: [Pat]
+`, []want{{ctx: finding.YAML, column: "{?}", tier: finding.Block, reasons: blockCol}}},
+		{"column_name", `
+data_tests:
+  - accepted_values:
+      column_name: full-name
+      values: [Pat]
+`, []want{{ctx: finding.YAML, column: "{?}", tier: finding.Block, reasons: blockCol}}},
+		{"quoted SQL identifier", "where: '\"full-name\" = ''Pat'''\n",
+			[]want{{ctx: finding.YAMLSQL, column: "{?}", tier: finding.Block, reasons: blockCol}}},
+		{"printable names print", "meta:\n  full_name: Pat\n",
+			[]want{{ctx: finding.YAML, column: "full_name", tier: finding.Block, reasons: blockCol}}},
+		{"an unlisted name stays clean", "meta:\n  Nick Name: Pat\n", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			check(t, scanYAML(t, tt.src), tt.wants...)
+		})
 	}
 }
