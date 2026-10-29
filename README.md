@@ -88,7 +88,8 @@ Pre-alpha: releases are for trying it out, not for relying on it.
    `disableAllHooks`, so on shared machines and for teams use `--managed`: it
    prints the hook as a drop-in file for an administrator's managed settings
    instead. `--dry-run` shows what it would do; `--gitignore` adds `.pbi/`,
-   `*.pbix` and `*.abf` to `.gitignore`.
+   `*.pbix` and `*.abf` to `.gitignore`. init writes nothing through a
+   `.pbipx.toml` or `.gitignore` that is a symbolic link.
 
    After upgrading pbipx, run `pbipx init` again: it updates the registered
    hook in place (a new version may gate more tools) and removes duplicates.

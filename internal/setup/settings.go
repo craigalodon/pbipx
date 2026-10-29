@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -434,8 +435,10 @@ func Snippet(h Hook) ([]byte, error) {
 // temporary file in the same directory, renamed over it. A symbolic link is
 // followed, so the file it names is replaced and the link kept. When the
 // file exists, a copy of it is kept first beside it, named
-// settings.json.pbipx-backup-<time>; the copy's path is returned. A new
-// file and its directory are readable by the user alone.
+// settings.json.pbipx-backup-<time>, the time to the nanosecond, with -<n>
+// added when that name is taken; the copy's path is returned. A backup is
+// created exclusively, so it never replaces an earlier one. A new file and
+// its directory are readable by the user alone.
 func WriteSettings(path string, data []byte, now time.Time) (backup string, err error) {
 	target := path
 	if resolved, rerr := filepath.EvalSymlinks(path); rerr == nil {
@@ -448,8 +451,7 @@ func WriteSettings(path string, data []byte, now time.Time) (backup string, err 
 		if info, serr := os.Stat(target); serr == nil {
 			mode = info.Mode().Perm()
 		}
-		backup = target + ".pbipx-backup-" + now.UTC().Format("20060102T150405Z")
-		if err := os.WriteFile(backup, old, 0o600); err != nil { //nolint:gosec // G703: beside the user's own settings file
+		if backup, err = writeBackup(target+".pbipx-backup-"+now.UTC().Format("20060102T150405.000000000Z"), old); err != nil {
 			return "", err
 		}
 	case errors.Is(rerr, fs.ErrNotExist):
@@ -460,6 +462,38 @@ func WriteSettings(path string, data []byte, now time.Time) (backup string, err 
 		return "", rerr
 	}
 	return backup, writeAtomic(target, data, mode)
+}
+
+// maxBackupTries bounds the names writeBackup tries.
+const maxBackupTries = 1000
+
+// writeBackup writes data to a new file named base, or base-<n> for the
+// first n from 1 whose name is free, and returns its path. It never
+// replaces a file.
+func writeBackup(base string, data []byte) (string, error) {
+	for n := 0; n < maxBackupTries; n++ {
+		name := base
+		if n > 0 {
+			name = fmt.Sprintf("%s-%d", base, n)
+		}
+		f, err := os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // G304: beside the user's own settings file
+		if errors.Is(err, fs.ErrExist) {
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		_, werr := f.Write(data)
+		if cerr := f.Close(); werr == nil {
+			werr = cerr
+		}
+		if werr != nil {
+			_ = os.Remove(name)
+			return "", werr
+		}
+		return name, nil
+	}
+	return "", errors.New("no free name for the settings backup")
 }
 
 // writeAtomic writes data to a temporary file beside path and renames it

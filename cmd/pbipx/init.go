@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/craigalodon/pbipx/internal/approval"
 	"github.com/craigalodon/pbipx/internal/gate/claudecode"
 	"github.com/craigalodon/pbipx/internal/policy"
 	"github.com/craigalodon/pbipx/internal/setup"
@@ -65,6 +66,12 @@ what init would do. --gitignore appends the .gitignore lines a PBIP repository
 needs (.pbi/, *.pbix, *.abf) when they are missing; without it, init lists
 them.
 
+init never writes through a symbolic link in the repository: a .pbipx.toml
+it would write, or a .gitignore it would append to, that is a link or not a
+regular file is a usage error, and nothing is written. The settings file is
+refused when, symlinks resolved, it is inside the repository. Each backup of
+the settings gets a name of its own, so no run replaces an earlier one.
+
 Exit codes: 0 done, 3 a failure, 4 a usage error.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -104,7 +111,7 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 		if settingsPath, err = setup.SettingsPath(); err != nil {
 			return operational(cmd, "the user's home directory cannot be found")
 		}
-		if within(repo.Root, settingsPath) {
+		if settingsInRepository(repo.Root, settingsPath) {
 			return usageError{"the Claude Code settings file is inside the repository, where the project could change it; set CLAUDE_CONFIG_DIR or HOME outside it, or use --managed"}
 		}
 		existing, rerr := os.ReadFile(settingsPath) //nolint:gosec // G304: the user's own Claude Code settings
@@ -127,6 +134,14 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 	missing, err := setup.MissingIgnores(repo.Root)
 	if err != nil {
 		return operational(cmd, ".gitignore cannot be read")
+	}
+	// A file init writes in the repository must be a regular file or
+	// absent: through a symbolic link, a write would land outside it.
+	if writePolicy && setup.RegularOrAbsent(policyPath) != nil {
+		return usageError{policy.FileName + " is a symbolic link or not a regular file; init will not write through it. Replace it with a regular file, or remove it"}
+	}
+	if f.gitignore && len(missing) > 0 && setup.RegularOrAbsent(filepath.Join(repo.Root, ".gitignore")) != nil {
+		return usageError{".gitignore is a symbolic link or not a regular file; init will not write through it. Add the lines by hand"}
 	}
 
 	would := ""
@@ -247,6 +262,22 @@ func gateBinary(root string) (string, error) {
 	return exe, nil
 }
 
+// settingsInRepository reports whether the settings file at path is inside
+// the repository at root, as written or with symlinks resolved (of the file,
+// or of its deepest existing ancestor when it is not there yet), against
+// the root as given and resolved.
+func settingsInRepository(root, path string) bool {
+	roots := []string{root, approval.ResolveExisting(root)}
+	for _, p := range []string{path, approval.ResolveExisting(path)} {
+		for _, r := range roots {
+			if within(r, p) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // within reports whether path is dir or below it.
 func within(dir, path string) bool {
 	if runtime.GOOS == "windows" {
@@ -260,11 +291,12 @@ func within(dir, path string) bool {
 }
 
 // writePolicyFile writes the policy, refusing to replace a file unless
-// force is set.
+// force is set, and never through a symbolic link where the platform has
+// O_NOFOLLOW (the caller has checked with Lstat in any case).
 func writePolicyFile(path string, data []byte, force bool) error {
 	flags := os.O_WRONLY | os.O_CREATE | os.O_EXCL
 	if force {
-		flags = os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+		flags = os.O_WRONLY | os.O_CREATE | os.O_TRUNC | setup.NoFollow
 	}
 	f, err := os.OpenFile(path, flags, 0o644) //nolint:gosec // G302,G304: a repository file every collaborator reads
 	if err != nil {

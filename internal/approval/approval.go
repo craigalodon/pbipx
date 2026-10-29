@@ -155,19 +155,25 @@ func spellings(p string) []string {
 	if err != nil {
 		return []string{filepath.Clean(p)}
 	}
-	out := []string{a}
+	return []string{a, ResolveExisting(a)}
+}
+
+// ResolveExisting is the absolute path a with the symlinks of its deepest
+// existing ancestor resolved, and the rest joined on unchanged: a itself
+// resolved when it exists, and for a path not yet there, where it would be
+// created. When no ancestor resolves, it is a, clean.
+func ResolveExisting(a string) string {
+	a = filepath.Clean(a)
 	rest := ""
 	for dir := a; ; dir = filepath.Dir(dir) {
 		if r, err := filepath.EvalSymlinks(dir); err == nil {
-			out = append(out, filepath.Join(r, rest))
-			break
+			return filepath.Join(r, rest)
 		}
 		if filepath.Dir(dir) == dir {
-			break
+			return a
 		}
 		rest = filepath.Join(filepath.Base(dir), rest)
 	}
-	return out
 }
 
 // Within reports whether path is dir or below it, both absolute and clean.

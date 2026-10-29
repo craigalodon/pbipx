@@ -99,23 +99,7 @@ func sameDir(a, b string) bool { return approval.Within(a, b) && approval.Within
 func expandAll(dirs []string) []string {
 	var out []string
 	for _, d := range dirs {
-		out = append(out, filepath.Clean(d), resolveExisting(d))
+		out = append(out, filepath.Clean(d), approval.ResolveExisting(d))
 	}
 	return out
-}
-
-// resolveExisting is the absolute path a with the symlinks of its deepest
-// existing ancestor resolved, and the rest joined on unchanged.
-func resolveExisting(a string) string {
-	a = filepath.Clean(a)
-	rest := ""
-	for dir := a; ; dir = filepath.Dir(dir) {
-		if r, err := filepath.EvalSymlinks(dir); err == nil {
-			return filepath.Join(r, rest)
-		}
-		if filepath.Dir(dir) == dir {
-			return a
-		}
-		rest = filepath.Join(filepath.Base(dir), rest)
-	}
 }
