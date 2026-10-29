@@ -56,13 +56,20 @@ func compileGlob(pattern string) (glob, error) {
 
 // match reports whether g matches the slash-separated path p.
 func (g glob) match(p string) bool {
-	return matchSegs(g.segs, strings.Split(p, "/"))
+	return matchSegs(g.segs, strings.Split(p, "/"), false)
+}
+
+// matchesChild reports whether g matches some path directly in dir: dir's
+// segments and one more, whatever its name.
+func (g glob) matchesChild(dir string) bool {
+	return matchSegs(g.segs, append(strings.Split(dir, "/"), ""), true)
 }
 
 // matchSegs matches glob segments against path segments. ok[j] holds whether
 // the glob segments seen so far match the first j path segments; one pass
-// per glob segment keeps it linear in each, whatever the number of **.
-func matchSegs(globSegs, pathSegs []string) bool {
+// per glob segment keeps it linear in each, whatever the number of **. With
+// anyLast, the last path segment matches any glob segment.
+func matchSegs(globSegs, pathSegs []string, anyLast bool) bool {
 	ok := make([]bool, len(pathSegs)+1)
 	ok[0] = true
 	for _, gs := range globSegs {
@@ -75,7 +82,8 @@ func matchSegs(globSegs, pathSegs []string) bool {
 			}
 		} else {
 			for j := 1; j <= len(pathSegs); j++ {
-				next[j] = ok[j-1] && segMatch(gs, pathSegs[j-1])
+				last := anyLast && j == len(pathSegs)
+				next[j] = ok[j-1] && (last || segMatch(gs, pathSegs[j-1]))
 			}
 		}
 		ok = next
@@ -115,6 +123,15 @@ type globs []glob
 func (gs globs) match(p string) bool {
 	for _, g := range gs {
 		if g.match(p) {
+			return true
+		}
+	}
+	return false
+}
+
+func (gs globs) matchChild(dir string) bool {
+	for _, g := range gs {
+		if g.matchesChild(dir) {
 			return true
 		}
 	}

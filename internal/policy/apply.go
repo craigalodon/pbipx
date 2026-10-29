@@ -80,6 +80,15 @@ func (p *Policy) Classify(path string) (Class, Kind) {
 	return Unvettable, ""
 }
 
+// LocalStateDir reports whether dir, a clean repository-relative path with
+// forward slashes, is under a protected root and is a directory local state
+// is kept directly in: a file in it could be local state, whatever its name
+// (Desktop's .pbi folder, under the corpus's globs). A directory that only
+// holds such a directory further down, such as a protected root, is not one.
+func (p *Policy) LocalStateDir(dir string) bool {
+	return p.UnderRoot(dir) && p.localState.matchChild(dir)
+}
+
 // scanKind is the first kind, in Kinds order, whose globs match path, or ""
 // when none does or path is excluded.
 func (p *Policy) scanKind(path string) Kind {

@@ -387,6 +387,24 @@ func (r *Repo) All(protectedRoots []string) (*Set, error) {
 	return d.set(seen), nil
 }
 
+// Under is every file on disk under the given repository-relative
+// directories, ignored or not, without following symlinks. A directory that
+// does not exist adds nothing. Files are read from disk.
+func (r *Repo) Under(dirs []string) (*Set, error) {
+	d, err := r.disk()
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	for _, dir := range dirs {
+		if err := d.walk(dir, seen); err != nil {
+			_ = d.root.Close()
+			return nil, err
+		}
+	}
+	return d.set(seen), nil
+}
+
 // Paths is the files under the given paths, which are relative to dir or
 // absolute: a file is itself, and a directory expands to every file under it
 // on disk, without following symlinks. Every path must exist and be inside
