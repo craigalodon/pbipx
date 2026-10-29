@@ -80,12 +80,19 @@ marked as known differences. None showed a predecessor bug.
       end-to-end tests of that command string, both directions
 - [x] `pbipx init`: a starting policy and hook configuration for a standard
       PBIP repository, including the managed or user-level hook registration
-- [ ] Policy integrity: design, then build (threat model, layer 6)
+- [x] Policy integrity: design, then build (threat model, layer 6; ADR-0006)
 - [x] Release builds for six platforms, with checksums; install docs
 
 **Exit:** the `gate` area passes; a fresh clone of a sample repository, set up
 with `pbipx init`, denies a planted finding through the real hook.
 **This is v0.1.**
+
+Met on a synthetic sample, 2026-10-29: a fresh clone set up with `pbipx init`
+denied a planted finding, a recursive search, `git show`, a write to Claude
+Code settings and every call after a policy edit through the exact hook
+command init registered, and allowed a clean read; a missing binary denied.
+Still to do before tagging v0.1: one run of the full matrix on Windows and
+macOS (a manual CI run), and one session in Claude Code itself.
 
 ## Phase 5: cutover of the predecessor's repository
 
