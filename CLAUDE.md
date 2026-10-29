@@ -1,0 +1,53 @@
+# Instructions for AI agents
+
+## This repository is built to be public
+
+It may be private today. Write every file, fixture, comment and commit message
+as if it were already public, because an exposure is hard to reverse
+([ADR-0002](docs/adr/0002-built-for-public-from-the-first-commit.md)).
+
+- **Nothing from a real deployment.** No organization, tenant, workspace,
+  catalog, schema, table, report or person names. No ticket ids, internal
+  hostnames or local paths from any other project.
+- **Never copy from another repository.** That includes fixtures, policy
+  files, test cases and prose, even "anonymized". A real file reworded is
+  still shaped by real data. Write it fresh from the rules in
+  [CONTRIBUTING.md](CONTRIBUTING.md#synthetic-data).
+- **Port behavior, not artifacts.** When matching the predecessor
+  implementation, work from the corpus and the design docs, never its tests'
+  data.
+- If a task seems to need real data, stop and ask.
+
+## The tool never prints a value
+
+Every value read from a scanned file is held as a `secret.Value`
+([internal/secret](internal/secret/secret.go)) before it leaves the code that
+judges it. Do not add a way to render one other than `secret.Reveal`, and call
+`Reveal` only on the `--show-values` path. Error messages carry structure and
+line numbers, never source text. See
+[docs/design/principles.md](docs/design/principles.md).
+
+## Commands
+
+```sh
+go build ./...
+go test ./...
+go vet ./...
+gofmt -l .                      # must print nothing
+git config core.hooksPath .githooks   # once per clone (maintainers)
+```
+
+Never use `git commit --no-verify`. If a hook blocks you, fix the cause or
+tell the user.
+
+## Layout
+
+```text
+cmd/pbipx/          the binary's entry point and command dispatch
+internal/           packages; nothing is a public Go API yet
+testdata/corpus/    the language-neutral behavior corpus (docs/design/corpus.md)
+docs/ROADMAP.md     phases and exit criteria
+docs/design/        principles, threat model, corpus format
+docs/adr/           decision records
+scripts/, .githooks/  the maintainer's private-terms check
+```

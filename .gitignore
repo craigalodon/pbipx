@@ -1,0 +1,13 @@
+/pbipx
+/pbipx.exe
+/dist/
+
+# Power BI Desktop's local state and data cache, if a sample is ever opened in
+# place. Never commit them (docs/design/principles.md, principle 8).
+.pbi/
+*.abf
+*.pbix
+
+# The maintainer's private-terms list belongs outside the repository; this is
+# a second line of defence in case one is copied in.
+private-terms.txt

@@ -1,0 +1,122 @@
+# Roadmap
+
+Each phase ends on an exit criterion that can be checked, not a feeling. The
+order matters: the corpus comes before the scanners, and the deny comes before
+the capability (principle 8).
+
+**Target for the first talk (about two months out, late 2026-12): v0.1**, which
+is phases 1 to 4. Stage, collect and perf can follow it.
+
+## Phase 0: setup (done 2026-10-29)
+
+- [x] Repository, README, agent instructions, contributing rules
+- [x] Design principles, threat model, corpus format (draft)
+- [x] ADRs 0001 to 0004
+- [x] Go module, `pbipx version`, the `secret.Value` type and its tests
+- [x] CI workflow (format, vet, test), private-terms commit hooks
+- [ ] Push to a private GitHub repository; CI green there
+
+## Phase 1: the corpus, and the predecessor passing it
+
+Most of this phase is spent in the predecessor's repository, which stays
+private (ADR-0003).
+
+- [ ] Settle the vocabulary: finding contexts, reasons, gate reason classes
+      (`testdata/corpus/vocabulary.toml`)
+- [ ] `policies/default.toml`: a generic policy for the corpus
+- [ ] Cases, written fresh and synthetic, for each area:
+  - [ ] `pbir`: the six report contexts that carry values; which literals are
+        judged; column association; neutral-filter sentinels
+  - [ ] `tmdl`: partitions and expressions, "Enter data" tables, `DATATABLE`,
+        RLS filters and members, descriptions, annotations; parse errors
+  - [ ] `sql`, `yaml`: comparisons with identifier columns; shapes in
+        comments and descriptions
+  - [ ] `text`: prose rules (anchored names, no date shape)
+  - [ ] `baseline`, `policy`: blocks never baselined; acceptances; policy errors
+  - [ ] `gate`: the classification table; Read, search and shell decisions;
+        every error path
+  - [ ] `explain`: structure only; non-identifier names replaced
+- [ ] In the predecessor's repository: a normalized JSON output and a corpus
+      runner pointed at a local pbipx checkout
+
+**Exit:** the predecessor passes every case, or each case it fails is marked as
+a known predecessor bug and has an issue.
+
+## Phase 2: the core scanner
+
+- [ ] Policy loading (ADR-0004 settled to Accepted), policy errors
+- [ ] Personal-data shapes and the block/warn verdict
+- [ ] Report (PBIR) scanning
+- [ ] Prose scanning: `scan-text`, commit-message use
+- [ ] Baseline: fingerprints of location, column and reasons; never values
+- [ ] `scan --staged | --all | <paths>`, `--strict`, redacted output,
+      `--show-values` refused off an interactive terminal and under
+      `CI`, `PRE_COMMIT` or `PBIPX_NO_REVEAL`, `--show-shape`
+
+**Exit:** the `pbir`, `text`, `baseline` and `policy` areas pass.
+
+## Phase 3: models and code
+
+- [ ] TMDL parser; DAX, M and embedded SQL lexing; association rules
+- [ ] "Enter data" decoding (deflate and base64); an undecodable value is an error
+- [ ] SQL and YAML scanning
+- [ ] `explain` for reports, models and SQL
+
+**Exit:** the `tmdl`, `sql`, `yaml` and `explain` areas pass.
+
+## Phase 4: the gate, and hardening
+
+- [ ] Gate decision logic, independent of any agent
+- [ ] Claude Code adapter; a configured hook command that fails closed;
+      end-to-end tests of that command string, both directions
+- [ ] `pbipx init`: a starting policy and hook configuration for a standard
+      PBIP repository, including the managed or user-level hook registration
+- [ ] Policy integrity: design, then build (threat model, layer 6)
+- [ ] Release builds for six platforms, with checksums; install docs
+
+**Exit:** the `gate` area passes; a fresh clone of a sample repository, set up
+with `pbipx init`, denies a planted finding through the real hook.
+**This is v0.1.**
+
+## Phase 5: cutover of the predecessor's repository
+
+Done in that repository, privately.
+
+- [ ] Its policy converted by hand to `.pbipx.toml` (one reviewed change)
+- [ ] Baseline regenerated and reviewed
+- [ ] Differential run: predecessor and pbipx agree on its real tree,
+      compared by counts and fingerprints only
+- [ ] Hooks, pre-commit and CI switched to the pinned binary; the hook
+      registered outside the repository
+- [ ] Predecessor deleted
+
+**Exit:** the predecessor's code is gone and its repository's own tests of the
+gate pass against pbipx.
+
+## Phase 6: the Desktop round trip
+
+- [ ] `stage` and `collect`: copy outside the repository, rebind the report to
+      the model beside it, bring back only what Desktop saved, keep LF and
+      the absence of a final newline
+- [ ] Windows and WSL path handling
+- [ ] `perf`: Performance Analyzer summaries, no query text or titles
+
+**Exit:** a staged edit round-trips through Desktop with `git status` showing
+only real changes.
+
+## Phase 7: going public
+
+- [ ] Institutional approval to publish
+- [ ] License chosen and added
+- [ ] The full history checked against the private-terms list
+- [ ] A synthetic sample PBIP repository to demonstrate with
+- [ ] Docs written for analysts, not maintainers
+- [ ] Repository made public; issue tracker and `SECURITY.md` contact live
+
+## Open questions
+
+- Personal namespace or an organization for the module path and releases?
+- Code signing for the Windows binary (SmartScreen), and packaging (winget,
+  Scoop, Homebrew)?
+- Which other agents' hook protocols are worth an adapter, and when?
+- Should `stage` and `collect` handle a model shared by several reports?
