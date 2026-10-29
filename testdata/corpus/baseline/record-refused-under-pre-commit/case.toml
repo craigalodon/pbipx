@@ -1,0 +1,13 @@
+description = "recording an acceptance is refused when PRE_COMMIT is set"
+command     = "baseline"
+args        = ["record", "{fingerprint}"]
+policy      = "default"
+exit        = 4
+sentinels   = ["Fall 2150"]
+env         = { PRE_COMMIT = "1" }
+
+[fingerprint]
+path     = "pbip/Example.Report/definition/pages/0000/visuals/0001/visual.json"
+context  = "slicer-selection"
+column   = "enrollment.cohort_year"
+reasons  = ["warn-column"]

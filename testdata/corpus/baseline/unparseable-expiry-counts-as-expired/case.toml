@@ -1,0 +1,14 @@
+description = "an entry whose expiry is not a date counts as expired and does not suppress"
+command     = "scan"
+args        = ["--all", "--strict"]
+policy      = "default"
+exit        = 2
+sentinels   = ["Fall 2150"]
+
+[[baseline]]
+path     = "pbip/Example.Report/definition/pages/0000/visuals/0001/visual.json"
+context  = "slicer-selection"
+column   = "enrollment.cohort_year"
+reasons  = ["warn-column"]
+severity = "warn"
+expires  = "not a date"

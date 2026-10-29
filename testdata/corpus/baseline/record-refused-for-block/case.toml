@@ -1,0 +1,12 @@
+description = "recording an acceptance of a block is refused"
+command     = "baseline"
+args        = ["record", "{fingerprint}"]
+policy      = "default"
+exit        = 4
+sentinels   = ["Doe, Jane"]
+
+[fingerprint]
+path     = "pbip/Example.Report/definition/pages/0000/visuals/0001/visual.json"
+context  = "slicer-selection"
+column   = "student.full_name"
+reasons  = ["block-column", "person-name-shape"]

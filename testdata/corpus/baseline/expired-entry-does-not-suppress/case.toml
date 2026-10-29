@@ -1,0 +1,14 @@
+description = "an entry whose expiry date has passed no longer suppresses its warning"
+command     = "scan"
+args        = ["--all", "--strict"]
+policy      = "default"
+exit        = 2
+sentinels   = ["Fall 2150"]
+
+[[baseline]]
+path     = "pbip/Example.Report/definition/pages/0000/visuals/0001/visual.json"
+context  = "slicer-selection"
+column   = "enrollment.cohort_year"
+reasons  = ["warn-column"]
+severity = "warn"
+expires  = "2001-01-01"
