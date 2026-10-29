@@ -75,13 +75,13 @@ marked as known differences. None showed a predecessor bug.
 
 ## Phase 4: the gate, and hardening
 
-- [ ] Gate decision logic, independent of any agent
-- [ ] Claude Code adapter; a configured hook command that fails closed;
+- [x] Gate decision logic, independent of any agent
+- [x] Claude Code adapter; a configured hook command that fails closed;
       end-to-end tests of that command string, both directions
 - [ ] `pbipx init`: a starting policy and hook configuration for a standard
       PBIP repository, including the managed or user-level hook registration
 - [ ] Policy integrity: design, then build (threat model, layer 6)
-- [ ] Release builds for six platforms, with checksums; install docs
+- [x] Release builds for six platforms, with checksums; install docs
 
 **Exit:** the `gate` area passes; a fresh clone of a sample repository, set up
 with `pbipx init`, denies a planted finding through the real hook.
