@@ -87,7 +87,7 @@ func TestCorpus(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			prepared, err := c.Prepare(cs, root, bin)
+			prepared, err := c.Prepare(cs, root, t.TempDir(), bin)
 			if err != nil {
 				t.Fatal(err)
 			}

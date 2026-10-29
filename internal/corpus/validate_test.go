@@ -146,6 +146,12 @@ func TestValidateRules(t *testing.T) {
 		{"known is not predecessor", slicer, appendTo("case.toml", "known = \"successor\"\n"), "known is set"},
 		{"args set the format", slicer, replace("case.toml", `["--all"]`, `["--all", "--format=json"]`), "args[1] sets --format"},
 		{"bad env name", slicer, appendTo("case.toml", "env = { \"A B\" = \"1\" }\n"), "env has a key"},
+		{"env sets the config dir", slicer, appendTo("case.toml", "env = { PBIPX_CONFIG_DIR = \"/tmp\" }\n"), "which the runner owns"},
+		{"approved outside the gate", slicer, appendTo("case.toml", "approved = true\n"), "only a gate case's policy is approved"},
+		{"after in an unapproved gate case", gate, func(t *testing.T, dir string) {
+			appendTo("case.toml", "approved = false\n")(t, dir)
+			write("after/tree/README.md", "x\n")(t, dir)
+		}, "or a gate case whose policy is approved"},
 		{"stray file", slicer, write("notes.txt", "x\n"), `unexpected entry "notes.txt"`},
 		{"case name not kebab", slicer, rename("../Slicer_Case"), "not kebab case"},
 	}

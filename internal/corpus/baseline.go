@@ -54,7 +54,7 @@ func (c *Corpus) resolve(cs *Case, binary string, p *Prepared) error {
 	if err := GitSetup(scratch, nil, nil); err != nil {
 		return fmt.Errorf("setup scan: %w", err)
 	}
-	out, err := runBinary(binary, scratch, resolveArgs, CommandEnv(os.Environ(), &Spec{}), nil)
+	out, err := runBinary(binary, scratch, resolveArgs, CommandEnv(os.Environ(), &Spec{}, p.ConfigDir), nil)
 	if err != nil {
 		return fmt.Errorf("setup scan: %w", err)
 	}
