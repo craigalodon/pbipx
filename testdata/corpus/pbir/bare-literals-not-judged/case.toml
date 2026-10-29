@@ -1,0 +1,6 @@
+description = "booleans, nulls and typed numbers on block columns are not judged: only quoted strings are, so this stays clean"
+command     = "scan"
+args        = ["--all"]
+policy      = "default"
+exit        = 0
+sentinels   = ["90817", "7351.5"]

@@ -1,0 +1,6 @@
+description = "an SSN-shaped value on an unlisted column blocks on shape, with no column"
+command     = "scan"
+args        = ["--all"]
+policy      = "default"
+exit        = 1
+sentinels   = ["912-34-5678"]
