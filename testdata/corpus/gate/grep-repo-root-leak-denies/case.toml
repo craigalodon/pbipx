@@ -1,0 +1,6 @@
+description = "Grep at the repository root contains the protected root, so a leak there denies"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
