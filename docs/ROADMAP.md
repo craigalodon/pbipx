@@ -19,7 +19,7 @@ is phases 1 to 4. Stage, collect and perf can follow it.
 - [x] CLI on cobra (ADR-0005)
 - [ ] Push to a private GitHub repository; CI green there
 
-## Phase 1: the corpus, and the predecessor passing it
+## Phase 1: the corpus, and the predecessor passing it (done 2026-10-29)
 
 Most of this phase is spent in the predecessor's repository, which stays
 private (ADR-0003).
@@ -41,11 +41,14 @@ private (ADR-0003).
   - [ ] `explain`: structure only; non-identifier names replaced (deferred to
         phase 3, with its output schema)
 - [x] A Go corpus runner and case validator (`internal/corpus`)
-- [ ] In the predecessor's repository: a normalized JSON output and a corpus
+- [x] In the predecessor's repository: a normalized JSON output and a corpus
       runner pointed at a local pbipx checkout
 
 **Exit:** the predecessor passes every case, or each case it fails is marked as
 a known predecessor bug and has an issue.
+
+Met 2026-10-29: of 250 cases, the predecessor passes 242 and fails the 8
+marked as known differences. None showed a predecessor bug.
 
 ## Phase 2: the core scanner
 
