@@ -11,7 +11,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/craigalodon/pbipx/internal/approval"
 	"github.com/craigalodon/pbipx/internal/gate/claudecode"
 )
 
@@ -86,9 +88,12 @@ var fixture = map[string]string{
 
 // hook is a prepared repository and the events to send into it.
 type hook struct {
-	repo  string
-	deny  []byte // a Read of the leaking visual
-	allow []byte // a Read of a clean note outside the protected root
+	repo string
+	// config is PBIPX_CONFIG_DIR for the hook: a store in which the repo's
+	// policy is approved.
+	config string
+	deny   []byte // a Read of the leaking visual
+	allow  []byte // a Read of a clean note outside the protected root
 }
 
 func newHook(t *testing.T) *hook {
@@ -124,10 +129,19 @@ func newHook(t *testing.T) *hook {
 		}
 		return data
 	}
+	config := t.TempDir()
+	digest, err := approval.DigestFile(filepath.Join(repo, ".pbipx.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := (&approval.Store{Dir: config}).Approve(repo, digest, time.Now()); err != nil {
+		t.Fatal(err)
+	}
 	return &hook{
-		repo:  repo,
-		deny:  event("pbip/Example.Report/definition/pages/0000/visuals/0001/visual.json"),
-		allow: event("notes/plan.md"),
+		repo:   repo,
+		config: config,
+		deny:   event("pbip/Example.Report/definition/pages/0000/visuals/0001/visual.json"),
+		allow:  event("notes/plan.md"),
 	}
 }
 
@@ -179,8 +193,8 @@ type result struct {
 }
 
 // runHook runs the configured command string through the shell Claude Code
-// would use for it.
-func runHook(t *testing.T, dir, command string, stdin []byte) result {
+// would use for it, in h's repository and with h's approval store.
+func runHook(t *testing.T, h *hook, command string, stdin []byte) result {
 	t.Helper()
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
@@ -188,7 +202,8 @@ func runHook(t *testing.T, dir, command string, stdin []byte) result {
 	} else {
 		cmd = exec.Command("sh", "-c", command) //nolint:gosec // G204: the command is the hook under test
 	}
-	cmd.Dir = dir
+	cmd.Dir = h.repo
+	cmd.Env = append(os.Environ(), approval.EnvConfigDir+"="+h.config)
 	cmd.Stdin = bytes.NewReader(stdin)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
@@ -226,7 +241,7 @@ func TestHookCommandDecides(t *testing.T) {
 	command := claudecode.HookCommand(bin, runtime.GOOS)
 
 	t.Run("deny", func(t *testing.T) {
-		r := runHook(t, h.repo, command, h.deny)
+		r := runHook(t, h, command, h.deny)
 		wantDeny(t, r, "finding")
 		var out struct {
 			HookSpecificOutput struct {
@@ -245,16 +260,21 @@ func TestHookCommandDecides(t *testing.T) {
 		}
 	})
 	t.Run("allow", func(t *testing.T) {
-		r := runHook(t, h.repo, command, h.allow)
+		r := runHook(t, h, command, h.allow)
 		if r.exit != claudecode.ExitAllow || r.stdout != "" || r.stderr != "" {
 			t.Errorf("exit = %d, %d bytes on stdout, %d on stderr; want 0 and no output", r.exit, len(r.stdout), len(r.stderr))
 		}
 	})
+	t.Run("unapproved policy", func(t *testing.T) {
+		unapproved := *h
+		unapproved.config = t.TempDir()
+		wantDeny(t, runHook(t, &unapproved, command, h.allow), "policy-unapproved")
+	})
 	t.Run("malformed event", func(t *testing.T) {
-		wantDeny(t, runHook(t, h.repo, command, []byte(sentinel)), "event-error")
+		wantDeny(t, runHook(t, h, command, []byte(sentinel)), "event-error")
 	})
 	t.Run("usage error", func(t *testing.T) {
-		wantDeny(t, runHook(t, h.repo, strings.Replace(command, "claude-code", "other-agent", 1), h.allow), "internal-error")
+		wantDeny(t, runHook(t, h, strings.Replace(command, "claude-code", "other-agent", 1), h.allow), "internal-error")
 	})
 }
 
@@ -267,7 +287,7 @@ func TestHookCommandPathQuoting(t *testing.T) {
 		t.Fatal(err)
 	}
 	bin := buildPbipx(t, dir)
-	r := runHook(t, h.repo, claudecode.HookCommand(bin, runtime.GOOS), h.allow)
+	r := runHook(t, h, claudecode.HookCommand(bin, runtime.GOOS), h.allow)
 	if r.exit != claudecode.ExitAllow {
 		t.Errorf("exit = %d, want %d", r.exit, claudecode.ExitAllow)
 	}
@@ -312,7 +332,7 @@ func TestHookCommandFailsClosed(t *testing.T) {
 	}
 	for name, bin := range cases {
 		t.Run(name, func(t *testing.T) {
-			r := runHook(t, h.repo, claudecode.HookCommand(bin, runtime.GOOS), h.allow)
+			r := runHook(t, h, claudecode.HookCommand(bin, runtime.GOOS), h.allow)
 			if r.exit != claudecode.ExitDeny {
 				t.Fatalf("exit = %d, want %d (a deny)", r.exit, claudecode.ExitDeny)
 			}

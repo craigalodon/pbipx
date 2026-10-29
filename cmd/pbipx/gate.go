@@ -13,8 +13,9 @@ import (
 // gateCommand is the gate's name on the command line.
 const gateCommand = "gate"
 
-// gateOptions are the options every gate decision is made with.
-var gateOptions = gate.Options{}
+// gateOptions are the options every gate decision is made with: the policy
+// must be one a person approved (ADR-0006).
+var gateOptions = gate.Options{CheckPolicy: gate.RequireApproval(nil)}
 
 // errGateUsage is any problem with the gate's own command line. It is a deny
 // like every other failure of the gate.
@@ -31,6 +32,9 @@ The event is read from stdin. An allow prints nothing and exits 0. A deny
 prints the agent's decision JSON on stdout and the reason on stderr, and
 exits 2. Every failure, including a usage error, is a deny: the gate never
 exits with any other code.
+
+The repository's .pbipx.toml must be approved on this machine ('pbipx policy
+approve'). Until it is, and after any change to it, every call is denied.
 
 --agent claude-code, the default and only value, reads a Claude Code
 PreToolUse event. Configure the hook with a command that turns every other
