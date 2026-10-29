@@ -44,6 +44,9 @@ type Token struct {
 	Text  string
 	Table string // for Col, when the syntax gives one
 	Line  int    // 1-based within src
+	// Parts is every part of a SQL name as written, unquoted (a.b.c), for a
+	// Col or a function's Ident; nil for any other token.
+	Parts []string
 }
 
 // Comment is one comment, with its markers and the whitespace around its
@@ -579,6 +582,7 @@ func (l *lexer) sqlName(dq DoubleQuote) error {
 		l.emit(Ident, strings.Join(parts, "."), "", line)
 	case bare && IsSQLKeyword(last):
 		l.emit(Ident, last, "", line)
+		return nil
 	default:
 		table := ""
 		if len(parts) > 1 {
@@ -586,5 +590,6 @@ func (l *lexer) sqlName(dq DoubleQuote) error {
 		}
 		l.emit(Col, last, table, line)
 	}
+	l.toks[len(l.toks)-1].Parts = parts
 	return nil
 }

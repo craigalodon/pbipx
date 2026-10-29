@@ -44,6 +44,9 @@ type scanner struct {
 	path string
 	p    *policy.Policy
 	out  []finding.Finding
+	// counts, when set, makes the scanner count each value it would judge,
+	// by context, and judge nothing (Describe).
+	counts map[finding.Context]int
 }
 
 // scope is the table being declared, and its declared columns.
@@ -273,6 +276,9 @@ func (s *scanner) freeText(text string, ctx finding.Context, at string) {
 // inside code"). A quoted run is judged for the name shape only; a literal
 // the text ties to a column, as a literal.
 func (s *scanner) readings(text string, sql bool, ctx finding.Context, at string) {
+	if s.counts != nil {
+		return // a reading is not a literal of its own
+	}
 	for _, fv := range exprlex.FreeText(text, sql) {
 		loc := at + fv.Suffix
 		if len(fv.Columns) > 0 {
@@ -302,6 +308,10 @@ func (s *scanner) text(body, at string) {
 
 // literal judges one value and keeps its finding, if it fires.
 func (s *scanner) literal(value string, kind judge.Kind, cols []finding.Column, ctx finding.Context, loc string) {
+	if s.counts != nil {
+		s.counts[ctx]++
+		return
+	}
 	if v, ok := judge.Literal(value, kind, cols, s.p); ok {
 		s.out = append(s.out, v.Finding(s.path, ctx, loc, value))
 	}
