@@ -45,6 +45,25 @@ An agent can still edit the policy, but the gate then denies every call
 until a person approves the change at a terminal, so the edit cannot take
 effect silently. Every policy change costs one command.
 
+Approval cannot be granted through the gate's own agent paths. The terminal
+check stops `pbipx policy approve` from a hook or a plain shell, but two
+deliberate escapes remain open to a process that sets out to get round it:
+writing a forged record straight into the store, and running the approval
+under a program that supplies a terminal, such as `script`. The gate denies
+both to an agent: its write rule denies a write anywhere in the store
+(`agent-settings`), and its shell rule denies a command that reaches the
+store or runs the approval. Neither stops a process outside the gate, which
+the threat model leaves to the agent's sandbox (layer 7).
+
+The approval is checked against the exact bytes the gate parsed: the
+policy file is read once, so a policy swapped between a parse and a digest
+cannot be enforced while another is checked. A store inside the repository
+(`PBIPX_CONFIG_DIR` there, as given or with symlinks resolved) is refused
+like a relative one: the gate denies every call, and the policy commands
+exit 3. So is a repository's committed Claude Code settings file whose
+`env` sets `PBIPX_CONFIG_DIR`, which `pbipx scan` reports as
+`hooks-disabled`.
+
 An approval is per machine and per clone path. A second clone, or a move,
 needs its own approval.
 
