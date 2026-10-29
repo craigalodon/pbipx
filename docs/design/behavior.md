@@ -449,3 +449,79 @@ Gate reason classes: `finding`, `unvettable`, `scan-error`,
   `EXTRACT`, `TRIM`, `SUBSTRING`, `SUBSTR` and `OVERLAY`, and after
   `IS [NOT] DISTINCT`, is not a relation.
 - A file that does not parse prints a line saying so, with no detail.
+
+## Clarifications
+
+Questions the first corpus cases raised, answered from the predecessor's
+behavior (2026-10-29).
+
+### Verdicts
+
+- When several associated columns are block columns, the matched column is
+  the first in association order. In a report filter, that is the order the
+  walk meets them, with the filter entry's own field column last.
+- A column is reported as written in the file. Only matching is lowercased.
+- A shaped value on a warn column blocks with the shapes as its only reasons
+  and no matched column. The warn reason does not join them.
+- Each literal that fires is one finding. Two findings with the same path,
+  context, column and reasons are both reported. Overlapping readings of the
+  same text (a comment judged whole, its quoted runs, and its SQL) are not
+  merged either.
+
+### Reports
+
+- A quoted string of digits (`'2105'`) is a string: column verdict and
+  shapes both apply.
+- Typed literals other than strings, such as `datetime'...'`, are not
+  judged. This is an open question for pbipx, since a date filter can hold
+  a date of birth.
+- `cachedFilterDisplayItems[].label` is judged wherever it appears in a
+  bookmark's state, against the context it sits in.
+- `allow` values match exactly, case included.
+
+### Models
+
+- `DATATABLE` header columns, `{...}` cells and "Enter data" fields take the
+  table being declared: `table.column`.
+- A bare column in native SQL stays bare; it does not take the M table.
+- An M string that looks like SQL is judged as an M literal and also lexed
+  as native SQL.
+- A comment inside native SQL has context `tmdl-comment`.
+- Comment and description markers (`//`, `--`, `/* */`, `///`) and the
+  whitespace around the text are removed before it is judged, so the name
+  shape can anchor.
+- A file that does not parse produces one error finding and nothing else.
+- A bare flag (`isHidden`) is a valid declaration.
+
+### SQL and YAML
+
+- In `s.full_name`, the recorded table is `s`, even when `s` is an alias.
+- Literals found by lexing a comment as SQL have the comment's context.
+- Unit-test rows have context `yaml`, including rows written as SQL. CSV
+  rows are judged cell by cell.
+- An anchored node is judged once however many aliases refer to it.
+
+### Prose
+
+- The "name plus at most two words" limit applies to the whole line as well
+  as to fields. The extra words need not be capitalized.
+- `--commit-msg` is a flag. `scan-text` scans every path it is given,
+  whatever the prose scope says. Findings from standard input have the path
+  `-`.
+
+### Gate
+
+- The repository and the policy are checked before the tool is looked at,
+  so `not-a-repository` and `policy-error` deny every tool.
+- When a scan finds both a block and an error, the gate reports `finding`.
+  (A scan's exit code reports the error: 3.)
+- A shell command that reads local state (`cat .pbi/localSettings.json`) is
+  allowed when the rest of the tree is clean, because tree scans skip local
+  state. A Read of the same file is denied. Whether pbipx closes this gap is
+  an open question.
+
+### Baseline
+
+- Recording an acceptance under `CI` or `PRE_COMMIT` is an operational
+  refusal (exit 3). Recording a block or an unknown finding is a usage error
+  (exit 4).
