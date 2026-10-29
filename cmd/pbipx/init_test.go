@@ -146,6 +146,9 @@ func TestInitOneProject(t *testing.T) {
 	if got := registeredHooks(t, e.settings); len(got) != 1 || got[0] != want {
 		t.Errorf("hooks = %q, want [%q]", got, want)
 	}
+	if data, _ := os.ReadFile(e.settings); !strings.Contains(string(data), `"timeout": 300`) {
+		t.Errorf("the hook has no 300-second timeout")
+	}
 
 	// A second run changes nothing and keeps the policy.
 	before, _ := os.ReadFile(e.settings)

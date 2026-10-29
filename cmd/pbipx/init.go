@@ -48,9 +48,11 @@ func newInitCmd() *cobra.Command {
    edit of the project's settings and pbipx scan reports a committed one, but
    on shared machines and for teams use --managed. Every other setting and
    hook is kept, and a backup of the file is written beside it. A hook this
-   binary already registered is upgraded in place (its matcher and shell),
-   and duplicates of it are removed, so re-running init after upgrading
-   pbipx is how the hook is kept current. A gate hook for another pbipx
+   binary already registered is upgraded in place (its command, matcher,
+   shell and timeout), and duplicates of it are removed, so re-running init
+   after upgrading pbipx is how the hook is kept current. The hook's timeout
+   is set to 300 seconds: a hook that times out lets the call proceed, so a
+   slow scan must not reach Claude Code's default. A gate hook for another pbipx
    binary is left with a warning, or replaced with --force. The hook runs
    this binary by its absolute path, so init refuses to run from a binary
    inside the repository.
@@ -92,6 +94,7 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 	hook := setup.Hook{
 		Command: claudecode.HookCommand(exe, runtime.GOOS),
 		Shell:   claudecode.HookShell(runtime.GOOS),
+		Timeout: claudecode.HookTimeout,
 	}
 
 	// Every check comes before the first write.

@@ -542,14 +542,25 @@ passes 0 and 2 through and turns every other outcome of running the binary
 writes it:
 
 - POSIX `sh`, which Claude Code uses on Linux and macOS:
-  `'/path/to/pbipx' gate --agent claude-code; s=$?; [ "$s" -eq 0 ] && exit 0;
-  [ "$s" -eq 2 ] && exit 2; echo '...' >&2; exit 2`.
+  `set +e; '/path/to/pbipx' gate --agent claude-code; s=$?;
+  [ "$s" -eq 0 ] && exit 0; [ "$s" -eq 2 ] && exit 2; echo '...' >&2;
+  exit 2`. `set +e` comes first because errexit can be on before the first
+  line runs (`SHELLOPTS=errexit` in the environment, or a `BASH_ENV` script
+  when the shell is bash); under it, a binary exiting 1 would end the shell
+  with 1, which proceeds.
 - Windows: Claude Code runs hooks through Git Bash, or PowerShell when Git
   Bash is missing, and a command written for one is a parse error (exit 1,
   proceed) in the other. So the hook sets `"shell": "powershell"` and the
   command is PowerShell: `$s` starts at -1, the binary runs inside
   `try`/`catch`, only an exit code of 0 or 2 is passed through, and
   everything else writes a reason to stderr and exits 2.
+
+`pbipx init` registers the hook with `"timeout": 300` (seconds). Claude
+Code treats a hook that times out as a non-blocking error and lets the call
+proceed, so a search or shell call that scans a large protected tree must
+not reach Claude Code's default timeout. A hook this binary registered in
+an earlier command form is recognised by the binary's path and rewritten in
+place.
 
 ## `explain`
 

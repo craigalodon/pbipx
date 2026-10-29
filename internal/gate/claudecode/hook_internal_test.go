@@ -23,7 +23,7 @@ func TestQuoting(t *testing.T) {
 }
 
 func TestHookCommandForms(t *testing.T) {
-	if got := HookCommand("/opt/pbipx", "linux"); !strings.HasPrefix(got, "'/opt/pbipx' gate --agent claude-code;") {
+	if got := HookCommand("/opt/pbipx", "linux"); !strings.HasPrefix(got, "set +e; '/opt/pbipx' gate --agent claude-code;") {
 		t.Errorf("the POSIX command does not run the binary first")
 	}
 	if got := HookCommand(`C:\pbipx.exe`, "windows"); !strings.Contains(got, `& 'C:\pbipx.exe' gate --agent claude-code`) {
