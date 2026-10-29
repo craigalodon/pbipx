@@ -18,11 +18,14 @@ func TestShapedKeysAreNotPrinted(t *testing.T) {
 			"version = 1\n[entries.\"fp1:00\"]\nseverity = \"warn\"\n\"" + key + "\" = 1\n",
 			"version = 1\n[entries.\"" + key + "\"]\nseverity = \"block\"\n",
 		} {
-			_, err := Load(writeFile(t, doc))
+			path := writeFile(t, doc)
+			_, err := Load(path)
 			if err == nil {
 				t.Fatal("the baseline loaded")
 			}
-			msg := err.Error()
+			// The message names the file, whose temporary directory can hold
+			// any digits; only the rest of the message is checked.
+			msg := strings.ReplaceAll(err.Error(), path, "")
 			for _, part := range shapedKeyParts {
 				if strings.Contains(msg, part) {
 					t.Errorf("a shaped key reached the error")
