@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/craigalodon/pbipx/internal/finding"
 	"github.com/craigalodon/pbipx/internal/secret"
@@ -23,15 +24,14 @@ const (
 var noRevealEnv = []string{"CI", "PRE_COMMIT", "PBIPX_NO_REVEAL"}
 
 // stdoutIsTerminal reports whether w is an interactive terminal. A test
-// replaces it. Only an *os.File can be one; a character device is taken as
-// a terminal, which also admits a null device, where nothing is shown.
-var stdoutIsTerminal = func(w io.Writer) bool {
+// replaces it. Only an *os.File can be one, and only when the system says
+// it is a terminal (an ioctl, not the file mode): a null device or another
+// character device is not.
+var stdoutIsTerminal = isTerminal
+
+func isTerminal(w io.Writer) bool {
 	f, ok := w.(*os.File)
-	if !ok {
-		return false
-	}
-	info, err := f.Stat()
-	return err == nil && info.Mode()&os.ModeCharDevice != 0
+	return ok && term.IsTerminal(int(f.Fd()))
 }
 
 // outputFlags are the flags of every command that prints findings.
