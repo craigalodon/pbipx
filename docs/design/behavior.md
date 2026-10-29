@@ -324,9 +324,16 @@ Errors are findings with reasons and no value:
 `pbipx scan`, from every source, checks each Claude Code settings file in
 the files it scans (`.claude/settings.json` or `.claude/settings.local.json`
 in any directory), whatever the policy's scan scope: one that is not a JSON
-object, or that sets `disableAllHooks` to anything but `false`, is an error
-finding with `hooks-disabled`. It names the path and the reason only. Such
-a file turns off the gate's user-level hook (threat model, layer 5). The
+object, that sets `disableAllHooks` to anything but `false`, or whose `env`
+is not an object or sets one of `PBIPX_CONFIG_DIR`, `CLAUDE_CONFIG_DIR`,
+`PATH`, `BASH_ENV`, `ENV` or `SHELLOPTS` (names compared without regard to
+case), is an error finding with `hooks-disabled`. It names the path and the
+reason only. Such a file turns off the gate's user-level hook, or defeats
+it (threat model, layer 5): `PBIPX_CONFIG_DIR` points the gate at an
+approval store that approves anything, `CLAUDE_CONFIG_DIR` moves the
+settings the hook is in, `PATH` changes the programs the hook's shell runs,
+`BASH_ENV` and `ENV` run a script in it, and `SHELLOPTS` sets its options.
+`PBIPX_NO_REVEAL` is allowed: it only takes a power away. The
 gate's own scans do not check it; the gate denies an agent's write to it
 instead.
 
@@ -772,8 +779,9 @@ behavior (2026-10-29).
   checks Claude Code's settings. pbipx denies an agent's write to, or shell
   command naming, `.claude/settings.json` or `.claude/settings.local.json`
   in the repository with `agent-settings`, and `pbipx scan` reports a
-  committed one that sets `disableAllHooks` with `hooks-disabled`, because
-  such a file turns off the gate's user-level hook. (Decided 2026-10-29.)
+  committed one that sets `disableAllHooks`, or whose `env` sets a variable
+  that can defeat the hook, with `hooks-disabled`, because such a file
+  turns off the gate's user-level hook. (Decided 2026-10-29.)
 
 ### Baseline
 

@@ -97,7 +97,8 @@ const (
 	UnlexableSQL    Reason = "unlexable-sql"
 	UnparseableYAML Reason = "unparseable-yaml"
 	// HooksDisabled is a committed Claude Code settings file that turns
-	// off hooks, the gate's included, or that does not parse.
+	// off hooks, the gate's included, sets an environment variable that
+	// can defeat the hook (scan.HookEnv), or does not parse.
 	HooksDisabled Reason = "hooks-disabled"
 )
 

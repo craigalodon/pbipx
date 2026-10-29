@@ -56,7 +56,7 @@ unparseable-json  = { kind = "error", description = "report JSON that does not p
 unparseable-tmdl  = { kind = "error", description = "TMDL the parser cannot place, or an undecodable Enter data blob" }
 unlexable-sql     = { kind = "error", description = "SQL the lexer rejects" }
 unparseable-yaml  = { kind = "error", description = "YAML that does not parse" }
-hooks-disabled    = { kind = "error", description = "a Claude Code settings file (.claude/settings.json or settings.local.json) that sets disableAllHooks, or does not parse" }
+hooks-disabled    = { kind = "error", description = "a Claude Code settings file (.claude/settings.json or settings.local.json) that sets disableAllHooks, sets an environment variable that can defeat the hook (PBIPX_CONFIG_DIR, CLAUDE_CONFIG_DIR, PATH, BASH_ENV, ENV, SHELLOPTS), or does not parse" }
 
 # The order reasons are listed in, within one finding.
 [reason-order]
