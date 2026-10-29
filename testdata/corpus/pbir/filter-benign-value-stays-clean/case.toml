@@ -1,0 +1,6 @@
+description = "a visual filter-pane selection of a value with no shape on an unlisted column stays clean"
+command     = "scan"
+args        = ["--all"]
+policy      = "default"
+exit        = 0
+sentinels   = ["Autumn Term"]

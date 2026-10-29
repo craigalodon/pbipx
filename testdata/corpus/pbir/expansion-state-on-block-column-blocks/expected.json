@@ -1,0 +1,16 @@
+{
+  "findings": [
+    {
+      "path": "pbip/Contoso.Report/definition/pages/3c9e1f0a5b7d2e4c6a80/visuals/8f2d4b6a1c3e5f7092a4/visual.json",
+      "context": "expansion-state",
+      "column": "student.full_name",
+      "tier": "block",
+      "reasons": [
+        "block-column",
+        "person-name-shape"
+      ]
+    }
+  ],
+  "accepted": 0,
+  "suppressed": 0
+}
