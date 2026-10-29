@@ -83,9 +83,11 @@ Pre-alpha: releases are for trying it out, not for relying on it.
    directories holding your `*.Report` and `*.SemanticModel` folders, and
    registers the gate as a Claude Code hook in your user-level settings
    (`~/.claude/settings.json`, or `$CLAUDE_CONFIG_DIR`), where a project
-   cannot remove it. `--dry-run` shows what it would do; `--managed` prints
-   the hook for an administrator's managed settings instead; `--gitignore`
-   adds `.pbi/`, `*.pbix` and `*.abf` to `.gitignore`.
+   cannot remove it. A project can still turn user-level hooks off with
+   `disableAllHooks`, so on shared machines and for teams use `--managed`: it
+   prints the hook as a drop-in file for an administrator's managed settings
+   instead. `--dry-run` shows what it would do; `--gitignore` adds `.pbi/`,
+   `*.pbix` and `*.abf` to `.gitignore`.
 3. Review the policy, above all its column lists: they are a generic start.
 4. Approve it at a terminal with `pbipx policy approve`
    ([ADR-0006](docs/adr/0006-policy-integrity.md)), and again after every

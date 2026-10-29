@@ -52,6 +52,20 @@ should set up:
    closes that.
 5. **The hook registered where the project cannot override it**, such as an
    agent's managed or user-level settings rather than the repository's.
+   `pbipx init` registers the hook at user level by default. That protects
+   it against a repository removing it, but not against a repository turning
+   it off: Claude Code's `.claude/settings.json` or
+   `.claude/settings.local.json` in the repository can set
+   `"disableAllHooks": true`, which disables every user-level hook, the
+   gate's included. pbipx guards that path from both sides: the gate denies
+   an agent's write to, or shell command naming, such a file in the
+   repository (`agent-settings`), and `pbipx scan` reports a committed one
+   that disables hooks, or does not parse, as an error (`hooks-disabled`).
+   Neither stops a person from editing the file by hand, or an agent from
+   building the path at run time. Only managed settings are immune: the
+   hook registered there (`pbipx init --managed` prints a
+   `managed-settings.d` drop-in), ideally with `"allowManagedHooksOnly":
+   true`, cannot be turned off by any repository or user setting.
 6. **Policy integrity.** The policy file stays in the repository, and an edit
    to it weakens the gate as much as an edit to the code would. The gate
    checks the policy against a digest a person approved at a terminal,

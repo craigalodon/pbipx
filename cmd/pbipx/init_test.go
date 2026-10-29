@@ -265,7 +265,9 @@ func TestInitWritesNothing(t *testing.T) {
 		{"binary is the repository root", []string{"init"}, func(e initEnv) string { return e.root }, finding.ExitUsage, "", "inside the repository", false},
 		{"temporary build", []string{"init"}, func(initEnv) string { return filepath.Join(os.TempDir(), "go-build0", "b001", "exe", "pbipx") }, finding.ExitUsage, "", "temporary build", false},
 		{"dry run", []string{"init", "--dry-run", "--gitignore"}, nil, 0, "Would register", "", false},
-		{"managed dry run", []string{"init", "--managed", "--dry-run"}, nil, 0, "managed-settings.json", "", false},
+		{"managed dry run", []string{"init", "--managed", "--dry-run"}, nil, 0, "managed-settings.d", "", false},
+		{"managed names allowManagedHooksOnly", []string{"init", "--managed", "--dry-run"}, nil, 0, `"allowManagedHooksOnly": true`, "", false},
+		{"user-level recommends managed", []string{"init", "--dry-run"}, nil, 0, "use pbipx init --managed", "", false},
 		{"managed", []string{"init", "--managed"}, nil, 0, `"PreToolUse"`, "", true},
 	}
 	for _, tt := range tests {
