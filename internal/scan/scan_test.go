@@ -162,12 +162,14 @@ func TestRunClassifies(t *testing.T) {
 	}
 }
 
-func TestDefaultScannersLeaveReportsUnvettable(t *testing.T) {
+// A scanned kind with no scanner yet fails closed (principle 8). Models
+// have none until phase 3.
+func TestDefaultScannersLeaveModelsUnvettable(t *testing.T) {
 	p := loadPolicy(t, testPolicy)
-	in := files{"pbip/A.Report/definition/a.json": "{}"}
-	res := Run(in.paths(), in, Options{Policy: p})
+	in := files{"pbip/A.SemanticModel/definition/model.tmdl": "model Model"}
+	res := Run(in.paths(), in, Options{Policy: p, Scanners: Scanners()})
 	if got := summarize(res.Findings); len(got) != 1 || got[0].reasons != "unvettable" {
-		t.Errorf("a report with no scanner: %v", got)
+		t.Errorf("a model with no scanner: %v", got)
 	}
 }
 
