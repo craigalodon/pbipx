@@ -1,0 +1,31 @@
+{
+  "files": [
+    {
+      "path": "sql/marts/roster.sql",
+      "kind": "sql",
+      "creates": [
+        {
+          "kind": "view",
+          "name": "analytics.roster"
+        }
+      ],
+      "writes": [
+        "analytics.roster_log",
+        "analytics.student"
+      ],
+      "reads": [
+        "warehouse.dbo.enrollment",
+        "warehouse.dbo.section",
+        "warehouse.dbo.student",
+        "warehouse.dbo.student_update"
+      ],
+      "reads_unqualified": [
+        "active",
+        "staging_roster"
+      ],
+      "literals": {
+        "sql": 2
+      }
+    }
+  ]
+}

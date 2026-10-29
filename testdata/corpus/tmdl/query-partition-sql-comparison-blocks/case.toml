@@ -1,0 +1,6 @@
+description = "a legacy query partition's query is read as native SQL, so a string compared with a block column there blocks in context tmdl-native-sql, with the bare column"
+command     = "scan"
+args        = ["--all"]
+policy      = "default"
+exit        = 1
+sentinels   = ["S-1001"]

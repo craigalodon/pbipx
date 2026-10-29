@@ -1,0 +1,6 @@
+description = "a relationship is described by its from and to columns, quoted names included; plants no value"
+command     = "explain"
+args        = ["pbip"]
+policy      = "default"
+exit        = 0
+sentinels   = []

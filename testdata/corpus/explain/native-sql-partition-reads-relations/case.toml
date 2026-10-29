@@ -1,0 +1,6 @@
+description = "a partition's native query is described by the relations it reads; its literal is counted, never printed"
+command     = "explain"
+args        = ["pbip"]
+policy      = "default"
+exit        = 0
+sentinels   = ["contoso.example.cloud", "2105-03-14"]

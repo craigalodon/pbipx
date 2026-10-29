@@ -1,0 +1,6 @@
+description = "a template call whose arguments are not quoted names is described as dynamic; plants no value"
+command     = "explain"
+args        = ["sql"]
+policy      = "default"
+exit        = 0
+sentinels   = []

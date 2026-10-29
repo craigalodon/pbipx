@@ -19,7 +19,7 @@ is phases 1 to 4. Stage, collect and perf can follow it.
 - [x] CLI on cobra (ADR-0005)
 - [ ] Push to a private GitHub repository; CI green there
 
-## Phase 1: the corpus, and the predecessor passing it
+## Phase 1: the corpus, and the predecessor passing it (done 2026-10-29)
 
 Most of this phase is spent in the predecessor's repository, which stays
 private (ADR-0003).
@@ -38,14 +38,17 @@ private (ADR-0003).
   - [x] `baseline`, `policy`: blocks never baselined; acceptances; policy errors
   - [x] `gate`: the classification table; Read, search and shell decisions;
         every error path
-  - [ ] `explain`: structure only; non-identifier names replaced (deferred to
+  - [x] `explain`: structure only; non-identifier names replaced (written in
         phase 3, with its output schema)
 - [x] A Go corpus runner and case validator (`internal/corpus`)
-- [ ] In the predecessor's repository: a normalized JSON output and a corpus
+- [x] In the predecessor's repository: a normalized JSON output and a corpus
       runner pointed at a local pbipx checkout
 
 **Exit:** the predecessor passes every case, or each case it fails is marked as
 a known predecessor bug and has an issue.
+
+Met 2026-10-29: of 250 cases, the predecessor passes 242 and fails the 8
+marked as known differences. None showed a predecessor bug.
 
 ## Phase 2: the core scanner
 
@@ -53,7 +56,7 @@ a known predecessor bug and has an issue.
 - [x] Personal-data shapes and the block/warn verdict
 - [x] Report (PBIR) scanning
 - [x] Prose scanning: `scan-text`, commit-message use
-- [ ] `scan-text --commits <range>`, for CI over a pull request's messages
+- [x] `scan-text --commits <range>`, for CI over a pull request's messages
 - [x] Baseline: fingerprints of location, column and reasons; never values
 - [x] `scan --staged | --all | <paths>`, `--strict`, redacted output,
       `--show-values` refused off an interactive terminal and under
@@ -63,10 +66,10 @@ a known predecessor bug and has an issue.
 
 ## Phase 3: models and code
 
-- [ ] TMDL parser; DAX, M and embedded SQL lexing; association rules
-- [ ] "Enter data" decoding (deflate and base64); an undecodable value is an error
-- [ ] SQL and YAML scanning
-- [ ] `explain` for reports, models and SQL
+- [x] TMDL parser; DAX, M and embedded SQL lexing; association rules
+- [x] "Enter data" decoding (deflate and base64); an undecodable value is an error
+- [x] SQL and YAML scanning
+- [x] `explain` for reports, models and SQL
 
 **Exit:** the `tmdl`, `sql`, `yaml` and `explain` areas pass.
 

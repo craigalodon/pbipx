@@ -1,0 +1,15 @@
+table enrollment
+
+	column student_id
+		dataType: string
+		summarizeBy: none
+		sourceColumn: student_id
+
+	partition enrollment = m
+		mode: directQuery
+		source =
+				let
+					Source = Sql.Database("contoso.example.cloud", "warehouse"),
+					Query = Value.NativeQuery(Source, "select e.student_id from dbo.enrollment e#(lf)join dbo.student s on s.student_id = e.student_id#(lf)where e.enrolled_on > '2105-03-14'", null, [EnableFolding = true])
+				in
+					Query

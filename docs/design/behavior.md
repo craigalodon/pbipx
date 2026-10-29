@@ -141,9 +141,9 @@ structure, never source text.
 
 | Slug | What |
 |---|---|
-| `tmdl-dax` | DAX: `measure`, `column`, `calculationItem` and `tablePermission` expressions; the DAX-valued properties (format string, detail rows, KPI target, status and trend expressions, field-parameter selection expressions); an unnamed `expression`; `calculated` partition sources |
+| `tmdl-dax` | DAX: `measure`, `column`, `calculationItem`, `tablePermission` and `function` expressions; the DAX-valued properties (format string, detail rows, KPI target, status and trend expressions, field-parameter selection expressions); an unnamed `expression`; `calculated` partition sources |
 | `tmdl-m` | M: named `expression`s, `sourceExpression`, `pollingExpression`, and `m` and `policyRange` partition sources |
-| `tmdl-native-sql` | a string inside M that looks like SQL (`select ... from`), lexed as SQL |
+| `tmdl-native-sql` | a string inside M that looks like SQL (`select ... from`), lexed as SQL; a legacy `query` partition's SQL (its `source`, or a `query` expression) |
 | `tmdl-enter-data` | each cell of an "Enter data" table |
 | `tmdl-property` | every `kind: value` property value, on shape |
 | `tmdl-description` | every `///` description |
@@ -197,9 +197,21 @@ Lexing:
   identifier that is not a keyword and is not followed by `(` is a column; in
   `a.b.c`, `c` is the column and `b` its table. `"..."` is read both ways in
   SQL files (a string in some dialects, an identifier in others) and the
-  associations are merged.
+  associations are merged. A dollar-quoted string (`$$...$$`,
+  `$tag$...$tag$`) is a string. In SQL files, dialects that disagree are
+  read every way (see "SQL files").
 - Unterminated strings, names, column references and block comments are
   errors. Unknown punctuation is skipped.
+
+**Limits.** Association is near-linear in the size of the code. What is left
+is bounded, and code past a bound is an error (`unlexable-sql` in a SQL file
+or a SQL value of YAML, `unparseable-tmdl` in a model), never association
+cut short and called clean:
+
+- one literal is associated with at most 256 distinct columns;
+- associating an expression of `n` tokens may take at most
+  `65536 + 64 * n` units of work (a token visited, a literal tied to a
+  group of columns, a column found for a literal).
 
 "Enter data" blobs are `Binary.FromText("<base64>", ...)`, usually raw
 deflate around JSON. Strings and numbers in the JSON are cells; booleans and
@@ -225,12 +237,38 @@ SQL, so a value cannot hide in a template block. A template comment is a
 comment. An unterminated template comment, string or block comment is an
 error.
 
+Dialects disagree on two things a value can hide behind, so a SQL file is
+lexed under four readings, each with `"..."` read both ways:
+
+| Reading | A quote in a string | `#` |
+|---|---|---|
+| first | doubled (`''`) only | an operator (PostgreSQL) |
+| second | doubled, or after a backslash (`\'`: MySQL, BigQuery, Spark) | an operator |
+| third | doubled only | starts a line comment (MySQL, BigQuery) |
+| fourth | doubled, or after a backslash | starts a line comment |
+
+The literals and comments judged are the union of every reading that lexes,
+so `'O\'Doe' ... 'Doe, Jane'` cannot shift a name out of a literal, and the
+text after a `#` is judged as a comment either way. The file is an error only
+when no reading lexes. Under the backslash readings, `\'`, `\"` and `\\`
+stand for the quote or the backslash, and any other pair is kept as written.
+A reading is left out when the file has no backslash, or no `#`, for it to
+differ on.
+
+Dollar-quoted strings (`$$...$$`, `$tag$...$tag$`: PostgreSQL, Snowflake)
+are strings in every reading, and an unterminated one is an error. Because a
+dollar-quoted string is usually a function body, each reading is also run a
+second time with the body lexed as SQL, its tags passed over, so a value in
+it is a literal of its own. A `$` right after a name character, or before a
+digit (`$1`), opens none.
+
 ## YAML files
 
 Contexts `yaml`, `yaml-key`, `yaml-comment` and `yaml-sql`.
 
 - Every key is judged on shape. Every scalar except nulls, booleans and empty
-  strings is judged; integers and floats are numbers.
+  strings is judged; integers and floats are numbers. A tag does not
+  decide that: a tagged scalar is judged by its text.
 - A scalar is associated with its nearest mapping key, through sequences. So
   `full_name: X` ties `X` to `full_name`.
 - dbt conventions: items of an `accepted_values` test's `values` are also tied
@@ -239,8 +277,8 @@ Contexts `yaml`, `yaml-key`, `yaml-comment` and `yaml-sql`.
   nothing and judged on shape only, whether given as YAML, CSV or SQL.
 - Comments are `#` at a line start or after whitespace, outside any scalar.
 - Quoted runs inside a value are judged for the name shape.
-- Anchors and aliases are walked once. Several documents in one file are
-  scanned.
+- An anchored node is walked where it is anchored and again at each alias,
+  with the alias's association. Several documents in one file are scanned.
 - A YAML error reports its kind and position only. A parser's message can
   quote the source.
 
@@ -350,7 +388,8 @@ expanded to the files under it. Flags: `--strict`, `--format human|json`, `--sho
 `scan-text` reads files, `-` for standard input, or `--commits <range>`;
 `--commit-msg` skips comment lines (pbipx: scans them, up to the scissors line;
 see Clarifications). With nothing to scan it is a usage error.
-It exits 1 on any finding.
+It exits 1 on any finding. `--commits` in a shallow clone is refused with
+exit 3 (Clarifications, "Prose").
 
 Redaction:
 
@@ -446,6 +485,11 @@ Gate reason classes: `finding`, `unvettable`, `scan-error`,
   context. A name with any shape prints as a placeholder.
 - **SQL:** relations created, written and read (qualified, unqualified or
   CTE, and template `ref()`/`source()` calls), and literal counts by context.
+  A `ref()` or `source()` call is a read only where it is code: inside a
+  template block (`{{ }}`, `{% %}`) outside the template's strings,
+  wherever the block stands, so `-- depends_on: {{ ref('x') }}` is a read;
+  or in the SQL outside every comment and string. A call in comment prose or
+  in a string is not a read.
   A name part is printed only if it is a plain identifier (letters, digits
   and `_`, not all digits) with no shape. Otherwise a placeholder, or a
   placeholder for a call whose arguments are not quoted names. `FROM` inside
@@ -464,6 +508,10 @@ behavior (2026-10-29).
   the first in association order. In a report filter, that is the order the
   walk meets them, with the filter entry's own field column last.
 - A column is reported as written in the file. Only matching is lowercased.
+  A table or column name with a personal-data shape or a control character
+  is reported as `{?}`, in every scanner (spaces and hyphens print). Such a
+  name only decides a verdict when the policy lists or patterns it, so a
+  printed name is schema the policy already names.
 - A shaped value on a warn column blocks with the shapes as its only reasons
   and no matched column. The warn reason does not join them.
 - Each literal that fires is one finding. Two findings with the same path,
@@ -483,6 +531,11 @@ behavior (2026-10-29).
 - `cachedFilterDisplayItems[].label` is judged wherever it appears in a
   bookmark's state, against the context it sits in.
 - `allow` values match exactly, case included.
+- **Divergence (hierarchy levels):** the predecessor associates only
+  `Column` references, so a selection on a hierarchy level is tied only to
+  the context's other columns. pbipx also associates a `HierarchyLevel` as a
+  column, named after its level, of the hierarchy's table. A level is
+  usually named after the column it shows. (Decided 2026-10-29.)
 
 ### Models
 
@@ -496,15 +549,67 @@ behavior (2026-10-29).
   whitespace around the text are removed before it is judged, so the name
   shape can anchor.
 - A file that does not parse produces one error finding and nothing else.
+- **Divergence (matching functions):** pbipx ties no number in `SEARCH`
+  and `FIND` (a start position and a not-found value), ties only `SWITCH`'s
+  match values (not its results or else value), and takes `SWITCH`'s
+  columns from its first argument only. The predecessor ties every literal
+  argument, so `SEARCH("x", [full_name], 1, 0)` blocked on `1` and `0`. A
+  result string with a shape still blocks on the shape (principle 6;
+  2026-10-29).
 - A bare flag (`isHidden`) is a valid declaration.
+- A DAX user-defined function (`function name = (x) => ...`) is DAX: its
+  body's literals are associated as in a measure, in context `tmdl-dax`.
+- A legacy `query` partition's SQL, the `source` of a partition declared
+  `= query` or a `query` expression under its `source`, is read as SQL in
+  a SQL file is (`"..."` both ways, the associations merged), in context
+  `tmdl-native-sql`. A bare column stays bare. Its comments are
+  `tmdl-comment` and are also lexed as SQL. SQL that does not lex is
+  `unparseable-tmdl`.
+- A table or column name in a finding's column is printed only when it is
+  an identifier with no personal-data shape, and otherwise as `{?}`
+  (`{?}.full_name`), as in SQL and YAML. The verdict is decided on the
+  name as written.
 
 ### SQL and YAML
 
 - In `s.full_name`, the recorded table is `s`, even when `s` is an alias.
 - Literals found by lexing a comment as SQL have the comment's context.
+- The readings of a SQL file (see "SQL files") keep locators stable. The
+  literals and comments of the first reading that lexes are numbered in
+  order, as they always were; one found only by a later reading is
+  numbered after them, in reading order. A literal at the same offset with
+  the same value under two readings is one literal, with the columns of
+  both. A file that every reading lexes alike has the locators it would
+  have with one reading.
+- A file's literal count in `explain` counts the union of the readings.
+- `explain` reads relations from the first reading that lexes.
+- A literal past the association limits (see "Association in code") is not
+  judged on fewer columns: the whole file is an error.
 - Unit-test rows have context `yaml`, including rows written as SQL. CSV
   rows are judged cell by cell.
-- An anchored node is judged once however many aliases refer to it.
+- An anchored node is judged where it is anchored, and again at each alias
+  with the alias site's key and column association: `student_id: *id` ties
+  the anchored value to `student_id`, an aliased `values` list is tied to
+  the accepted_values column, and an aliased string under `where` is lexed
+  as SQL. A judgement the new association does not change (a key's shape, a
+  quoted run, a value with the same columns) is not repeated. At one alias
+  site, an alias inside the walked node to a node that site has already
+  walked is not followed, so cycles end. A file whose aliases walk more than
+  100,000 nodes in all is one `unparseable-yaml` error at the alias that
+  crossed the cap. (This replaces "an anchored node is judged once".)
+- An explicit tag is not trusted. A tagged scalar (`!!null`, `!!bool`,
+  `!!int`, a custom `!tag`) is judged by its text: as a string, column
+  verdict and shapes, unless its text read as a plain scalar is a number.
+  Only plain, untagged nulls and booleans, and empty strings, are skipped.
+  `!!str` is a string.
+- A quote, or a `|` or `>` block indicator, opens a scalar only where a node
+  can start: after a key's `:`, a sequence entry's `-` or an explicit key's
+  `?`, a document marker, at a flow collection's start or after its commas,
+  or first on a line that does not continue a plain scalar. On a plain
+  scalar's continuation line it is text, and a `#` after it is still a
+  comment. The comments the parser attaches to nodes are judged too, merged
+  with the scanner's by text, so a mistake in either cannot by itself hide a
+  comment.
 
 ### Prose
 
@@ -524,6 +629,12 @@ behavior (2026-10-29).
   which git discards with everything below it. The comment character is
   read from `core.commentString` or `core.commentChar`; `auto`, or no
   setting, is `#`. (Decided by the user, 2026-10-29.)
+- `--commits` needs the repository's full history. In a shallow clone git
+  lists only the commits it has, so a range would pass scanned in part. A
+  shallow repository, or a listed commit whose parent is missing, is an
+  operational error (exit 3) with a fixed message that says to fetch the
+  full history, and never echoes the range. A CI job that runs it checks out
+  with `fetch-depth: 0`.
 
 ### Gate
 

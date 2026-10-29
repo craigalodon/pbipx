@@ -1,0 +1,32 @@
+table student
+	lineageTag: 00000000-0000-0000-0000-000000000001
+
+	measure 'Student Count' = COUNTROWS(student)
+		formatString: 0
+
+	column student_id
+		dataType: string
+		lineageTag: 00000000-0000-0000-0000-000000000002
+		summarizeBy: none
+		sourceColumn: student_id
+
+	column full_name
+		dataType: string
+		lineageTag: 00000000-0000-0000-0000-000000000003
+		summarizeBy: none
+		sourceColumn: full_name
+
+	column name_length = LEN(student[full_name])
+		dataType: int64
+		lineageTag: 00000000-0000-0000-0000-000000000004
+		summarizeBy: sum
+
+	partition student = m
+		mode: import
+		source =
+				let
+					Source = Sql.Database("contoso.example.cloud", "school"),
+					student = Source{[Schema = "enrollment", Item = "student"]}[Data],
+					Filtered = Table.SelectRows(student, each [full_name] <> "Doe, Jane")
+				in
+					Filtered

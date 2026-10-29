@@ -1,0 +1,55 @@
+{
+  "files": [
+    {
+      "path": "pbip/School.SemanticModel/definition/expressions.tmdl",
+      "kind": "model",
+      "expressions": [
+        {
+          "name": "Server",
+          "kind": "parameter"
+        },
+        {
+          "name": "Database",
+          "kind": "parameter"
+        }
+      ],
+      "literals": {
+        "tmdl-m": 4
+      }
+    },
+    {
+      "path": "pbip/School.SemanticModel/definition/tables/enrollment.tmdl",
+      "kind": "model",
+      "tables": [
+        {
+          "name": "enrollment",
+          "columns": [
+            {
+              "name": "enrollment_id",
+              "type": "int64",
+              "calculated": false
+            }
+          ],
+          "measures": [],
+          "partitions": [
+            {
+              "name": "enrollment",
+              "source": "m",
+              "mode": "import",
+              "connectors": [
+                "Sql.Database"
+              ],
+              "reads": [
+                "warehouse.dbo.enrollment"
+              ],
+              "native_sql_reads": []
+            }
+          ]
+        }
+      ],
+      "literals": {
+        "tmdl-m": 2
+      }
+    }
+  ]
+}

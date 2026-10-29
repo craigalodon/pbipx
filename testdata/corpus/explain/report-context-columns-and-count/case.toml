@@ -1,0 +1,6 @@
+description = "a slicer selection is described by its context, its string count and its columns, never its value"
+command     = "explain"
+args        = ["pbip"]
+policy      = "default"
+exit        = 0
+sentinels   = ["Doe, Jane"]

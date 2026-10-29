@@ -1,0 +1,18 @@
+{
+  "files": [
+    {
+      "path": "pbip/School.SemanticModel/definition/roles/advisors.tmdl",
+      "kind": "model",
+      "roles": [
+        {
+          "name": "advisors",
+          "filters": [
+            "student"
+          ],
+          "members": 2
+        }
+      ],
+      "literals": {}
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "files": [
+    {
+      "path": "pbip/School.SemanticModel/definition/tables/contact.tmdl",
+      "kind": "model",
+      "tables": [
+        {
+          "name": "<withheld>",
+          "columns": [
+            {
+              "name": "<withheld>",
+              "type": "string",
+              "calculated": false
+            },
+            {
+              "name": "grade",
+              "type": "int64",
+              "calculated": false
+            }
+          ],
+          "measures": [
+            "<withheld>"
+          ],
+          "partitions": [
+            {
+              "name": "<withheld>",
+              "source": "m",
+              "mode": "import",
+              "connectors": [
+                "File.Contents"
+              ],
+              "reads": [],
+              "native_sql_reads": []
+            }
+          ]
+        }
+      ],
+      "literals": {
+        "tmdl-m": 1
+      }
+    }
+  ]
+}

@@ -293,6 +293,10 @@ func (c *collector) walkMembers(o object, path, skip string) {
 			if col, ok := m.val.(object); ok {
 				c.addColumn(col)
 			}
+		case "HierarchyLevel":
+			if lvl, ok := m.val.(object); ok {
+				c.addHierarchyLevel(lvl)
+			}
 		case "From":
 			c.addAliases(m.val)
 		case "cachedFilterDisplayItems":
@@ -336,6 +340,29 @@ func (c *collector) addColumn(col object) {
 		if src, ok := expr.getObject("SourceRef"); ok {
 			ref.entity, _ = src.getString("Entity")
 			ref.source, _ = src.getString("Source")
+		}
+	}
+	c.columns = append(c.columns, ref)
+}
+
+// addHierarchyLevel associates a hierarchy level as a column of the
+// hierarchy's table. A level is usually named after the column it shows, so
+// a selection on it is judged as one on that column; a level named
+// otherwise matches nothing, and the context's other columns still apply.
+func (c *collector) addHierarchyLevel(lvl object) {
+	name, ok := lvl.getString("Level")
+	if !ok {
+		return
+	}
+	ref := columnRef{name: name}
+	if expr, ok := lvl.getObject("Expression"); ok {
+		if h, ok := expr.getObject("Hierarchy"); ok {
+			if hexpr, ok := h.getObject("Expression"); ok {
+				if src, ok := hexpr.getObject("SourceRef"); ok {
+					ref.entity, _ = src.getString("Entity")
+					ref.source, _ = src.getString("Source")
+				}
+			}
 		}
 	}
 	c.columns = append(c.columns, ref)

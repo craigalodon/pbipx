@@ -1,0 +1,4 @@
+version: 2
+models:
+  - name: student
+    description: "Doe, Jane is the example"

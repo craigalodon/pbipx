@@ -203,6 +203,19 @@ func TestNoOutputCarriesAValue(t *testing.T) {
 		{"path missing", nil, "", []string{"scan", "notes/" + sentinel}, finding.ExitUsage},
 		{"two sources", nil, "", []string{"scan", "--staged", "notes/" + sentinel}, finding.ExitUsage},
 		{"bad format", nil, "", []string{"scan", "--format", sentinel}, finding.ExitUsage},
+		// A YAML key that is the value itself, matched by the block pattern:
+		// it blocks, and its column prints as {?}.
+		{"yaml key as a column", yamlFile("models/a.yml", "meta:\n  "+sentinel+": x\n"), "",
+			[]string{"scan", "--format", "json", "models/a.yml"}, finding.ExitBlock},
+		{"yaml SQL that does not lex", yamlFile("models/a.yml", "where: \"full_name = '"+sentinel+"\"\n"), "",
+			[]string{"scan", "models/a.yml"}, finding.ExitOperational},
+		{"scan-text commits", commitOnBase("subject\n\n- " + sentinel + "\nmail " + plantedEmail + "\n"), "",
+			[]string{"scan-text", "--commits", "base..HEAD"}, finding.ExitBlock},
+		{"scan-text commits json", commitOnBase("subject\n\n" + sentinel + "\n"), "",
+			[]string{"scan-text", "--format", "json", "--commits", "base..HEAD"}, finding.ExitBlock},
+		{"scan-text bad range", nil, "", []string{"scan-text", "--commits", sentinel + "..HEAD"}, finding.ExitUsage},
+		{"scan-text range as an option", nil, "", []string{"scan-text", "--commits=--output=" + sentinel}, finding.ExitUsage},
+		{"scan-text commits and files", nil, "", []string{"scan-text", "--commits", "HEAD", "notes/" + sentinel + ".md"}, finding.ExitUsage},
 		{"record unknown", nil, "", []string{"baseline", "record", sentinel, "--note", sentinel}, finding.ExitUsage},
 	}
 	for _, tt := range tests {
@@ -366,6 +379,118 @@ func TestScanTextNeedsInput(t *testing.T) {
 	newRepo(t, "repo")
 	if o := runIn(t, "", "scan-text"); o.code != finding.ExitUsage {
 		t.Errorf("exit = %d, want %d", o.code, finding.ExitUsage)
+	}
+}
+
+// yamlFile adds YAML to the policy's scan, with a block pattern that
+// matches the planted name, and writes one YAML file.
+func yamlFile(name, content string) func(t *testing.T, root string) {
+	return func(t *testing.T, root string) {
+		t.Helper()
+		p := strings.Replace(testPolicy, `prose  = ["notes/**/*.md"]`, `prose  = ["notes/**/*.md"]`+"\nyaml   = [\"models/**/*.yml\"]", 1)
+		p = strings.Replace(p, `warn  = ["cohort_year"]`, `warn  = ["cohort_year"]`+"\nblock_pattern = \"doe\"", 1)
+		writeFile(t, root, policy.FileName, p)
+		writeFile(t, root, name, content)
+	}
+}
+
+// gitIn runs a fixed git command in root, with the corpus's identity.
+func gitIn(t *testing.T, root string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...) //nolint:gosec // G204: the tests' own fixed git commands
+	cmd.Dir = root
+	cmd.Env = corpus.GitEnv(os.Environ())
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("git %s: %v", args[0], err)
+	}
+}
+
+// commitOnBase tags the repository's commit "base" and commits each
+// message on top of it, in order.
+func commitOnBase(messages ...string) func(t *testing.T, root string) {
+	return func(t *testing.T, root string) {
+		t.Helper()
+		gitIn(t, root, "tag", "base")
+		for _, m := range messages {
+			gitIn(t, root, "commit", "--allow-empty", "--cleanup=verbatim", "-m", m)
+		}
+	}
+}
+
+func TestScanTextCommits(t *testing.T) {
+	root := newRepo(t, "repo")
+	commitOnBase(
+		"clean subject\n\nNothing personal here.\n",
+		"subject\n\n# "+sentinel+"\n",
+		"subject\n\n# ------------------------ >8 ------------------------\n"+sentinel+"\n",
+	)(t, root)
+	o := runIn(t, "", "scan-text", "--format", "json", "--commits", "base..HEAD")
+	if o.code != finding.ExitBlock {
+		t.Errorf("exit = %d, want %d (stderr %q)", o.code, finding.ExitBlock, o.stderr)
+	}
+	var got struct {
+		Findings []struct {
+			Path    string `json:"path"`
+			Context string `json:"context"`
+		} `json:"findings"`
+	}
+	if err := json.Unmarshal([]byte(o.stdout), &got); err != nil {
+		t.Fatal(err)
+	}
+	// Only the commit with the name on a comment line fires: the one after
+	// the scissors line is cut, and the first is clean.
+	if len(got.Findings) != 1 || got.Findings[0].Context != "text" {
+		t.Fatalf("findings = %+v, want one text finding", got.Findings)
+	}
+	path := got.Findings[0].Path
+	id, ok := strings.CutPrefix(path, "commit ")
+	if !ok || len(id) != 12 || strings.Trim(id, "0123456789abcdef") != "" {
+		t.Errorf("path = %q, want commit and 12 hex digits", path)
+	}
+	if o.leaks() != "" {
+		t.Error("output carries a planted value")
+	}
+
+	if o := runIn(t, "", "scan-text", "--commits", "HEAD..HEAD"); o.code != finding.ExitClean {
+		t.Errorf("an empty range: exit %d, want %d", o.code, finding.ExitClean)
+	}
+}
+
+// A shallow clone lists only the commits it has, so --commits there would
+// pass a range it scanned in part. It is refused, without echoing the range.
+func TestScanTextCommitsRefusesShallowClone(t *testing.T) {
+	origin := newRepo(t, "origin")
+	commitOnBase("subject\n\n"+sentinel+"\n", "second", "third")(t, origin)
+	clone := filepath.Join(filepath.Dir(origin), "clone")
+	gitIn(t, filepath.Dir(origin), "clone", "--quiet", "--depth=1", "--no-single-branch",
+		"file://"+filepath.ToSlash(origin), "clone")
+	t.Chdir(clone)
+	for _, args := range [][]string{
+		{"scan-text", "--commits", "base..HEAD"},
+		{"scan-text", "--format", "json", "--commits", "HEAD"},
+	} {
+		o := runIn(t, "", args...)
+		if o.code != finding.ExitOperational {
+			t.Errorf("%v: exit %d, want %d (stderr %q)", args, o.code, finding.ExitOperational, o.stderr)
+		}
+		if o.stderr != "pbipx: error: "+msgIncompleteHistory+"\n" {
+			t.Errorf("%v: stderr %q", args, o.stderr)
+		}
+		if o.leaks() != "" || strings.Contains(o.stderr, "base") {
+			t.Errorf("%v: output carries a planted value or the range", args)
+		}
+	}
+}
+
+func TestScanTextCommitsNeedsARepository(t *testing.T) {
+	isolate(t)
+	dir := t.TempDir()
+	t.Setenv("GIT_CEILING_DIRECTORIES", filepath.Dir(dir))
+	t.Chdir(dir)
+	writeFile(t, dir, "p.toml", testPolicy)
+	o := runIn(t, "", "scan-text", "--policy", "p.toml", "--commits", "HEAD~1..HEAD")
+	if o.code != finding.ExitOperational || !strings.HasPrefix(o.stderr, "pbipx: not-a-repository:") {
+		t.Errorf("exit %d, stderr %q", o.code, o.stderr)
 	}
 }
 

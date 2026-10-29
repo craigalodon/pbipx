@@ -72,13 +72,25 @@ func Literal(value string, kind Kind, columns []finding.Column, p *policy.Policy
 	return Verdict{}, false
 }
 
-// Finding builds the finding for a verdict.
+// Finding builds the finding for a verdict. The verdict was reached with
+// the column's real names; the finding carries them as shape.DisplayName
+// prints them, so a name that is really a value never reaches output or a
+// fingerprint.
 func (v Verdict) Finding(path string, ctx finding.Context, locator, value string) finding.Finding {
+	var col *finding.Column
+	if v.Column != nil {
+		c := *v.Column
+		if c.Table != "" {
+			c.Table = shape.DisplayName(c.Table)
+		}
+		c.Name = shape.DisplayName(c.Name)
+		col = &c
+	}
 	return finding.Finding{
 		Path:    path,
 		Context: ctx,
 		Locator: locator,
-		Column:  v.Column,
+		Column:  col,
 		Tier:    v.Tier,
 		Reasons: v.Reasons,
 		Value:   secret.New(value),

@@ -1,0 +1,6 @@
+description = "a YAML file and an allowed image are listed as not explained and never read"
+command     = "explain"
+args        = ["models", "pbip"]
+policy      = "default"
+exit        = 0
+sentinels   = ["Doe, Jane"]

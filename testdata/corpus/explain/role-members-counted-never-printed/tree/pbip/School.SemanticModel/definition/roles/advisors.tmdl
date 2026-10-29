@@ -1,0 +1,10 @@
+role advisors
+	modelPermission: read
+
+	tablePermission student = [advisor_email] = USERPRINCIPALNAME()
+
+	member 'jane.doe@example.com'
+		memberType: user
+
+	member 'Advising Staff'
+		memberType: group

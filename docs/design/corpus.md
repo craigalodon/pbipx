@@ -49,7 +49,9 @@ A runner, one per implementation, does this for each case:
    stderr; the normalized result against `expected.json`.
 
 An implementation's runner may translate the corpus policy into its own
-format. The predecessor's runner does.
+format, command names (`baseline record`), and the tool's own name where a
+gate event's Bash command runs it (`pbipx scan --all`). The predecessor's
+runner does all three.
 
 ## case.toml
 
@@ -139,8 +141,8 @@ that implementation. pbipx starts its deny reason with `pbipx: <class>:`,
 and the first line of stderr, which carries it, is authoritative: Claude
 Code reads stderr, not stdout, from a hook that exits 2.
 
-For `explain`, the result is the structure as JSON. Its schema is settled
-with the first `explain` cases (phase 3).
+For `explain`, the result is the structure as JSON, in the schema of
+[explain.md](explain.md).
 
 A value never appears in `expected.json`. The tool never prints one, so a
 normalized result has nowhere to put it.

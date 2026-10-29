@@ -1,0 +1,6 @@
+description = "FROM inside EXTRACT, TRIM, SUBSTRING, SUBSTR and OVERLAY, and after IS NOT DISTINCT, is not a relation; plants no value"
+command     = "explain"
+args        = ["sql"]
+policy      = "default"
+exit        = 0
+sentinels   = []
