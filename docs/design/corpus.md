@@ -191,8 +191,7 @@ locator, which implementations need not agree on. So a case never holds a
 fingerprint. It describes a finding, and the runner asks its own
 implementation for that finding's fingerprint.
 
-pbipx's baseline is `.pbipx-baseline.toml` at the root (ADR-0004). Proposed,
-and settled with the baseline itself:
+pbipx's baseline is `.pbipx-baseline.toml` at the root (ADR-0004):
 
 ```toml
 version = 1
@@ -204,7 +203,11 @@ path     = "pbip/.../visual.json"  # for the reviewer; the key is the identity
 context  = "slicer-selection"
 column   = "enrollment.cohort_year"
 reasons  = ["warn-column"]
+note     = "why"                   # optional; `baseline record` writes it
 ```
+
+Any other key is a baseline error. An expiry is the last day the entry
+accepts its finding.
 
 A case adds, all optional:
 

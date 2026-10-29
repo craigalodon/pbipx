@@ -49,12 +49,13 @@ a known predecessor bug and has an issue.
 
 ## Phase 2: the core scanner
 
-- [ ] Policy loading (ADR-0004, accepted), policy errors
-- [ ] Personal-data shapes and the block/warn verdict
-- [ ] Report (PBIR) scanning
-- [ ] Prose scanning: `scan-text`, commit-message use
-- [ ] Baseline: fingerprints of location, column and reasons; never values
-- [ ] `scan --staged | --all | <paths>`, `--strict`, redacted output,
+- [x] Policy loading (ADR-0004, accepted), policy errors
+- [x] Personal-data shapes and the block/warn verdict
+- [x] Report (PBIR) scanning
+- [x] Prose scanning: `scan-text`, commit-message use
+- [ ] `scan-text --commits <range>`, for CI over a pull request's messages
+- [x] Baseline: fingerprints of location, column and reasons; never values
+- [x] `scan --staged | --all | <paths>`, `--strict`, redacted output,
       `--show-values` refused off an interactive terminal and under
       `CI`, `PRE_COMMIT` or `PBIPX_NO_REVEAL`, `--show-shape`
 

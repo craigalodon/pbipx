@@ -259,6 +259,8 @@ blocks and nothing warns.
   un-doubled first.
 - Allowlisted literals are removed from a line before it is checked.
 - For commit messages, lines starting with `#` are skipped, as git does.
+  **Divergence:** pbipx scans them and stops at the scissors line (see
+  Clarifications, "Prose").
 
 ## Files and the default deny
 
@@ -346,7 +348,8 @@ expanded to the files under it. Flags: `--strict`, `--format human|json`, `--sho
 `--show-shape`, `--policy`, `--baseline`, `--no-baseline`.
 
 `scan-text` reads files, `-` for standard input, or `--commits <range>`;
-`--commit-msg` skips comment lines. With nothing to scan it is a usage error.
+`--commit-msg` skips comment lines (pbipx: scans them, up to the scissors line;
+see Clarifications). With nothing to scan it is a usage error.
 It exits 1 on any finding.
 
 Redaction:
@@ -509,7 +512,18 @@ behavior (2026-10-29).
   as to fields. The extra words need not be capitalized.
 - `--commit-msg` is a flag. `scan-text` scans every path it is given,
   whatever the prose scope says. Findings from standard input have the path
-  `-`.
+  `-`. An argument that names no regular file in the repository is reported
+  as `argument N`, never by what was typed.
+- An allowlisted literal is removed from a line only where no letter or
+  digit is next to it, so a short allowed word cannot cut down a name.
+- **Divergence (commit-message comments):** with `--commit-msg`, pbipx
+  scans every line, comment lines included. `git commit -m` keeps a line
+  starting with `#`, and a hook cannot tell which comment lines git's
+  cleanup will strip. Scanning stops at git's scissors line (the comment
+  character, a space, then `------------------------ >8 ------------------------`),
+  which git discards with everything below it. The comment character is
+  read from `core.commentString` or `core.commentChar`; `auto`, or no
+  setting, is `#`. (Decided by the user, 2026-10-29.)
 
 ### Gate
 
