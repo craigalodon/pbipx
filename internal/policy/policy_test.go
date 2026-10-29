@@ -247,6 +247,43 @@ func TestUnderRoot(t *testing.T) {
 	}
 }
 
+func TestLocalStateDir(t *testing.T) {
+	p := mustParse(t, header+`
+[files]
+local_state = ["**/.pbi/localSettings.json", "pbip/cache/**", "**/*.bak"]
+`)
+	for dir, want := range map[string]bool{
+		"pbip/A.Report/.pbi":       true,
+		"pbip/.pbi":                true,
+		"pbip/cache":               true,
+		"pbip/cache/deep/er":       true,
+		"pbip/A.Report":            true, // a *.bak file directly in it is local state
+		"pbip/A.Report/.pbi/x/y":   true, // as above
+		"notes/.pbi":               false,
+		"pbipx/.pbi":               false,
+		"pbip/A.Report/.pbi/extra": true,
+	} {
+		if got := p.LocalStateDir(dir); got != want {
+			t.Errorf("LocalStateDir(%q) = %v, want %v", dir, got, want)
+		}
+	}
+	q := mustParse(t, header+`
+[files]
+local_state = ["**/.pbi/localSettings.json"]
+`)
+	for dir, want := range map[string]bool{
+		"pbip/A.Report/.pbi":   true,
+		"pbip/A.Report":        false,
+		"pbip":                 false,
+		"pbip/A.Report/.pbi/x": false,
+		".pbi":                 false,
+	} {
+		if got := q.LocalStateDir(dir); got != want {
+			t.Errorf("LocalStateDir(%q) = %v, want %v", dir, got, want)
+		}
+	}
+}
+
 func TestColumnVerdicts(t *testing.T) {
 	p := mustParse(t, header+`
 [columns]
