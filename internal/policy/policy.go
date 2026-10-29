@@ -158,14 +158,33 @@ type rawAccept struct {
 
 // Load reads and validates the policy at path. Every failure is an *Error.
 func Load(path string) (*Policy, error) {
+	p, _, err := LoadData(path)
+	return p, err
+}
+
+// LoadData is Load, and also returns the exact bytes the policy was parsed
+// from. A caller that checks those bytes against an approval (ADR-0006)
+// judges the policy it enforces, not a second read of a file that may have
+// changed in between. Every failure is an *Error, and returns no bytes.
+func LoadData(path string) (*Policy, []byte, error) {
 	data, err := os.ReadFile(path) //nolint:gosec // G304: the policy path is the caller's to choose
 	if err != nil {
 		msg := "cannot be read"
 		if errors.Is(err, fs.ErrNotExist) {
 			msg = "does not exist"
 		}
-		return nil, &Error{File: path, Msg: msg, err: err}
+		return nil, nil, &Error{File: path, Msg: msg, err: err}
 	}
+	p, err := Parse(data, path)
+	if err != nil {
+		return nil, nil, err
+	}
+	return p, data, nil
+}
+
+// Parse validates the policy in data, read from path, which only names the
+// file in an error. Every failure is an *Error.
+func Parse(data []byte, path string) (*Policy, error) {
 	p, perr := parse(data)
 	if perr != nil {
 		perr.File = path

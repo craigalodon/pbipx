@@ -263,3 +263,55 @@ func TestStatusString(t *testing.T) {
 		}
 	}
 }
+
+func TestInRepository(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "repo")
+	if err := os.MkdirAll(filepath.Join(root, "sub"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(base, "config")
+	type inCase struct {
+		name string
+		dir  string
+		in   bool
+	}
+	tests := []inCase{
+		{"the root", root, true},
+		{"below the root", filepath.Join(root, "sub", "pbipx"), true},
+		{"climbing back in", filepath.Join(base, "x", "..", "repo", "cfg"), true},
+		{"beside the root", outside, false},
+		{"a sibling with the root as a prefix", root + "-config", false},
+	}
+	link := filepath.Join(base, "link")
+	if err := os.Symlink(root, link); err == nil {
+		tests = append(tests, inCase{"through a link, not yet there", filepath.Join(link, "new", "pbipx"), true})
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := (&Store{Dir: tt.dir}).InRepository(root); got != tt.in {
+				t.Errorf("InRepository = %v, want %v", got, tt.in)
+			}
+		})
+	}
+
+	t.Setenv(EnvConfigDir, filepath.Join(root, "cfg"))
+	if _, err := OpenFor(root); !errors.Is(err, ErrInRepository) {
+		t.Errorf("OpenFor with the store in the repository: %v, want ErrInRepository", err)
+	}
+	t.Setenv(EnvConfigDir, outside)
+	if s, err := OpenFor(root); err != nil || s.Dir != outside {
+		t.Errorf("OpenFor = %v, %v; want the store outside", s, err)
+	}
+}
+
+func TestCheckDigest(t *testing.T) {
+	root, policyPath, s := setup(t)
+	approve(t, s, root, policyPath)
+	if st, err := s.Check(root, Digest([]byte(testPolicy))); err != nil || st != Approved {
+		t.Errorf("Check of the approved bytes = %s, %v", st, err)
+	}
+	if st, err := s.Check(root, Digest([]byte(testPolicy+"# edited\n"))); err != nil || st != Changed {
+		t.Errorf("Check of other bytes = %s, %v; want changed", st, err)
+	}
+}

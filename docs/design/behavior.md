@@ -458,7 +458,16 @@ The record is TOML holding `version = 1`, `digest = "sha256:<hex>"` and
 `approved` (the UTC time), written atomically (a temporary file renamed
 into place) with mode 0600 in directories created 0700. A relative
 `PBIPX_CONFIG_DIR` is refused: resolved against the working directory, it
-could point into the repository. `scan` does not check approval.
+could point into the repository. So is a configuration directory inside the
+repository root, as given or with symlinks resolved (of the root, and of
+the directory's deepest existing ancestor): the gate denies every call with
+`internal-error`, and `policy approve` and `policy status` exit 3. `scan`
+does not check approval.
+
+The gate reads `.pbipx.toml` once. It parses those bytes and checks the
+digest of the same bytes against the approval, so a policy swapped between
+two reads cannot be enforced while a different one is checked. `policy
+approve` likewise records the digest of the bytes it loaded.
 
 Decisions by tool. Every tool not listed is allowed.
 

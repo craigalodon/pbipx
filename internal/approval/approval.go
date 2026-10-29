@@ -19,6 +19,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
+	"strings"
 	"time"
 
 	"github.com/pelletier/go-toml/v2"
@@ -44,6 +46,9 @@ var digestShape = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 var (
 	ErrNoConfigDir = errors.New("approval: no configuration directory: " + EnvConfigDir + " is not absolute, or the user configuration directory is unknown")
 	ErrBadRecord   = errors.New("approval: the approval record is not valid")
+	// ErrInRepository is a configuration directory inside the repository
+	// whose policy it approves, where an agent could write an approval.
+	ErrInRepository = errors.New("approval: the configuration directory is inside the repository")
 )
 
 // Status is how a repository's policy stands against its approval.
@@ -111,6 +116,72 @@ func Open() (*Store, error) {
 		return nil, err
 	}
 	return &Store{Dir: dir}, nil
+}
+
+// OpenFor is the store in ConfigDir for the repository at root, refused
+// with ErrInRepository when the directory is inside that repository.
+func OpenFor(root string) (*Store, error) {
+	s, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	if s.InRepository(root) {
+		return nil, ErrInRepository
+	}
+	return s, nil
+}
+
+// InRepository reports whether the store's directory is the repository
+// root at root or below it, under any spelling: as given, and with the
+// symlinks of root and of the directory's deepest existing ancestor
+// resolved. A record there could be written by anything that can write to
+// the repository, so it approves nothing.
+func (s *Store) InRepository(root string) bool {
+	roots := spellings(root)
+	for _, d := range spellings(s.Dir) {
+		for _, r := range roots {
+			if Within(r, d) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// spellings are p made absolute and clean, and that with the symlinks of
+// its deepest existing ancestor resolved.
+func spellings(p string) []string {
+	a, err := filepath.Abs(p)
+	if err != nil {
+		return []string{filepath.Clean(p)}
+	}
+	out := []string{a}
+	rest := ""
+	for dir := a; ; dir = filepath.Dir(dir) {
+		if r, err := filepath.EvalSymlinks(dir); err == nil {
+			out = append(out, filepath.Join(r, rest))
+			break
+		}
+		if filepath.Dir(dir) == dir {
+			break
+		}
+		rest = filepath.Join(filepath.Base(dir), rest)
+	}
+	return out
+}
+
+// Within reports whether path is dir or below it, both absolute and clean.
+// On Windows and macOS, whose file systems are usually case-insensitive,
+// case is ignored.
+func Within(dir, path string) bool {
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		dir, path = strings.ToLower(dir), strings.ToLower(path)
+	}
+	rel, err := filepath.Rel(dir, path)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 }
 
 // Digest is the digest of a policy's exact bytes, as "sha256:<hex>".
@@ -230,6 +301,12 @@ func (s *Store) Status(root, policyPath string) (Status, error) {
 	if err != nil {
 		return Unapproved, err
 	}
+	return s.Check(root, digest)
+}
+
+// Check checks a policy's digest against the approval of the repository at
+// root. It is never Missing.
+func (s *Store) Check(root, digest string) (Status, error) {
 	recorded, ok, err := s.Recorded(root)
 	switch {
 	case err != nil:

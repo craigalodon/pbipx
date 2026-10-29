@@ -45,6 +45,13 @@ func repoError(cmd *cobra.Command, format string, err error) error {
 // .pbipx.toml at the repository root. A *policy.Error is the policy-error
 // failure.
 func loadPolicy(cmd *cobra.Command, format, cwd string, repo *source.Repo, flagPath string) (*policy.Policy, error) {
+	p, _, err := loadPolicyData(cmd, format, cwd, repo, flagPath)
+	return p, err
+}
+
+// loadPolicyData is loadPolicy, and also returns the bytes the policy was
+// parsed from.
+func loadPolicyData(cmd *cobra.Command, format, cwd string, repo *source.Repo, flagPath string) (*policy.Policy, []byte, error) {
 	path, name := "", policy.FileName
 	switch {
 	case flagPath != "":
@@ -52,17 +59,17 @@ func loadPolicy(cmd *cobra.Command, format, cwd string, repo *source.Repo, flagP
 	case repo != nil:
 		path = filepath.Join(repo.Root, policy.FileName)
 	default:
-		return nil, failure(cmd, format, finding.NotARepository, "the working directory is not in a git repository, and no --policy was given")
+		return nil, nil, failure(cmd, format, finding.NotARepository, "the working directory is not in a git repository, and no --policy was given")
 	}
-	p, err := policy.Load(path)
+	p, data, err := policy.LoadData(path)
 	if err != nil {
 		var pe *policy.Error
 		if errors.As(err, &pe) {
-			return nil, failure(cmd, format, finding.PolicyError, describe(name, pe.Line, pe.Key, pe.Msg))
+			return nil, nil, failure(cmd, format, finding.PolicyError, describe(name, pe.Line, pe.Key, pe.Msg))
 		}
-		return nil, failure(cmd, format, finding.PolicyError, name+": cannot be loaded")
+		return nil, nil, failure(cmd, format, finding.PolicyError, name+": cannot be loaded")
 	}
-	return p, nil
+	return p, data, nil
 }
 
 // baselinePath is flagPath, relative to cwd, when given, or the default at

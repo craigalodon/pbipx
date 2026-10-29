@@ -143,3 +143,42 @@ func appendFile(t *testing.T, path, content string) {
 		t.Fatal(err)
 	}
 }
+
+// TestRequireApprovalJudgesTheBytesGiven checks that the approval is checked
+// against the bytes the gate parsed, not a second read of the file.
+func TestRequireApprovalJudgesTheBytesGiven(t *testing.T) {
+	root, store := approvedRepo(t)
+	data, err := os.ReadFile(filepath.Join(root, ".pbipx.toml")) //nolint:gosec // G304: the test's own repository
+	if err != nil {
+		t.Fatal(err)
+	}
+	require := gate.RequireApproval(store)
+	if d := require(root, data); d != nil {
+		t.Errorf("the approved bytes: %+v", *d)
+	}
+	if d := require(root, append(data, "# edited\n"...)); d == nil || d.Reason != gate.ReasonPolicyUnapproved {
+		t.Errorf("other bytes, with the file unchanged: %+v; want policy-unapproved", d)
+	}
+}
+
+// TestRequireApprovalStoreInRepository checks that a store inside the
+// repository approves nothing, even one holding a valid record.
+func TestRequireApprovalStoreInRepository(t *testing.T) {
+	root, _ := approvedRepo(t)
+	inside := &approval.Store{Dir: filepath.Join(root, "config")}
+	digest, err := approval.DigestFile(filepath.Join(root, ".pbipx.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := inside.Approve(root, digest, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	ev := gate.Event{Tool: gate.Other, Cwd: root}
+	check(t, gate.Decide(ev, gate.Options{CheckPolicy: gate.RequireApproval(inside)}), gate.ReasonInternalError)
+	t.Setenv(approval.EnvConfigDir, inside.Dir)
+	d := gate.Decide(ev, gate.Options{CheckPolicy: gate.RequireApproval(nil)})
+	check(t, d, gate.ReasonInternalError)
+	if strings.Contains(d.Message, root) {
+		t.Error("the message names the path")
+	}
+}

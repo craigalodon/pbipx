@@ -6,13 +6,13 @@ import (
 )
 
 // RequireApproval is an Options.CheckPolicy that denies every call unless
-// the policy is the one a person approved (ADR-0006): policy-unapproved when
-// there is no approval or the policy changed since, internal-error when the
-// store cannot be found or read. A nil store is the one in
-// approval.ConfigDir, found on each call. Messages name the policy by its
-// file name only.
-func RequireApproval(store *approval.Store) func(root, policyPath string) *Decision {
-	return func(root, policyPath string) *Decision {
+// the policy's bytes are the ones a person approved (ADR-0006):
+// policy-unapproved when there is no approval or the policy changed since,
+// internal-error when the store cannot be found or read, or is inside the
+// repository. A nil store is the one in approval.ConfigDir, found on each
+// call. Messages name the policy by its file name only.
+func RequireApproval(store *approval.Store) func(root string, policyData []byte) *Decision {
+	return func(root string, policyData []byte) *Decision {
 		s := store
 		if s == nil {
 			var err error
@@ -20,7 +20,11 @@ func RequireApproval(store *approval.Store) func(root, policyPath string) *Decis
 				return denial(ReasonInternalError, "the policy approval store cannot be found; the call is denied")
 			}
 		}
-		st, err := s.Status(root, policyPath)
+		if s.InRepository(root) {
+			return denial(ReasonInternalError,
+				"the policy approval store (%s) is inside the repository, where an agent could write an approval; the call is denied", approval.EnvConfigDir)
+		}
+		st, err := s.Check(root, approval.Digest(policyData))
 		if err != nil {
 			return denial(ReasonInternalError, "the policy approval cannot be read; the call is denied")
 		}
@@ -30,8 +34,6 @@ func RequireApproval(store *approval.Store) func(root, policyPath string) *Decis
 		case approval.Changed:
 			return denial(ReasonPolicyUnapproved,
 				"%s changed since it was approved; a person reviews it and runs 'pbipx policy approve' at a terminal", policy.FileName)
-		case approval.Missing:
-			return denial(ReasonPolicyError, "%s does not exist", policy.FileName)
 		}
 		return denial(ReasonPolicyUnapproved,
 			"%s is not approved on this machine; a person reviews it and runs 'pbipx policy approve' at a terminal", policy.FileName)

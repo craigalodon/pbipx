@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -88,20 +89,18 @@ func runPolicyApprove(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	// A policy that does not load is not approved: the gate would deny with
-	// policy-error whatever the approval says.
-	if _, err := loadPolicy(cmd, formatHuman, cwd, repo, ""); err != nil {
+	// policy-error whatever the approval says. The digest is of the bytes
+	// that loaded, read once.
+	_, data, err := loadPolicyData(cmd, formatHuman, cwd, repo, "")
+	if err != nil {
 		return err
 	}
-	store, err := approval.Open()
+	store, err := openStore(cmd, repo.Root)
 	if err != nil {
-		return operational(cmd, "the approval store cannot be found: set "+approval.EnvConfigDir+" to an absolute path")
+		return err
 	}
-	path := filepath.Join(repo.Root, policy.FileName)
-	digest, err := approval.DigestFile(path)
-	if err != nil {
-		return failure(cmd, formatHuman, finding.PolicyError, policy.FileName+": cannot be read")
-	}
-	status, err := store.Status(repo.Root, path)
+	digest := approval.Digest(data)
+	status, err := store.Check(repo.Root, digest)
 	if err != nil {
 		return operational(cmd, "the approval record cannot be read")
 	}
@@ -120,6 +119,20 @@ func runPolicyApprove(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
+// openStore is the approval store for the repository at root, or the
+// operational failure that refuses it: not found, or inside the repository,
+// where an agent could write an approval.
+func openStore(cmd *cobra.Command, root string) (*approval.Store, error) {
+	store, err := approval.OpenFor(root)
+	switch {
+	case errors.Is(err, approval.ErrInRepository):
+		return nil, operational(cmd, "the approval store is inside the repository, where an agent could write an approval: set "+approval.EnvConfigDir+" to a directory outside it")
+	case err != nil:
+		return nil, operational(cmd, "the approval store cannot be found: set "+approval.EnvConfigDir+" to an absolute path")
+	}
+	return store, nil
+}
+
 func newPolicyStatusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
@@ -134,9 +147,9 @@ otherwise.`,
 			if err != nil {
 				return err
 			}
-			store, err := approval.Open()
+			store, err := openStore(cmd, repo.Root)
 			if err != nil {
-				return operational(cmd, "the approval store cannot be found: set "+approval.EnvConfigDir+" to an absolute path")
+				return err
 			}
 			status, err := store.Status(repo.Root, filepath.Join(repo.Root, policy.FileName))
 			if err != nil {
