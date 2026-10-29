@@ -1,0 +1,24 @@
+{
+  "findings": [
+    {
+      "path": "pbip/School.SemanticModel/definition/tables/student.tmdl",
+      "context": "tmdl-m",
+      "column": "student.first_name",
+      "tier": "block",
+      "reasons": [
+        "block-column"
+      ]
+    },
+    {
+      "path": "pbip/School.SemanticModel/definition/tables/student.tmdl",
+      "context": "tmdl-m",
+      "column": "student.first_name",
+      "tier": "block",
+      "reasons": [
+        "block-column"
+      ]
+    }
+  ],
+  "accepted": 0,
+  "suppressed": 0
+}

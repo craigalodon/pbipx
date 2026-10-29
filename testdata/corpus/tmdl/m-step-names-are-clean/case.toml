@@ -1,0 +1,6 @@
+description = "must stay clean: a #\"...\" step name is a name, never a value, so a step named Word, Word is not judged for the name shape"
+command     = "scan"
+args        = ["--all"]
+policy      = "default"
+exit        = 0
+sentinels   = ["Active", "contoso.example.cloud"]

@@ -1,0 +1,12 @@
+table student
+
+	partition student = m
+		mode: import
+		source =
+				let
+					Source = Sql.Database("contoso.example.cloud", "school"),
+					student = Source{[Schema = "enrollment", Item = "student"]}[Data],
+					Kept = Table.SelectColumns(student, {"student_id", "full_name", "status"}),
+					Filtered = Table.SelectRows(Kept, each [status] = "Active")
+				in
+					Filtered

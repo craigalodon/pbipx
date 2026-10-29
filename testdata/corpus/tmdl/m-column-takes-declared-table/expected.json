@@ -1,0 +1,15 @@
+{
+  "findings": [
+    {
+      "path": "pbip/School.SemanticModel/definition/tables/advisee.tmdl",
+      "context": "tmdl-m",
+      "column": "advisee.last_name",
+      "tier": "block",
+      "reasons": [
+        "block-column"
+      ]
+    }
+  ],
+  "accepted": 0,
+  "suppressed": 0
+}

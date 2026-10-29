@@ -1,0 +1,11 @@
+table student
+
+	partition student = m
+		mode: import
+		source =
+				let
+					Source = Sql.Database("contoso.example.cloud", "school"),
+					student = Source{[Schema = "enrollment", Item = "student"]}[Data],
+					Filtered = Table.SelectRows(student, each Text.Contains([email], "jane.doe"))
+				in
+					Filtered
