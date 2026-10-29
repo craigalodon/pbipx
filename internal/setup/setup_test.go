@@ -178,7 +178,7 @@ func TestMergeHookPreservesEverythingElse(t *testing.T) {
   },
   "zzz": 1.50
 }`)
-	m, err := setup.MergeHook(existing, testHook)
+	m, err := setup.MergeHook(existing, testHook, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,7 +223,7 @@ func TestMergeHookPreservesEverythingElse(t *testing.T) {
 	}
 
 	// Idempotent: merging again changes nothing.
-	again, err := setup.MergeHook(m.Data, testHook)
+	again, err := setup.MergeHook(m.Data, testHook, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,7 +251,7 @@ func TestMergeHookShapes(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m, err := setup.MergeHook([]byte(tt.existing), tt.hook)
+			m, err := setup.MergeHook([]byte(tt.existing), tt.hook, false)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -289,7 +289,7 @@ func TestMergeHookRefusesOtherShapes(t *testing.T) {
 		`{"a": 1`,
 		`not json`,
 	} {
-		if _, err := setup.MergeHook([]byte(existing), testHook); !errors.Is(err, setup.ErrSettings) {
+		if _, err := setup.MergeHook([]byte(existing), testHook, false); !errors.Is(err, setup.ErrSettings) {
 			t.Errorf("MergeHook(%s) error = %v, want ErrSettings", existing, err)
 		}
 	}

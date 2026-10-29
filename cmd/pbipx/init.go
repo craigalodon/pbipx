@@ -47,8 +47,11 @@ func newInitCmd() *cobra.Command {
    every user-level hook off with disableAllHooks; the gate denies an agent's
    edit of the project's settings and pbipx scan reports a committed one, but
    on shared machines and for teams use --managed. Every other setting and
-   hook is kept, a backup of the file is
-   written beside it, and an equivalent hook is not added twice. The hook runs
+   hook is kept, and a backup of the file is written beside it. A hook this
+   binary already registered is upgraded in place (its matcher and shell),
+   and duplicates of it are removed, so re-running init after upgrading
+   pbipx is how the hook is kept current. A gate hook for another pbipx
+   binary is left with a warning, or replaced with --force. The hook runs
    this binary by its absolute path, so init refuses to run from a binary
    inside the repository.
 3. Print the next steps.
@@ -68,7 +71,7 @@ Exit codes: 0 done, 3 a failure, 4 a usage error.`,
 	}
 	fl := cmd.Flags()
 	fl.BoolVar(&f.managed, "managed", false, "print the hook for managed settings instead of writing user settings")
-	fl.BoolVar(&f.force, "force", false, "overwrite an existing .pbipx.toml")
+	fl.BoolVar(&f.force, "force", false, "overwrite an existing .pbipx.toml, and replace gate hooks for another pbipx binary")
 	fl.BoolVar(&f.dryRun, "dry-run", false, "write nothing; print what would be done")
 	fl.BoolVar(&f.gitignore, "gitignore", false, "append missing .gitignore lines for Desktop's local state and binaries")
 	return cmd
@@ -105,7 +108,7 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 		if rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {
 			return operational(cmd, "the Claude Code settings file cannot be read")
 		}
-		if merge, err = setup.MergeHook(existing, hook); err != nil {
+		if merge, err = setup.MergeHook(existing, hook, f.force); err != nil {
 			return operational(cmd, "the Claude Code settings file is not a JSON object with hooks pbipx can merge into; add the hook by hand (pbipx init --managed prints it)")
 		}
 	}
@@ -169,13 +172,21 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 	case merge.Present:
 		fmt.Fprintf(out, "The gate's hook is already registered in %s.\n", settingsPath)
 	case f.dryRun:
-		fmt.Fprintf(out, "Would register the gate's hook (PreToolUse: %s) in %s, keeping a backup.\n", setup.HookMatcher, settingsPath)
+		verb := "register"
+		if merge.Updated {
+			verb = "update"
+		}
+		fmt.Fprintf(out, "Would %s the gate's hook (PreToolUse: %s) in %s, keeping a backup.\n", verb, setup.HookMatcher, settingsPath)
 	default:
 		backup, werr := setup.WriteSettings(settingsPath, merge.Data, now())
 		if werr != nil {
 			return operational(cmd, "the Claude Code settings file cannot be written")
 		}
-		fmt.Fprintf(out, "Registered the gate's hook (PreToolUse: %s) in %s.\n", setup.HookMatcher, settingsPath)
+		verb := "Registered"
+		if merge.Updated {
+			verb = "Updated"
+		}
+		fmt.Fprintf(out, "%s the gate's hook (PreToolUse: %s) in %s.\n", verb, setup.HookMatcher, settingsPath)
 		if backup != "" {
 			fmt.Fprintf(out, "The previous settings are kept in %s.\n", backup)
 		}
@@ -184,7 +195,7 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 		fmt.Fprintln(out, "A repository can turn off user-level hooks (disableAllHooks); on shared machines and for teams, use pbipx init --managed.")
 	}
 	if merge.Others > 0 {
-		fmt.Fprintf(out, "Warning: %s registers %s that runs another pbipx binary. A hook whose binary is gone denies every call; remove it if it is stale.\n",
+		fmt.Fprintf(out, "Warning: %s registers %s that runs another pbipx binary. A hook whose binary is gone denies every call; remove it if it is stale, or re-run with --force to replace it.\n",
 			settingsPath, plural(merge.Others, "a gate hook", "gate hooks"))
 	}
 

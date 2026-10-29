@@ -89,6 +89,11 @@ Pre-alpha: releases are for trying it out, not for relying on it.
    prints the hook as a drop-in file for an administrator's managed settings
    instead. `--dry-run` shows what it would do; `--gitignore` adds `.pbi/`,
    `*.pbix` and `*.abf` to `.gitignore`.
+
+   After upgrading pbipx, run `pbipx init` again: it updates the registered
+   hook in place (a new version may gate more tools) and removes duplicates.
+   A hook left by a pbipx binary at another path is reported, and replaced
+   with `--force`.
 3. Review the policy, above all its column lists: they are a generic start.
 4. Approve it at a terminal with `pbipx policy approve`
    ([ADR-0006](docs/adr/0006-policy-integrity.md)), and again after every

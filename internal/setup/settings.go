@@ -62,18 +62,52 @@ func SettingsPath() (string, error) {
 type Merge struct {
 	// Data is the new file. It is nil when nothing changes.
 	Data []byte
-	// Present is set when an equivalent hook is already registered: the
-	// same matcher, command and shell.
+	// Present is set when the hook is already registered as it should be:
+	// one pbipx entry, with the same matcher, command and shell.
 	Present bool
+	// Updated is set when an existing registration of the hook was
+	// rewritten in place: its matcher or shell brought up to date, or
+	// duplicates of it removed.
+	Updated bool
 	// Others counts the pbipx gate hooks registered with a different
-	// command, such as a binary at another path. They are left in place.
+	// command, such as a binary at another path, that are left in place.
 	Others int
+	// Replaced counts those that were replaced instead (replaceOthers).
+	Replaced int
 }
 
-// MergeHook adds h as a PreToolUse hook to existing, the bytes of a settings
-// file (empty for none). Every other key, and every other hook, is kept, in
-// its order. The result is indented with two spaces.
-func MergeHook(existing []byte, h Hook) (Merge, error) {
+// gateHook is one pbipx gate hook found in the PreToolUse entries: the
+// entry's index and the hook's index within it.
+type gateHook struct {
+	entry, hook int
+	same        bool // the command is h's: the same binary
+}
+
+// preEntry is one PreToolUse entry, split into its members so that it can
+// be rewritten keeping every other key. members is nil for an entry in a
+// shape pbipx does not read, which is kept as written.
+type preEntry struct {
+	raw     json.RawMessage
+	members []member
+	matcher string
+	hooks   []json.RawMessage
+	removed []bool // hooks to drop
+	insert  bool   // the new entry goes right after this one
+}
+
+// MergeHook registers h as a PreToolUse hook in existing, the bytes of a
+// settings file (empty for none). Every other key, and every hook that is
+// not a pbipx gate hook, is kept, in its order. The result is indented with
+// two spaces.
+//
+// A pbipx gate hook is recognised by its command. One for the same command
+// as h is upgraded in place: its entry's matcher and its shell are set to
+// h's, and any further registrations of it are removed. When its entry
+// holds hooks of other tools under another matcher, it is moved out into an
+// entry of its own right after, so that their matcher is not changed. A
+// gate hook for another binary is counted in Others and left alone, unless
+// replaceOthers is set, when it is treated as h's and replaced.
+func MergeHook(existing []byte, h Hook, replaceOthers bool) (Merge, error) {
 	top := []member{}
 	if len(bytes.TrimSpace(existing)) > 0 {
 		var err error
@@ -95,39 +129,93 @@ func MergeHook(existing []byte, h Hook) (Merge, error) {
 	if err != nil {
 		return Merge{}, err
 	}
-	var entries []json.RawMessage
+	var raws []json.RawMessage
 	if pi >= 0 {
-		if err := json.Unmarshal(hooks[pi].value, &entries); err != nil {
+		if err := json.Unmarshal(hooks[pi].value, &raws); err != nil {
 			return Merge{}, ErrSettings
 		}
 	}
 
-	var m Merge
 	want := h.entry().Hooks[0]
-	for _, raw := range entries {
-		var e entryJSON
-		if json.Unmarshal(raw, &e) != nil {
-			continue // another tool's entry, in a shape pbipx does not read
-		}
-		for _, x := range e.Hooks {
+	entries := make([]preEntry, len(raws))
+	var found []gateHook
+	var m Merge
+	for i, raw := range raws {
+		entries[i] = readEntry(raw)
+		e := &entries[i]
+		for j, hr := range e.hooks {
+			var x hookJSON
+			if json.Unmarshal(hr, &x) != nil || !strings.Contains(x.Command, gateArgs) {
+				continue
+			}
+			same := x.Command == want.Command
 			switch {
-			case e.Matcher == HookMatcher && x.Type == want.Type && x.Command == want.Command && x.Shell == want.Shell:
-				m.Present = true
-			case strings.Contains(x.Command, gateArgs) && x.Command != want.Command:
+			case same:
+				found = append(found, gateHook{i, j, true})
+			case replaceOthers:
+				found = append(found, gateHook{i, j, false})
+				m.Replaced++
+			default:
 				m.Others++
 			}
 		}
 	}
-	if m.Present {
+
+	var added json.RawMessage
+	switch {
+	case len(found) == 0:
+		if added, err = marshal(h.entry()); err != nil {
+			return Merge{}, err
+		}
+	case len(found) == 1 && found[0].same && upToDate(entries[found[0].entry], found[0].hook, want):
+		m.Present = true
 		return m, nil
+	default:
+		m.Updated = true
+		first := found[0]
+		for _, g := range found[1:] {
+			entries[g.entry].removed[g.hook] = true
+		}
+		e := &entries[first.entry]
+		if e.matcher == HookMatcher || e.alone(first.hook) {
+			// Rewrite the hook, and the matcher when only removed hooks
+			// share it.
+			if e.hooks[first.hook], err = rewriteHook(e.hooks[first.hook], want); err != nil {
+				return Merge{}, err
+			}
+			e.matcher = HookMatcher
+		} else {
+			// Other tools' hooks keep their matcher; the gate's moves out.
+			e.removed[first.hook] = true
+			e.insert = true
+			if added, err = marshal(h.entry()); err != nil {
+				return Merge{}, err
+			}
+		}
 	}
 
-	added, err := marshal(h.entry())
-	if err != nil {
-		return Merge{}, err
+	var out []json.RawMessage
+	for i := range entries {
+		e := &entries[i]
+		raw, keep, err := e.render()
+		if err != nil {
+			return Merge{}, err
+		}
+		if keep {
+			out = append(out, raw)
+		}
+		if e.insert {
+			out = append(out, added)
+		}
 	}
-	entries = append(entries, added)
-	pre, err := marshal(entries)
+	if len(found) == 0 {
+		out = append(out, added)
+	}
+	if out == nil {
+		out = []json.RawMessage{}
+	}
+
+	pre, err := marshal(out)
 	if err != nil {
 		return Merge{}, err
 	}
@@ -137,12 +225,12 @@ func MergeHook(existing []byte, h Hook) (Merge, error) {
 		return Merge{}, err
 	}
 	top = set(top, hi, "hooks", hooksObj)
-	out, err := object(top)
+	doc, err := object(top)
 	if err != nil {
 		return Merge{}, err
 	}
 	var compact, indented bytes.Buffer
-	if err := json.Compact(&compact, out); err != nil {
+	if err := json.Compact(&compact, doc); err != nil {
 		return Merge{}, err
 	}
 	if err := json.Indent(&indented, compact.Bytes(), "", "  "); err != nil {
@@ -153,10 +241,120 @@ func MergeHook(existing []byte, h Hook) (Merge, error) {
 	return m, nil
 }
 
+// readEntry splits a PreToolUse entry. An entry that is not an object with
+// a string matcher (or none) and an array of hooks is kept as written.
+func readEntry(raw json.RawMessage) preEntry {
+	e := preEntry{raw: raw}
+	members, err := objectMembers(raw)
+	if err != nil {
+		return e
+	}
+	mi, err1 := find(members, "matcher")
+	hk, err2 := find(members, "hooks")
+	if err1 != nil || err2 != nil || hk < 0 {
+		return e
+	}
+	if mi >= 0 && json.Unmarshal(members[mi].value, &e.matcher) != nil {
+		return e
+	}
+	if json.Unmarshal(members[hk].value, &e.hooks) != nil {
+		e.hooks = nil
+		return e
+	}
+	e.members = members
+	e.removed = make([]bool, len(e.hooks))
+	return e
+}
+
+// alone reports whether hook i is the only hook of the entry left.
+func (e *preEntry) alone(i int) bool {
+	for j := range e.hooks {
+		if j != i && !e.removed[j] {
+			return false
+		}
+	}
+	return true
+}
+
+// render is the entry as it now stands; keep is false when every hook was
+// removed from it.
+func (e *preEntry) render() (raw json.RawMessage, keep bool, err error) {
+	if e.members == nil {
+		return e.raw, true, nil
+	}
+	var hooks []json.RawMessage
+	changed := false
+	for j, hr := range e.hooks {
+		if e.removed[j] {
+			changed = true
+			continue
+		}
+		hooks = append(hooks, hr)
+	}
+	if len(hooks) == 0 && changed {
+		return nil, false, nil
+	}
+	members := e.members
+	if mi, _ := find(members, "matcher"); mi >= 0 || e.matcher != "" {
+		v, err := marshal(e.matcher)
+		if err != nil {
+			return nil, false, err
+		}
+		members = set(members, mi, "matcher", v)
+	}
+	if hooks == nil {
+		hooks = []json.RawMessage{}
+	}
+	hv, err := marshal(hooks)
+	if err != nil {
+		return nil, false, err
+	}
+	hk, _ := find(members, "hooks")
+	members = set(members, hk, "hooks", hv)
+	raw, err = object(members)
+	return raw, true, err
+}
+
+// upToDate reports whether hook i of e is want, under the current matcher.
+func upToDate(e preEntry, i int, want hookJSON) bool {
+	var x hookJSON
+	if json.Unmarshal(e.hooks[i], &x) != nil {
+		return false
+	}
+	return e.matcher == HookMatcher && x.Type == want.Type && x.Command == want.Command && x.Shell == want.Shell
+}
+
+// rewriteHook sets a hook's type, command and shell to want's, keeping its
+// other keys. An empty shell removes the key.
+func rewriteHook(raw json.RawMessage, want hookJSON) (json.RawMessage, error) {
+	members, err := objectMembers(raw)
+	if err != nil {
+		return nil, err
+	}
+	for _, kv := range [][2]string{{"type", want.Type}, {"command", want.Command}, {"shell", want.Shell}} {
+		i, err := find(members, kv[0])
+		if err != nil {
+			return nil, err
+		}
+		if kv[1] == "" {
+			if i >= 0 {
+				members = append(members[:i], members[i+1:]...)
+			}
+			continue
+		}
+		v, err := marshal(kv[1])
+		if err != nil {
+			return nil, err
+		}
+		members = set(members, i, kv[0], v)
+	}
+	return object(members)
+}
+
 // Snippet is a settings fragment that registers h, for an administrator to
 // merge into Claude Code's managed settings.
 func Snippet(h Hook) ([]byte, error) {
-	m, err := MergeHook(nil, h)
+	m, err := MergeHook(nil, h, false)
 	if err != nil {
 		return nil, err
 	}
