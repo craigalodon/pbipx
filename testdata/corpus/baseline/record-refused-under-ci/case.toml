@@ -1,8 +1,8 @@
 description = "recording an acceptance is refused when CI is set"
 command     = "baseline"
-args        = ["record", "{fingerprint}"]
+args        = ["record", "{fingerprint}", "--note", "a reviewed persisted selection"]
 policy      = "default"
-exit        = 4
+exit        = 3
 sentinels   = ["Fall 2150"]
 env         = { CI = "true" }
 

@@ -1,6 +1,6 @@
 description = "recording a fingerprint with no current finding is refused: the selection is cleared after it is resolved"
 command     = "baseline"
-args        = ["record", "{fingerprint}"]
+args        = ["record", "{fingerprint}", "--note", "a reviewed persisted selection"]
 policy      = "default"
 exit        = 4
 sentinels   = ["Fall 2150"]

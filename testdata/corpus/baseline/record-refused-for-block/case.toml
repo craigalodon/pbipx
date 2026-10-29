@@ -1,6 +1,6 @@
 description = "recording an acceptance of a block is refused"
 command     = "baseline"
-args        = ["record", "{fingerprint}"]
+args        = ["record", "{fingerprint}", "--note", "a reviewed persisted selection"]
 policy      = "default"
 exit        = 4
 sentinels   = ["Doe, Jane"]

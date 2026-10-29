@@ -238,7 +238,10 @@ selection) without writing a fingerprint down. Setup trusts the
 implementation's scan, but a scan that misses the finding fails the case at
 step 1 instead of passing it.
 
-`pbipx baseline record <fingerprint>` records an acceptance and
+`pbipx baseline record <fingerprint> --note <text>` records an acceptance;
+the note is required, so every `record` case passes one and a refusal cannot
+come from a missing argument. Refusal under `CI` or `PRE_COMMIT` exits 3 (an
+operational refusal); refusal of a block or an unknown fingerprint exits 4.
 `pbipx baseline verify` checks expiry. Cases for both have no
 `expected.json`: their exit code and sentinels are checked.
 
