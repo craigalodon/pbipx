@@ -1,0 +1,6 @@
+description = "Read of a report file whose only finding is a warning allows: the gate denies on blocks and errors only"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = ["2150"]

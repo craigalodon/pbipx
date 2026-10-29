@@ -1,0 +1,6 @@
+description = "Read of Desktop local state under a root denies without reading it. Plants no value"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []

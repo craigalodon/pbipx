@@ -1,0 +1,6 @@
+description = "Read of an allowlisted image under StaticResources allows without scanning, beside a leaking file"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = ["Doe, Jane"]

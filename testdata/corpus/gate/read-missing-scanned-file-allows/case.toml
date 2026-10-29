@@ -1,0 +1,6 @@
+description = "Read of a scanned path that does not exist allows: there is nothing to leak. Plants no value"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = []

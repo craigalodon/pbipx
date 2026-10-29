@@ -1,0 +1,6 @@
+description = "Read of a .pbix under a root denies: no file class covers it. Plants no value"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []

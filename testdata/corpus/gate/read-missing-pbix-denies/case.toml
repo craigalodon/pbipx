@@ -1,0 +1,6 @@
+description = "Read of a .pbix under a root denies even when it does not exist. Plants no value"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []

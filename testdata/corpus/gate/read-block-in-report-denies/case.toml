@@ -1,0 +1,6 @@
+description = "Read of a report file whose slicer selection is on a block column denies"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]

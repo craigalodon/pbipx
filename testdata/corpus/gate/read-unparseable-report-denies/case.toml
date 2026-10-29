@@ -1,0 +1,6 @@
+description = "Read of report JSON that does not parse denies: a parse failure is never a clean file. Plants no value"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []
