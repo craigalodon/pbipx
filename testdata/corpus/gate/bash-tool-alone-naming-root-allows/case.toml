@@ -1,0 +1,6 @@
+description = "The tool alone allows even when it names a root: rule 1 comes before the tree scan"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = ["Doe, Jane"]

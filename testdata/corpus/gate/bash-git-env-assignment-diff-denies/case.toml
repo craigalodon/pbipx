@@ -1,0 +1,6 @@
+description = "An environment assignment before git does not hide a git diff. Plants no value"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []

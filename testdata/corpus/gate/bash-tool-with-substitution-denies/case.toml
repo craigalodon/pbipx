@@ -1,0 +1,6 @@
+description = "The tool with a command substitution is not alone; the command names the root and the leak denies"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]

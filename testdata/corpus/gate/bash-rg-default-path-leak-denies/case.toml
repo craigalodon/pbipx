@@ -1,0 +1,6 @@
+description = "rg is always recursive; with no path it searches ., which touches the root"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
