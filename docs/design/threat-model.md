@@ -53,10 +53,11 @@ should set up:
 5. **The hook registered where the project cannot override it**, such as an
    agent's managed or user-level settings rather than the repository's.
 6. **Policy integrity.** The policy file stays in the repository, and an edit
-   to it weakens the gate as much as an edit to the code would. *Design open:*
-   the gate checks the policy against a digest a human approved, stored
-   outside the repository, and denies until a changed policy is re-approved.
-   See [ROADMAP.md](../ROADMAP.md), phase 4.
+   to it weakens the gate as much as an edit to the code would. The gate
+   checks the policy against a digest a person approved at a terminal,
+   stored outside the repository, and denies every call until a changed
+   policy is re-approved
+   ([ADR-0006](../adr/0006-policy-integrity.md)).
 7. **The agent's own sandbox and file-system deny rules** for Desktop's local
    state and caches. These are the real containment; the gate explains each
    denial.

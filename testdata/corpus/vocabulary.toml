@@ -83,6 +83,7 @@ scan-error       = "the file, or one in the protected tree, could not be scanned
 local-state      = "a read of Power BI Desktop local state"
 git-content      = "a git command that would print content from a protected root"
 policy-error     = "the policy failed to load"
+policy-unapproved = "the policy has no approval, or changed since it was approved (ADR-0006)"
 event-error      = "the hook event is not valid JSON or not an object"
 not-a-repository = "the working directory is not in a git repository"
 internal-error   = "any other failure"
