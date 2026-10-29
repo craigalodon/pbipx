@@ -1,0 +1,6 @@
+description = "a quote on a plain scalar's continuation line is text, so the comments after it are still judged"
+command     = "scan"
+args        = ["--all"]
+policy      = "default"
+exit        = 1
+sentinels   = ["Doe, Jane", "Roe, Richard"]

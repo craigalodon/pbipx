@@ -3,11 +3,14 @@
 //
 // Every key is judged on shape. Every scalar except nulls, booleans and
 // empty strings is judged, a number by its column only, and is associated
-// with its nearest mapping key, through sequences. dbt's conventions add to
+// with its nearest mapping key, through sequences. An explicit tag is not
+// trusted: a tagged scalar is judged by its text. dbt's conventions add to
 // that: an accepted_values test's values are also tied to the column the
 // test is on, where and expression values are lexed as SQL, and unit-test
 // rows are tied to nothing. Comments and the quoted runs inside values are
-// judged as free text. An anchored node is walked once, and every document
+// judged as free text. An anchored node is walked where it is anchored and
+// again at each alias, with the alias site's association; a cap on the
+// nodes walked through aliases fails closed (maxAliasWalk). Every document
 // of a file is scanned. A key or column name is judged as written, and a
 // finding prints it as {?} unless shape.PrintableKey allows it.
 //
@@ -55,7 +58,7 @@ func Scan(path string, data []byte, p *policy.Policy) ([]finding.Finding, error)
 	if w.err != nil {
 		return nil, w.err
 	}
-	for i, c := range comments(string(data)) {
+	for i, c := range allComments(string(data), docs) {
 		loc := "comment[" + strconv.Itoa(i) + "]"
 		w.judge(finding.YAMLComment, sqlfile.Value{Text: c.text, Kind: judge.String, Locator: loc})
 		for _, r := range sqlfile.Readings(c.text, false, loc) {
@@ -116,13 +119,52 @@ type state struct {
 	root bool
 }
 
+// maxAliasWalk caps the nodes one file may have walked through aliases, all
+// alias sites together. Each site walks the node it names at most once,
+// however often aliases inside that node name it again, so a cycle ends
+// and an alias bomb costs at most its size per site. Many sites naming a
+// large node can still multiply: past the cap the file has not been
+// vetted, and is reported by one unparseable-yaml error at the alias that
+// crossed it (principle 10).
+const maxAliasWalk = 100_000
+
 type walker struct {
 	path string
 	p    *policy.Policy
 	out  []finding.Finding
-	// err is the first SQL value that does not lex. The file then has not
-	// been vetted, and is reported by this error alone.
+	// err is the first SQL value that does not lex, or the alias that
+	// crossed maxAliasWalk. The file then has not been vetted, and is
+	// reported by this error alone.
 	err *judge.ParseError
+
+	// site holds the anchored nodes the current alias site has walked; it
+	// is nil outside one. siteLine is the site's line, and walked counts
+	// the nodes walked through every site of the file.
+	site     map[*yaml.Node]bool
+	siteLine int
+	walked   int
+	// done records each judgement made of a node, so that walking it again
+	// through an alias judges only what its new association changes.
+	done map[mark]bool
+}
+
+// mark is one judgement of a node: what, and for a value its columns.
+type mark struct {
+	n    *yaml.Node
+	what string
+}
+
+// once says whether this judgement of n is new, and records it.
+func (w *walker) once(n *yaml.Node, what string) bool {
+	m := mark{n, what}
+	if w.done[m] {
+		return false
+	}
+	if w.done == nil {
+		w.done = map[mark]bool{}
+	}
+	w.done[m] = true
+	return true
 }
 
 func (w *walker) judge(ctx finding.Context, v sqlfile.Value) {
@@ -131,10 +173,20 @@ func (w *walker) judge(ctx finding.Context, v sqlfile.Value) {
 	}
 }
 
-// node walks one node. An alias is not followed: the node it names is
-// walked where it is anchored, once.
+// node walks one node.
 func (w *walker) node(n *yaml.Node, s state) {
+	if w.site != nil {
+		w.walked++
+		if w.walked > maxAliasWalk {
+			if w.err == nil {
+				w.err = &judge.ParseError{Reason: finding.UnparseableYAML, Line: w.siteLine, Msg: "aliases expand past the limit"}
+			}
+			return
+		}
+	}
 	switch n.Kind {
+	case yaml.AliasNode:
+		w.alias(n, s)
 	case yaml.DocumentNode:
 		s.root = true
 		for _, c := range n.Content {
@@ -151,6 +203,35 @@ func (w *walker) node(n *yaml.Node, s state) {
 	case yaml.ScalarNode:
 		w.scalar(n, s)
 	}
+}
+
+// alias walks the node an alias names again, with the alias site's key and
+// column association; the node was already walked where it is anchored. A
+// judgement that association does not change (a key's shape, a quoted run,
+// a value whose columns are the same) is not made again. Inside the walk,
+// an alias to a node this site has already walked is not followed.
+func (w *walker) alias(n *yaml.Node, s state) {
+	t := n.Alias
+	if t == nil || w.err != nil {
+		return
+	}
+	if w.site == nil {
+		w.site, w.siteLine = map[*yaml.Node]bool{}, n.Line
+		defer func() { w.site = nil }()
+	}
+	if w.site[t] {
+		return
+	}
+	w.site[t] = true
+	w.node(t, s)
+}
+
+// deref is the node an alias names, or n.
+func deref(n *yaml.Node) *yaml.Node {
+	if n.Kind == yaml.AliasNode && n.Alias != nil {
+		return n.Alias
+	}
+	return n
 }
 
 // mapping walks a mapping's keys and values.
@@ -186,8 +267,8 @@ func (w *walker) mapping(n *yaml.Node, s state) {
 		switch {
 		case name == "unit_tests" && s.root:
 			cs.unitTests = true
-		case name == "accepted_values" && v.Kind == yaml.MappingNode && !s.untied:
-			cs.inAccepted, cs.accepted = true, acceptedColumn(v, s.column)
+		case name == "accepted_values" && deref(v).Kind == yaml.MappingNode && !s.untied:
+			cs.inAccepted, cs.accepted = true, acceptedColumn(deref(v), s.column)
 		case s.inAccepted && name == "arguments":
 			// dbt's newer form: accepted_values: {arguments: {values: [...]}}
 		case s.inAccepted && name == "values":
@@ -200,8 +281,8 @@ func (w *walker) mapping(n *yaml.Node, s state) {
 			continue
 		}
 		w.node(v, cs)
-		if (name == "where" || name == "expression") && isString(v) {
-			w.sql(v, cs.path, finding.YAMLSQL, false)
+		if t := deref(v); (name == "where" || name == "expression") && isString(t) {
+			w.sql(t, cs.path, finding.YAMLSQL, false)
 		}
 	}
 }
@@ -209,7 +290,7 @@ func (w *walker) mapping(n *yaml.Node, s state) {
 // key judges a mapping key on shape.
 func (w *walker) key(k *yaml.Node, s state) {
 	kind, ok := scalarKind(k)
-	if !ok {
+	if !ok || !w.once(k, "key") {
 		return
 	}
 	w.judge(finding.YAMLKey, sqlfile.Value{Text: k.Value, Kind: kind, Locator: join(s.path, k.Value) + "#key"})
@@ -231,8 +312,14 @@ func (w *walker) scalar(n *yaml.Node, s state) {
 			cols = append(cols, finding.Column{Name: s.accepted})
 		}
 	}
-	w.judge(finding.YAML, sqlfile.Value{Text: n.Value, Kind: kind, Columns: cols, Locator: s.path})
-	if kind == judge.String {
+	names := "value"
+	for _, c := range cols {
+		names += "\x00" + c.Name
+	}
+	if w.once(n, names) {
+		w.judge(finding.YAML, sqlfile.Value{Text: n.Value, Kind: kind, Columns: cols, Locator: s.path})
+	}
+	if kind == judge.String && w.once(n, "readings") {
 		for _, r := range sqlfile.Readings(n.Value, false, s.path) {
 			w.judge(finding.YAML, r)
 		}
@@ -245,6 +332,9 @@ func (w *walker) scalar(n *yaml.Node, s state) {
 // unparseable-yaml error at the value's line, and nothing else (principle
 // 10).
 func (w *walker) sql(n *yaml.Node, path string, ctx finding.Context, untied bool) {
+	if !w.once(n, "sql "+string(ctx)+" "+strconv.FormatBool(untied)) {
+		return
+	}
 	vals, err := sqlfile.Values(n.Value)
 	if err != nil {
 		if w.err == nil {
@@ -268,15 +358,19 @@ func (w *walker) sql(n *yaml.Node, path string, ctx finding.Context, untied bool
 // a CSV string cell by cell, or as a SQL string.
 func (w *walker) rows(v *yaml.Node, s state, format string) {
 	s.untied, s.key, s.inAccepted, s.values = true, "", false, false
-	if !isString(v) {
+	t := deref(v)
+	if !isString(t) {
 		w.node(v, s)
 		return
 	}
 	if strings.EqualFold(format, "sql") {
-		w.sql(v, s.path, finding.YAML, true)
+		w.sql(t, s.path, finding.YAML, true)
 		return
 	}
-	for r, rec := range csvRecords(v.Value) {
+	if !w.once(t, "csv") {
+		return
+	}
+	for r, rec := range csvRecords(t.Value) {
 		for c, cell := range rec {
 			loc := s.path + "#cell[" + strconv.Itoa(r) + "][" + strconv.Itoa(c) + "]"
 			w.judge(finding.YAML, sqlfile.Value{Text: strings.TrimSpace(cell), Kind: judge.String, Locator: loc})
@@ -319,11 +413,11 @@ func acceptedColumn(test *yaml.Node, column string) string {
 	return column
 }
 
-// valueOf is the value of a mapping's key, or nil.
+// valueOf is the value of a mapping's key, through an alias, or nil.
 func valueOf(m *yaml.Node, key string) *yaml.Node {
 	for i := 0; i+1 < len(m.Content); i += 2 {
 		if k := m.Content[i]; k.Kind == yaml.ScalarNode && k.Value == key {
-			return m.Content[i+1]
+			return deref(m.Content[i+1])
 		}
 	}
 	return nil
@@ -337,15 +431,43 @@ func scalarOf(m *yaml.Node, key string) string {
 	return ""
 }
 
+// isString says whether a scalar is read as a string: one the parser
+// resolves to !!str, or an explicitly tagged one that scalarKind judges as
+// a string.
 func isString(n *yaml.Node) bool {
-	return n.Kind == yaml.ScalarNode && n.ShortTag() == "!!str"
+	if n.Kind != yaml.ScalarNode {
+		return false
+	}
+	if n.Style&yaml.TaggedStyle != 0 {
+		kind, ok := scalarKind(n)
+		return ok && kind == judge.String
+	}
+	return n.ShortTag() == "!!str"
 }
 
 // scalarKind is how a scalar is judged, and false for one that is not:
-// a null, a boolean or an empty string. Integers and floats are numbers.
+// a plain, untagged null or boolean, or an empty string. Integers and
+// floats are numbers.
+//
+// An explicit tag is the author's claim about the content, and is not
+// trusted: `!!null Doe, Jane` and `!!int Doe, Jane` hold a string. An
+// explicitly tagged scalar, a custom tag's included, is judged as a string
+// unless its text, read as an untagged plain scalar, is a number. !!str is
+// taken at its word.
 func scalarKind(n *yaml.Node) (judge.Kind, bool) {
 	if n.Kind != yaml.ScalarNode || n.Value == "" {
 		return judge.String, false
+	}
+	if n.Style&yaml.TaggedStyle != 0 {
+		if n.ShortTag() == "!!str" {
+			return judge.String, true
+		}
+		plain := yaml.Node{Kind: yaml.ScalarNode, Value: n.Value}
+		switch plain.ShortTag() {
+		case "!!int", "!!float":
+			return judge.Number, true
+		}
+		return judge.String, true
 	}
 	switch n.ShortTag() {
 	case "!!null", "!!bool":

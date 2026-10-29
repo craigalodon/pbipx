@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -318,6 +319,61 @@ func TestComments(t *testing.T) {
 			[]want{{ctx: finding.YAMLComment, tier: finding.Block, reasons: name}}},
 		{"comment after a document marker", "--- # Doe, Jane\na: 1\n",
 			[]want{{ctx: finding.YAMLComment, tier: finding.Block, reasons: name}}},
+		{"quote on a plain continuation", "key: plain\n  'continued # Doe, Jane\nother: 1 # Roe, Richard\n",
+			[]want{
+				{ctx: finding.YAMLComment, tier: finding.Block, reasons: name},
+				{ctx: finding.YAMLComment, tier: finding.Block, reasons: name},
+			}},
+		{"block indicator on a plain continuation", "key: plain\n  > continued # Doe, Jane\nother: 1 # Roe, Richard\n",
+			[]want{
+				{ctx: finding.YAMLComment, tier: finding.Block, reasons: name},
+				{ctx: finding.YAMLComment, tier: finding.Block, reasons: name},
+			}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			check(t, scanYAML(t, tt.src), tt.wants...)
+		})
+	}
+}
+
+// An explicit tag is the author's claim, not the content: a tagged scalar
+// is judged by its text.
+func TestTaggedScalarsJudgedByText(t *testing.T) {
+	tests := []struct {
+		name  string
+		src   string
+		wants []want
+	}{
+		{"!!null", "a: !!null Doe, Jane\n",
+			[]want{{ctx: finding.YAML, tier: finding.Block, reasons: name, locator: "a"}}},
+		{"!!bool", "b: !!bool Doe, Jane\n",
+			[]want{{ctx: finding.YAML, tier: finding.Block, reasons: name}}},
+		{"!!int on text", "c: !!int Doe, Jane\n",
+			[]want{{ctx: finding.YAML, tier: finding.Block, reasons: name}}},
+		{"!!float on text", "c: !!float jane.doe@example.com\n",
+			[]want{{ctx: finding.YAML, tier: finding.Block, reasons: email}}},
+		{"custom tag", "d: !note Doe, Jane\n",
+			[]want{{ctx: finding.YAML, tier: finding.Block, reasons: name}}},
+		{"tagged null on a block column", "student_id: !!null S-1001\n",
+			[]want{{ctx: finding.YAML, column: "student_id", tier: finding.Block, reasons: blockCol}}},
+		{"tagged bool text on a block column", "full_name: !!bool true\n",
+			[]want{{ctx: finding.YAML, column: "full_name", tier: finding.Block, reasons: blockCol}}},
+		{"tagged block scalar", "a: !!null |\n  Doe, Jane\n",
+			[]want{{ctx: finding.YAML, tier: finding.Block, reasons: name}}},
+		{"tagged key", "!!null Doe, Jane: 1\n",
+			[]want{{ctx: finding.YAMLKey, tier: finding.Block, reasons: name}}},
+		{"tagged quoted runs", "a: !!int x 'Doe, Jane' y\n",
+			[]want{{ctx: finding.YAML, tier: finding.Block, reasons: name}}},
+		{"tagged where is SQL", "where: !!null \"full_name = 'S-1001'\"\n",
+			[]want{{ctx: finding.YAMLSQL, column: "full_name", tier: finding.Block, reasons: blockCol}}},
+		// A number in its text is still a number: judged by its column only.
+		{"tagged number text", "a: !!null 7041293\nb: !foo 2101.5\nstudent_id: !!bool 7041293\n",
+			[]want{{ctx: finding.YAML, column: "student_id", tier: finding.Block, reasons: blockCol}}},
+		{"!!str taken at its word", "a: !!str Doe, Jane\n",
+			[]want{{ctx: finding.YAML, tier: finding.Block, reasons: name}}},
+		{"tagged empty", "full_name: !!str \"\"\n", nil},
+		{"untagged null and bool stay skipped", "full_name: null\nfirst_name: true\n", nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -332,10 +388,49 @@ func TestAnchorsAndDocuments(t *testing.T) {
 		src   string
 		wants []want
 	}{
-		{"alias walked once", "a: &x\n  full_name: Pat\nb: *x\nc:\n  <<: *x\n",
+		{"an alias with the same association adds nothing", "a: &x\n  full_name: Pat\nb: *x\nc:\n  <<: *x\n",
 			[]want{{ctx: finding.YAML, column: "full_name", tier: finding.Block, reasons: blockCol, locator: "a.full_name"}}},
 		{"anchored scalar", "full_name: &n Pat\nfirst_name: *n\n",
-			[]want{{ctx: finding.YAML, column: "full_name", tier: finding.Block, reasons: blockCol}}},
+			[]want{
+				{ctx: finding.YAML, column: "first_name", tier: finding.Block, reasons: blockCol, locator: "first_name"},
+				{ctx: finding.YAML, column: "full_name", tier: finding.Block, reasons: blockCol, locator: "full_name"},
+			}},
+		{"alias takes the site's key", "x: &id S-1001\nstudent:\n  student_id: *id\n",
+			[]want{{ctx: finding.YAML, column: "student_id", tier: finding.Block, reasons: blockCol, locator: "student.student_id"}}},
+		{"aliased sequence takes the site's key", "x: &ids [S-1001, S-1002]\nstudent_id: *ids\n",
+			[]want{
+				{ctx: finding.YAML, column: "student_id", tier: finding.Block, reasons: blockCol, locator: "student_id[0]"},
+				{ctx: finding.YAML, column: "student_id", tier: finding.Block, reasons: blockCol, locator: "student_id[1]"},
+			}},
+		{"aliased number takes the site's key", "x: &n 7041293\nstudent_id: *n\n",
+			[]want{{ctx: finding.YAML, column: "student_id", tier: finding.Block, reasons: blockCol}}},
+		{"nested alias takes the outer site's key", "x: &id S-1001\ny: &ids [*id]\nstudent_id: *ids\n",
+			[]want{{ctx: finding.YAML, column: "student_id", tier: finding.Block, reasons: blockCol, locator: "student_id[0]"}}},
+		{"aliased values tied to the accepted column", `
+x: &vals [S-1001]
+columns:
+  - name: student_id
+    data_tests:
+      - accepted_values:
+          values: *vals
+`, []want{{ctx: finding.YAML, column: "student_id", tier: finding.Block, reasons: blockCol}}},
+		{"aliased accepted_values test", `
+x: &test
+  values: [S-1001]
+columns:
+  - name: student_id
+    data_tests:
+      - accepted_values: *test
+`, []want{{ctx: finding.YAML, column: "student_id", tier: finding.Block, reasons: blockCol}}},
+		{"aliased string lexed as SQL under where", "x: &q \"full_name = 'S-1001'\"\nwhere: *q\n",
+			[]want{{ctx: finding.YAMLSQL, column: "full_name", tier: finding.Block, reasons: blockCol}}},
+		{"aliased shape found again with no new column", "full_name: &n Doe, Jane\nx: *n\n",
+			[]want{
+				{ctx: finding.YAML, tier: finding.Block, reasons: name, locator: "x"},
+				{ctx: finding.YAML, column: "full_name", tier: finding.Block, reasons: []finding.Reason{finding.BlockColumn, finding.PersonNameShape}, locator: "full_name"},
+			}},
+		{"alias cycle ends", "a: &a [*a, S-1001]\nstudent_id: *a\n",
+			[]want{{ctx: finding.YAML, column: "student_id", tier: finding.Block, reasons: blockCol, locator: "student_id[1]"}}},
 		{"every document", "a: 1\n---\nfirst_name: Pat\n---\n- Doe, Jane\n",
 			[]want{
 				{ctx: finding.YAML, tier: finding.Block, reasons: name, locator: "doc[2][0]"},
@@ -349,6 +444,54 @@ func TestAnchorsAndDocuments(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			check(t, scanYAML(t, tt.src), tt.wants...)
 		})
+	}
+}
+
+// An alias bomb walks each anchored node once per site, so it ends quickly
+// and finds the value at the site's key.
+func TestAliasBombIsBounded(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("l0: &l0 [S-1001, ~, ~, ~, ~, ~, ~, ~, ~, ~]\n")
+	for i := 1; i <= 9; i++ {
+		prev := "*l" + strconv.Itoa(i-1)
+		b.WriteString("l" + strconv.Itoa(i) + ": &l" + strconv.Itoa(i) + " [" + strings.Repeat(prev+", ", 9) + prev + "]\n")
+	}
+	b.WriteString("student_id: *l9\n")
+	got := scanYAML(t, b.String())
+	if len(got) != 1 || got[0].Column == nil || got[0].Column.String() != "student_id" {
+		t.Errorf("got:\n%s", describe(got))
+	}
+}
+
+// Many sites naming a large node cross the cap on nodes walked through
+// aliases, and the file is then one error, with no source text.
+func TestAliasWalkCapFailsClosed(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("big: &big [Doe, Jane")
+	for range 999 {
+		b.WriteString(", x")
+	}
+	b.WriteString("]\n")
+	line := 0
+	for i := range 200 {
+		b.WriteString("k" + strconv.Itoa(i) + ": *big\n")
+		if line == 0 && (i+1)*1001 > 100_000 {
+			line = i + 2
+		}
+	}
+	got, err := yamlfile.Scan(testPath, []byte(b.String()), loadPolicy(t))
+	if got != nil {
+		t.Errorf("findings returned with an error")
+	}
+	var perr *judge.ParseError
+	if !errors.As(err, &perr) {
+		t.Fatalf("err = %v, want *judge.ParseError", err)
+	}
+	if perr.Reason != finding.UnparseableYAML || perr.Line != line {
+		t.Errorf("reason %s line %d, want %s line %d", perr.Reason, perr.Line, finding.UnparseableYAML, line)
+	}
+	if strings.Contains(err.Error(), "Doe") || strings.Contains(err.Error(), "Jane") {
+		t.Errorf("the error message carries source text")
 	}
 }
 

@@ -1,0 +1,6 @@
+description = "an alias ties the anchored value to the alias site's key, so a value anchored under a plain key blocks where it is aliased under a block column"
+command     = "scan"
+args        = ["--all"]
+policy      = "default"
+exit        = 1
+sentinels   = ["S-1001"]

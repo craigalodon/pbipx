@@ -1,0 +1,42 @@
+{
+  "findings": [
+    {
+      "path": "models/student.yml",
+      "context": "yaml",
+      "column": null,
+      "tier": "block",
+      "reasons": [
+        "person-name-shape"
+      ]
+    },
+    {
+      "path": "models/student.yml",
+      "context": "yaml",
+      "column": null,
+      "tier": "block",
+      "reasons": [
+        "person-name-shape"
+      ]
+    },
+    {
+      "path": "models/student.yml",
+      "context": "yaml",
+      "column": null,
+      "tier": "block",
+      "reasons": [
+        "person-name-shape"
+      ]
+    },
+    {
+      "path": "models/student.yml",
+      "context": "yaml",
+      "column": "student_id",
+      "tier": "block",
+      "reasons": [
+        "block-column"
+      ]
+    }
+  ],
+  "accepted": 0,
+  "suppressed": 0
+}

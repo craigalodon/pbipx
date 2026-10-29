@@ -1,0 +1,24 @@
+{
+  "findings": [
+    {
+      "path": "models/student.yml",
+      "context": "yaml-comment",
+      "column": null,
+      "tier": "block",
+      "reasons": [
+        "person-name-shape"
+      ]
+    },
+    {
+      "path": "models/student.yml",
+      "context": "yaml-comment",
+      "column": null,
+      "tier": "block",
+      "reasons": [
+        "person-name-shape"
+      ]
+    }
+  ],
+  "accepted": 0,
+  "suppressed": 0
+}

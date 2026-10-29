@@ -1,0 +1,9 @@
+version: 2
+
+vars:
+  sample: &sample S-1001
+
+models:
+  - name: student
+    meta:
+      student_id: *sample
