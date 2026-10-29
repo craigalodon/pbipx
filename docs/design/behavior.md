@@ -501,6 +501,13 @@ behavior (2026-10-29).
   whitespace around the text are removed before it is judged, so the name
   shape can anchor.
 - A file that does not parse produces one error finding and nothing else.
+- **Divergence (matching functions):** pbipx ties no number in `SEARCH`
+  and `FIND` (a start position and a not-found value), ties only `SWITCH`'s
+  match values (not its results or else value), and takes `SWITCH`'s
+  columns from its first argument only. The predecessor ties every literal
+  argument, so `SEARCH("x", [full_name], 1, 0)` blocked on `1` and `0`. A
+  result string with a shape still blocks on the shape (principle 6;
+  2026-10-29).
 - A bare flag (`isHidden`) is a valid declaration.
 
 ### SQL and YAML
