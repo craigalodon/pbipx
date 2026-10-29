@@ -1,0 +1,6 @@
+description = "a block list entry matches the column whatever its table and its case"
+command     = "scan"
+args        = ["--all"]
+policy      = "tree"
+exit        = 1
+sentinels   = ["Record 0101"]

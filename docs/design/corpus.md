@@ -176,3 +176,74 @@ by accident is a bug in one of them, and gets an issue.
 - Report fixtures keep Desktop's serialization: no final newline.
 - A fixture holds only what its case needs. A report case needs the one
   visual or page file that carries the context, not a whole report.
+
+## Baseline cases
+
+A baseline entry is keyed by a fingerprint, and the fingerprint hashes the
+locator, which implementations need not agree on. So a case never holds a
+fingerprint. It describes a finding, and the runner asks its own
+implementation for that finding's fingerprint.
+
+pbipx's baseline is `.pbipx-baseline.toml` at the root (ADR-0004). Proposed,
+and settled with the baseline itself:
+
+```toml
+version = 1
+
+[entries."<fingerprint>"]
+severity = "warn"                  # anything else is a baseline error
+expires  = "2199-12-31"            # YYYY-MM-DD; unparseable counts as expired
+path     = "pbip/.../visual.json"  # for the reviewer; the key is the identity
+context  = "slicer-selection"
+column   = "enrollment.cohort_year"
+reasons  = ["warn-column"]
+```
+
+A case adds, all optional:
+
+```toml
+[[baseline]]                       # one entry of the baseline to run with
+path     = "pbip/Example.Report/definition/pages/0000/visuals/0001/visual.json"
+context  = "slicer-selection"
+column   = "enrollment.cohort_year"  # omitted for a null column
+reasons  = ["warn-column"]
+severity = "warn"
+expires  = "2199-12-31"            # written as given, valid or not
+
+[fingerprint]                      # the finding `{fingerprint}` in args names
+path     = "..."
+context  = "..."
+column   = "..."
+reasons  = ["..."]
+```
+
+and an `after/tree/` directory beside `tree/`. Between steps 2 and 3 of
+"Running a case", when the case has `[[baseline]]` or `[fingerprint]`:
+
+1. Scan the root with the case's policy and no baseline, with the
+   implementation under test (in process or on the command line), and match
+   each description to the findings by path, context, column and reasons. A
+   description that matches no finding, or more than one, is an error in the
+   case.
+2. Write the `[[baseline]]` entries as a baseline in the implementation's own
+   format and default location, each with its resolved fingerprint and its
+   `severity` and `expires` as given. A case with no `[[baseline]]` has no
+   baseline file.
+3. Replace `{fingerprint}` in `args` with the resolved fingerprint.
+4. Copy `after/tree/` over the root, replacing files.
+
+`after/tree/` is how a case shows what happens when a finding changes after
+it was accepted (a new reason, a new value of the same kind, a cleared
+selection) without writing a fingerprint down. Setup trusts the
+implementation's scan, but a scan that misses the finding fails the case at
+step 1 instead of passing it.
+
+`pbipx baseline record <fingerprint> --note <text>` records an acceptance;
+the note is required, so every `record` case passes one and a refusal cannot
+come from a missing argument. Refusal under `CI` or `PRE_COMMIT` exits 3 (an
+operational refusal); refusal of a block or an unknown fingerprint exits 4.
+`pbipx baseline verify` checks expiry. Cases for both have no
+`expected.json`: their exit code and sentinels are checked.
+
+An expiry is metadata, not a planted value. A case that needs an expired
+entry uses a past year; the years 2100 to 2199 are for values.

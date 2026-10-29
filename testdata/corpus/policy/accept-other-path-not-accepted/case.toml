@@ -1,0 +1,6 @@
+description = "an accept entry does not accept its column under another report"
+command     = "scan"
+args        = ["--all", "--strict"]
+policy      = "tree"
+exit        = 2
+sentinels   = ["Fall 2150"]

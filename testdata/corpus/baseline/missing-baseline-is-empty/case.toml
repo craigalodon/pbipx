@@ -1,0 +1,6 @@
+description = "with no baseline file every warning is reported"
+command     = "scan"
+args        = ["--all", "--strict"]
+policy      = "default"
+exit        = 2
+sentinels   = ["Fall 2150"]

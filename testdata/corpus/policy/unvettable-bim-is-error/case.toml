@@ -1,0 +1,6 @@
+description = "a model saved as .bim under a protected root is unvettable, an error finding"
+command     = "scan"
+args        = ["--all"]
+policy      = "tree"
+exit        = 3
+sentinels   = ["student0100@example.com"]

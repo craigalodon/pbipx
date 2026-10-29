@@ -1,0 +1,14 @@
+description = "baseline verify treats an entry whose expiry is not a date as expired"
+command     = "baseline"
+args        = ["verify"]
+policy      = "default"
+exit        = 2
+sentinels   = ["Fall 2150"]
+
+[[baseline]]
+path     = "pbip/Example.Report/definition/pages/0000/visuals/0001/visual.json"
+context  = "slicer-selection"
+column   = "enrollment.cohort_year"
+reasons  = ["warn-column"]
+severity = "warn"
+expires  = "not a date"

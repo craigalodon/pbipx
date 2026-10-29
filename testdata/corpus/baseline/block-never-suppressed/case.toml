@@ -1,0 +1,14 @@
+description = "a block is reported even when a warn-severity baseline entry carries its fingerprint"
+command     = "scan"
+args        = ["--all"]
+policy      = "default"
+exit        = 1
+sentinels   = ["Doe, Jane"]
+
+[[baseline]]
+path     = "pbip/Example.Report/definition/pages/0000/visuals/0001/visual.json"
+context  = "slicer-selection"
+column   = "student.full_name"
+reasons  = ["block-column", "person-name-shape"]
+severity = "warn"
+expires  = "2199-12-31"

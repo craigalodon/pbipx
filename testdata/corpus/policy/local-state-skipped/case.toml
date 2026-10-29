@@ -1,0 +1,6 @@
+description = "local state under a protected root is skipped by a tree scan, not unvettable"
+command     = "scan"
+args        = ["--all"]
+policy      = "tree"
+exit        = 0
+sentinels   = ["Doe, Jane"]

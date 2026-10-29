@@ -1,0 +1,6 @@
+description = "must stay clean: the email shape is switched off and the column is in no list"
+command     = "scan"
+args        = ["--all", "--strict"]
+policy      = "tree"
+exit        = 0
+sentinels   = ["student0100@example.com"]
