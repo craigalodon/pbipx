@@ -1,0 +1,53 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/page/2.0.0/schema.json",
+  "name": "3c9e1f0a5b7d2e4c6a80",
+  "displayName": "Enrollment",
+  "displayOption": "FitToPage",
+  "height": 720,
+  "width": 1280,
+  "filterConfig": {
+    "filters": [
+      {
+        "name": "Filter5f60718293a4b5c6d",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "student"
+              }
+            },
+            "Property": "student_id"
+          }
+        },
+        "type": "Advanced",
+        "filter": {
+          "Version": 2,
+          "Where": [
+            {
+              "Condition": {
+                "Comparison": {
+                  "ComparisonKind": 0,
+                  "Left": {
+                    "Column": {
+                      "Expression": {
+                        "SourceRef": {
+                          "Entity": "student"
+                        }
+                      },
+                      "Property": "student_id"
+                    }
+                  },
+                  "Right": {
+                    "Literal": {
+                      "Value": "'S-1007'"
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

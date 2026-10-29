@@ -1,0 +1,6 @@
+description = "a column's alias defined only in a subquery's From is resolved to its table"
+command     = "scan"
+args        = ["--all"]
+policy      = "default"
+exit        = 1
+sentinels   = ["S-1006"]

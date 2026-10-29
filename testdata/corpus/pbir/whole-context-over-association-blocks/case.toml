@@ -1,0 +1,6 @@
+description = "a value with no shape compared to an unlisted column blocks because a block column appears elsewhere in the same filter"
+command     = "scan"
+args        = ["--all"]
+policy      = "default"
+exit        = 1
+sentinels   = ["Autumn Term"]

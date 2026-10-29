@@ -1,0 +1,15 @@
+{
+  "findings": [
+    {
+      "path": "pbip/Contoso.Report/definition/pages/3c9e1f0a5b7d2e4c6a80/page.json",
+      "context": "filter",
+      "column": "student.student_id",
+      "tier": "block",
+      "reasons": [
+        "block-column"
+      ]
+    }
+  ],
+  "accepted": 0,
+  "suppressed": 0
+}
