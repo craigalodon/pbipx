@@ -483,6 +483,11 @@ Gate reason classes: `finding`, `unvettable`, `scan-error`,
   context. A name with any shape prints as a placeholder.
 - **SQL:** relations created, written and read (qualified, unqualified or
   CTE, and template `ref()`/`source()` calls), and literal counts by context.
+  A `ref()` or `source()` call is a read only where it is code: inside a
+  template block (`{{ }}`, `{% %}`) outside the template's strings,
+  wherever the block stands, so `-- depends_on: {{ ref('x') }}` is a read;
+  or in the SQL outside every comment and string. A call in comment prose or
+  in a string is not a read.
   A name part is printed only if it is a plain identifier (letters, digits
   and `_`, not all digits) with no shape. Otherwise a placeholder, or a
   placeholder for a call whose arguments are not quoted names. `FROM` inside
@@ -559,6 +564,7 @@ behavior (2026-10-29).
   both. A file that every reading lexes alike has the locators it would
   have with one reading.
 - A file's literal count in `explain` counts the union of the readings.
+- `explain` reads relations from the first reading that lexes.
 - A literal past the association limits (see "Association in code") is not
   judged on fewer columns: the whole file is an error.
 - Unit-test rows have context `yaml`, including rows written as SQL. CSV
