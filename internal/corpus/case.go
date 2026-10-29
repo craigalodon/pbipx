@@ -63,6 +63,7 @@ type Spec struct {
 	Git         *bool             `toml:"git"`
 	Untracked   []string          `toml:"untracked"`
 	Staged      []string          `toml:"staged"`
+	Deleted     []string          `toml:"deleted"`
 	Env         map[string]string `toml:"env"`
 	Known       string            `toml:"known"`
 	// Approved, for a gate case, is false to run without an approval of the

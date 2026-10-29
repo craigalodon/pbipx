@@ -65,7 +65,8 @@ type Prepared struct {
 // its policy approved in configDir, unless approved = false. A case with
 // [[baseline]] or [fingerprint] has its findings resolved by a scan with
 // binary and its baseline written. Then after/tree/ is copied over the
-// root, and last, unless git = false, the root is committed. root and
+// root, and last, unless git = false, the root is committed and the deleted
+// paths are removed from the working tree. root and
 // configDir must be empty directories, configDir outside root; binary is
 // needed only to resolve findings.
 func (c *Corpus) Prepare(cs *Case, root, configDir, binary string) (*Prepared, error) {
@@ -105,6 +106,12 @@ func (c *Corpus) Prepare(cs *Case, root, configDir, binary string) (*Prepared, e
 	if cs.Spec.UsesGit() {
 		if err := GitSetup(root, cs.Spec.Untracked, cs.Spec.Staged); err != nil {
 			return nil, fmt.Errorf("%s: %w", cs.ID(), err)
+		}
+		// A deleted path stays in the commit, and leaves the working tree.
+		for _, p := range cs.Spec.Deleted {
+			if err := os.Remove(filepath.Join(root, filepath.FromSlash(p))); err != nil {
+				return nil, fmt.Errorf("%s: deleting a path after the commit: %w", cs.ID(), err)
+			}
 		}
 	}
 	return p, nil

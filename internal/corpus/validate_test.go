@@ -105,6 +105,8 @@ func TestValidateRules(t *testing.T) {
 		{"staged path missing", staging, replace("case.toml", `"sql/staged.sql"`, `"sql/absent.sql"`), "staged[0] names no path in tree/"},
 		{"untracked path unclean", staging, replace("case.toml", `"sql/untracked.sql"`, `"sql/../untracked.sql"`), "untracked[0] is not a clean relative path"},
 		{"staged without git", staging, appendTo("case.toml", "git = false\n"), "git = false"},
+		{"deleted path missing", staging, appendTo("case.toml", "deleted = [\"sql/absent.sql\"]\n"), "deleted[0] names no path in tree/"},
+		{"deleted path also staged", staging, appendTo("case.toml", "deleted = [\"sql/staged.sql\"]\n"), "deleted[0] is already listed in staged"},
 		{"sentinel not planted", slicer, replace("case.toml", `["Doe, Jane"]`, `["Doe, Jane", "Roe, Richard"]`), "sentinels[1] appears nowhere"},
 		{"sentinel repeated", slicer, replace("case.toml", `["Doe, Jane"]`, `["Doe, Jane", "Doe, Jane"]`), "sentinels[1] repeats"},
 		{"sentinel in expected", slicer, replace("expected.json", `"student.full_name"`, `"Doe, Jane"`), "contains sentinels[0]"},

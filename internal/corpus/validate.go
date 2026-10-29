@@ -245,14 +245,14 @@ func (v *validator) checkRef(r FindingRef, what string) {
 
 func (v *validator) checkGit() {
 	s := &v.cs.Spec
-	if !s.UsesGit() && (len(s.Untracked) > 0 || len(s.Staged) > 0) {
-		v.addf(caseFile, "untracked or staged is set but git = false")
+	if !s.UsesGit() && (len(s.Untracked) > 0 || len(s.Staged) > 0 || len(s.Deleted) > 0) {
+		v.addf(caseFile, "untracked, staged or deleted is set but git = false")
 	}
 	seen := map[string]string{}
 	for _, list := range []struct {
 		key   string
 		paths []string
-	}{{"untracked", s.Untracked}, {"staged", s.Staged}} {
+	}{{"untracked", s.Untracked}, {"staged", s.Staged}, {"deleted", s.Deleted}} {
 		for i, p := range list.paths {
 			switch {
 			case !validRelPath(p):
