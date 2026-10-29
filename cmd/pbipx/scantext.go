@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -73,14 +74,14 @@ func runScanText(cmd *cobra.Command, args []string, f *scanTextFlags) error {
 		scanner = scan.CommitMessage
 	}
 	var findings []finding.Finding
-	for _, a := range args {
+	for i, a := range args {
 		path := stdinPath
 		var data []byte
 		var rerr error
 		if a == stdinPath {
 			data, rerr = io.ReadAll(cmd.InOrStdin())
 		} else {
-			path = displayPath(repo, cwd, a)
+			path = displayPath(repo, cwd, a, i)
 			data, rerr = os.ReadFile(resolve(cwd, a))
 		}
 		if rerr != nil {
@@ -96,14 +97,23 @@ func runScanText(cmd *cobra.Command, args []string, f *scanTextFlags) error {
 	return exitWith(res.ExitCode(false))
 }
 
-// displayPath is how a finding names a file given on the command line:
-// relative to the repository root with forward slashes when it is inside the
-// repository, and otherwise as given, cleaned.
-func displayPath(repo *source.Repo, cwd, arg string) string {
-	if repo != nil {
-		if rel, err := repo.Rel(cwd, arg); err == nil {
-			return rel
-		}
+// displayPath is how a finding names the file given as argument i (from
+// 0): its repository-relative path with forward slashes when it names an
+// existing regular file inside the repository, and otherwise "argument N"
+// (from 1). An argument that names no such file is text typed on a command
+// line, which can carry a value, so it is never echoed (ADR-0005).
+func displayPath(repo *source.Repo, cwd, arg string, i int) string {
+	byPosition := fmt.Sprintf("argument %d", i+1)
+	if repo == nil {
+		return byPosition
 	}
-	return filepath.ToSlash(filepath.Clean(arg))
+	rel, err := repo.Rel(cwd, arg)
+	if err != nil || rel == "." {
+		return byPosition
+	}
+	info, err := os.Lstat(filepath.Join(repo.Root, filepath.FromSlash(rel)))
+	if err != nil || !info.Mode().IsRegular() {
+		return byPosition
+	}
+	return rel
 }

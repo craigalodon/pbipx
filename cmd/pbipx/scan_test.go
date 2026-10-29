@@ -169,9 +169,14 @@ func TestNoOutputCarriesAValue(t *testing.T) {
 		{"scan-text file", nil, "", []string{"scan-text", "notes/review.md"}, finding.ExitBlock},
 		{"scan-text stdin", nil, "Roe, Richard\n" + sentinel + "\n", []string{"scan-text", "-", "--format", "json"}, finding.ExitBlock},
 		{"scan-text commit message", nil, "# " + sentinel + "\nsubject\n", []string{"scan-text", "--commit-msg", "-"}, finding.ExitClean},
-		// A file the user names is reported by its path, as every finding is;
-		// a path is structure (principle 1).
-		{"scan-text missing file", nil, "", []string{"scan-text", "notes/missing.md"}, finding.ExitOperational},
+		// An argument that names no file is reported by position, never
+		// echoed.
+		{"scan-text missing file", nil, "", []string{"scan-text", sentinel}, finding.ExitOperational},
+		{"scan-text missing file json", nil, "", []string{"scan-text", "--format", "json", "notes/" + sentinel + ".md"}, finding.ExitOperational},
+		{"scan-text directory", func(t *testing.T, root string) {
+			writeFile(t, root, "notes/"+sentinel+"/a.md", "clean\n")
+		}, "", []string{"scan-text", "notes/" + sentinel}, finding.ExitOperational},
+		{"scan-text outside the repository", nil, "", []string{"scan-text", "../" + sentinel}, finding.ExitOperational},
 		{"policy error", func(t *testing.T, root string) {
 			writeFile(t, root, policy.FileName, testPolicy+"\n[values]\nallow = [\""+sentinel+"\"\n")
 		}, "", []string{"scan", "--format", "json"}, finding.ExitOperational},
@@ -320,6 +325,30 @@ func TestShowValuesOnATerminal(t *testing.T) {
 	o := runIn(t, "", "scan-text", "--show-values", "notes/review.md")
 	if o.code != finding.ExitBlock || !strings.Contains(o.stdout, "value        - "+sentinel) {
 		t.Errorf("exit %d; the value is not shown on an interactive terminal", o.code)
+	}
+}
+
+func TestScanTextNamesArgumentsByPosition(t *testing.T) {
+	newRepo(t, "repo")
+	o := runIn(t, "", "scan-text", "--format", "json", "notes/review.md", sentinel)
+	var got struct {
+		Findings []struct {
+			Path string `json:"path"`
+			Tier string `json:"tier"`
+		} `json:"findings"`
+	}
+	if err := json.Unmarshal([]byte(o.stdout), &got); err != nil {
+		t.Fatal(err)
+	}
+	paths := map[string]string{}
+	for _, f := range got.Findings {
+		paths[f.Path] = f.Tier
+	}
+	if paths["notes/review.md"] != "block" || paths["argument 2"] != "error" || len(paths) != 2 {
+		t.Errorf("paths = %v, want the file by its path and the missing one by position", paths)
+	}
+	if o.leaks() != "" {
+		t.Error("output carries the argument")
 	}
 }
 
