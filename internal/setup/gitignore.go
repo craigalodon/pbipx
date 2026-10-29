@@ -49,13 +49,39 @@ func MissingIgnores(root string) ([]string, error) {
 	return missing, nil
 }
 
+// ErrNotRegular is a repository file pbipx would write that is a symbolic
+// link or not a regular file. Following a link could write outside the
+// repository.
+var ErrNotRegular = errors.New("the file is a symbolic link or not a regular file")
+
+// RegularOrAbsent is nil when path does not exist or is a regular file, and
+// ErrNotRegular when it is anything else, a symbolic link included (checked
+// with os.Lstat, so the link itself is judged).
+func RegularOrAbsent(path string) error {
+	info, err := os.Lstat(path)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return nil
+	case err != nil:
+		return err
+	case !info.Mode().IsRegular():
+		return ErrNotRegular
+	}
+	return nil
+}
+
 // AppendIgnores appends lines to the .gitignore at the root of the
-// repository at root, creating it if needed.
+// repository at root, creating it if needed. A .gitignore that is a
+// symbolic link or not a regular file is ErrNotRegular, and nothing is
+// written.
 func AppendIgnores(root string, lines []string) error {
 	if len(lines) == 0 {
 		return nil
 	}
 	path := filepath.Join(root, ".gitignore")
+	if err := RegularOrAbsent(path); err != nil {
+		return err
+	}
 	old, err := os.ReadFile(path) //nolint:gosec // G304: the repository's own .gitignore
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
@@ -71,7 +97,7 @@ func AppendIgnores(root string, lines []string) error {
 	for _, l := range lines {
 		b.WriteString(l + "\n")
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644) //nolint:gosec // G302,G304: a repository file every collaborator reads
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND|NoFollow, 0o644) //nolint:gosec // G302,G304: a repository file every collaborator reads
 	if err != nil {
 		return err
 	}

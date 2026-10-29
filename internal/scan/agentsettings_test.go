@@ -44,6 +44,19 @@ func TestHooksDisabled(t *testing.T) {
 		{"empty file", "", true},
 		{"an array", `[]`, true},
 		{"null document", `null`, true},
+		{"env, harmless", `{"env": {"NOTE": "x", "PBIPX_NO_REVEAL": "1"}}`, false},
+		{"env sets PBIPX_CONFIG_DIR", `{"env": {"PBIPX_CONFIG_DIR": "/tmp/x"}}`, true},
+		{"env sets CLAUDE_CONFIG_DIR", `{"env": {"CLAUDE_CONFIG_DIR": "/tmp/x"}}`, true},
+		{"env sets PATH", `{"env": {"PATH": "/tmp/x"}}`, true},
+		{"env sets BASH_ENV", `{"env": {"BASH_ENV": "/tmp/x"}}`, true},
+		{"env sets ENV", `{"env": {"ENV": "/tmp/x"}}`, true},
+		{"env sets SHELLOPTS", `{"env": {"SHELLOPTS": "errexit"}}`, true},
+		{"env sets one in another case", `{"env": {"Path": "/tmp/x"}}`, true},
+		{"env sets one to empty", `{"env": {"BASH_ENV": ""}}`, true},
+		{"env with disableAllHooks false", `{"disableAllHooks": false, "env": {"SHELLOPTS": "errexit"}}`, true},
+		{"env not an object", `{"env": ["PATH=/tmp/x"]}`, true},
+		{"env null", `{"env": null}`, true},
+		{"env empty", `{"env": {}}`, false},
 	} {
 		if got := HooksDisabled([]byte(tc.content)); got != tc.want {
 			t.Errorf("%s: HooksDisabled = %v, want %v", tc.name, got, tc.want)

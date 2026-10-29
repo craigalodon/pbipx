@@ -324,9 +324,16 @@ Errors are findings with reasons and no value:
 `pbipx scan`, from every source, checks each Claude Code settings file in
 the files it scans (`.claude/settings.json` or `.claude/settings.local.json`
 in any directory), whatever the policy's scan scope: one that is not a JSON
-object, or that sets `disableAllHooks` to anything but `false`, is an error
-finding with `hooks-disabled`. It names the path and the reason only. Such
-a file turns off the gate's user-level hook (threat model, layer 5). The
+object, that sets `disableAllHooks` to anything but `false`, or whose `env`
+is not an object or sets one of `PBIPX_CONFIG_DIR`, `CLAUDE_CONFIG_DIR`,
+`PATH`, `BASH_ENV`, `ENV` or `SHELLOPTS` (names compared without regard to
+case), is an error finding with `hooks-disabled`. It names the path and the
+reason only. Such a file turns off the gate's user-level hook, or defeats
+it (threat model, layer 5): `PBIPX_CONFIG_DIR` points the gate at an
+approval store that approves anything, `CLAUDE_CONFIG_DIR` moves the
+settings the hook is in, `PATH` changes the programs the hook's shell runs,
+`BASH_ENV` and `ENV` run a script in it, and `SHELLOPTS` sets its options.
+`PBIPX_NO_REVEAL` is allowed: it only takes a power away. The
 gate's own scans do not check it; the gate denies an agent's write to it
 instead.
 
@@ -458,7 +465,16 @@ The record is TOML holding `version = 1`, `digest = "sha256:<hex>"` and
 `approved` (the UTC time), written atomically (a temporary file renamed
 into place) with mode 0600 in directories created 0700. A relative
 `PBIPX_CONFIG_DIR` is refused: resolved against the working directory, it
-could point into the repository. `scan` does not check approval.
+could point into the repository. So is a configuration directory inside the
+repository root, as given or with symlinks resolved (of the root, and of
+the directory's deepest existing ancestor): the gate denies every call with
+`internal-error`, and `policy approve` and `policy status` exit 3. `scan`
+does not check approval.
+
+The gate reads `.pbipx.toml` once. It parses those bytes and checks the
+digest of the same bytes against the approval, so a policy swapped between
+two reads cannot be enforced while a different one is checked. `policy
+approve` likewise records the digest of the bytes it loaded.
 
 Decisions by tool. Every tool not listed is allowed.
 
@@ -517,8 +533,24 @@ Decisions by tool. Every tool not listed is allowed.
   `.claude/settings.json` or `.claude/settings.local.json` in the
   repository root or any directory below it, names compared without regard
   to case. Such a file can set `disableAllHooks`, which turns off the gate's
-  own user-level hook (threat model, layer 5). Every other write is allowed:
-  the gate does not otherwise judge writes.
+  own user-level hook (threat model, layer 5).
+
+  A write outside the repository is denied with `agent-settings` too when,
+  under any spelling (and with the symlinks of the deepest existing
+  ancestor resolved, for a path not yet there), it is one of the files that
+  control the gate:
+  - inside the pbipx approval store: `$PBIPX_CONFIG_DIR`, and
+    `<user config dir>/pbipx` in any case (layer 6; a forged record would
+    approve a weakened policy);
+  - a user-level Claude Code settings file: a file named `settings*.json`
+    (case ignored) directly in `$CLAUDE_CONFIG_DIR` or in `~/.claude`;
+  - inside Claude Code's managed settings directory (`/etc/claude-code`,
+    `/Library/Application Support/ClaudeCode` or
+    `C:\Program Files\ClaudeCode`), `managed-settings.json` and the
+    `managed-settings.d` drop-ins included.
+
+  The message says which of these the path is, and does not name it. Every
+  other write is allowed: the gate does not otherwise judge writes.
 
 A deny writes the Claude Code decision JSON (`permissionDecision: deny` and a
 reason) to stdout, writes the reason to stderr, and exits 2. An allow writes
@@ -542,14 +574,25 @@ passes 0 and 2 through and turns every other outcome of running the binary
 writes it:
 
 - POSIX `sh`, which Claude Code uses on Linux and macOS:
-  `'/path/to/pbipx' gate --agent claude-code; s=$?; [ "$s" -eq 0 ] && exit 0;
-  [ "$s" -eq 2 ] && exit 2; echo '...' >&2; exit 2`.
+  `set +e; '/path/to/pbipx' gate --agent claude-code; s=$?;
+  [ "$s" -eq 0 ] && exit 0; [ "$s" -eq 2 ] && exit 2; echo '...' >&2;
+  exit 2`. `set +e` comes first because errexit can be on before the first
+  line runs (`SHELLOPTS=errexit` in the environment, or a `BASH_ENV` script
+  when the shell is bash); under it, a binary exiting 1 would end the shell
+  with 1, which proceeds.
 - Windows: Claude Code runs hooks through Git Bash, or PowerShell when Git
   Bash is missing, and a command written for one is a parse error (exit 1,
   proceed) in the other. So the hook sets `"shell": "powershell"` and the
   command is PowerShell: `$s` starts at -1, the binary runs inside
   `try`/`catch`, only an exit code of 0 or 2 is passed through, and
   everything else writes a reason to stderr and exits 2.
+
+`pbipx init` registers the hook with `"timeout": 300` (seconds). Claude
+Code treats a hook that times out as a non-blocking error and lets the call
+proceed, so a search or shell call that scans a large protected tree must
+not reach Claude Code's default timeout. A hook this binary registered in
+an earlier command form is recognised by the binary's path and rewritten in
+place.
 
 ## `explain`
 
@@ -736,8 +779,9 @@ behavior (2026-10-29).
   checks Claude Code's settings. pbipx denies an agent's write to, or shell
   command naming, `.claude/settings.json` or `.claude/settings.local.json`
   in the repository with `agent-settings`, and `pbipx scan` reports a
-  committed one that sets `disableAllHooks` with `hooks-disabled`, because
-  such a file turns off the gate's user-level hook. (Decided 2026-10-29.)
+  committed one that sets `disableAllHooks`, or whose `env` sets a variable
+  that can defeat the hook, with `hooks-disabled`, because such a file
+  turns off the gate's user-level hook. (Decided 2026-10-29.)
 
 ### Baseline
 

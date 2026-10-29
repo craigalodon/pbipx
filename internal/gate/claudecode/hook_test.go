@@ -342,3 +342,70 @@ func TestHookCommandFailsClosed(t *testing.T) {
 		})
 	}
 }
+
+// TestHookCommandFailsClosedUnderErrexit runs the configured string with
+// errexit on before its first line: SHELLOPTS=errexit, which bash reads,
+// and a BASH_ENV script that runs set -e. Under errexit a binary exiting 1
+// would end the shell with 1, which Claude Code proceeds on, unless the
+// command turns errexit off first.
+func TestHookCommandFailsClosedUnderErrexit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the POSIX command form")
+	}
+	h := newHook(t)
+	dir := t.TempDir()
+	script := func(name, content string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(content), 0o700); err != nil { //nolint:gosec // G306: the script must be executable
+			t.Fatal(err)
+		}
+		return p
+	}
+	bins := map[string]string{
+		"exits 1": script("exit1", "#!/bin/sh\nexit 1\n"),
+		"missing": filepath.Join(dir, "absent", "pbipx"),
+		"killed":  script("killed", "#!/bin/sh\nkill -KILL $$\n"),
+	}
+	bashEnv := script("bash_env", "set -e\n")
+	type shell struct {
+		name, path string
+		env        []string
+	}
+	var shells []shell
+	if bash, err := exec.LookPath("bash"); err == nil {
+		shells = append(shells,
+			shell{"bash, SHELLOPTS=errexit", bash, []string{"SHELLOPTS=errexit"}},
+			shell{"bash, BASH_ENV sets -e", bash, []string{"BASH_ENV=" + bashEnv}})
+	}
+	shells = append(shells,
+		shell{"sh, SHELLOPTS=errexit", "sh", []string{"SHELLOPTS=errexit"}},
+		shell{"sh", "sh", nil})
+	for _, sh := range shells {
+		for name, bin := range bins {
+			t.Run(sh.name+"/"+name, func(t *testing.T) {
+				cmd := exec.Command(sh.path, "-c", claudecode.HookCommand(bin, runtime.GOOS)) //nolint:gosec // G204: the command is the hook under test
+				cmd.Dir = h.repo
+				cmd.Env = append(os.Environ(), approval.EnvConfigDir+"="+h.config)
+				cmd.Env = append(cmd.Env, sh.env...)
+				cmd.Stdin = bytes.NewReader(h.allow)
+				var stderr bytes.Buffer
+				cmd.Stderr = &stderr
+				code := 0
+				var exitErr *exec.ExitError
+				switch err := cmd.Run(); {
+				case err == nil:
+				case errors.As(err, &exitErr):
+					code = exitErr.ExitCode()
+				default:
+					t.Fatalf("running the shell: %v", err)
+				}
+				if code != claudecode.ExitDeny {
+					t.Fatalf("exit = %d, want %d (a deny)", code, claudecode.ExitDeny)
+				}
+				if !strings.Contains(stderr.String(), "pbipx: internal-error:") {
+					t.Error("stderr has no internal-error reason")
+				}
+			})
+		}
+	}
+}

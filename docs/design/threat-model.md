@@ -60,9 +60,17 @@ should set up:
    gate's included. pbipx guards that path from both sides: the gate denies
    an agent's write to, or shell command naming, such a file in the
    repository (`agent-settings`), and `pbipx scan` reports a committed one
-   that disables hooks, or does not parse, as an error (`hooks-disabled`).
-   Neither stops a person from editing the file by hand, or an agent from
-   building the path at run time. Only managed settings are immune: the
+   that disables hooks, sets an environment variable that can defeat the
+   hook (`PBIPX_CONFIG_DIR`, `CLAUDE_CONFIG_DIR`, `PATH`, `BASH_ENV`, `ENV`,
+   `SHELLOPTS`), or does not parse, as an error (`hooks-disabled`). The gate
+   also denies an agent's write to the user-level settings
+   (`settings*.json` in `$CLAUDE_CONFIG_DIR` or `~/.claude`) and to the
+   managed settings directory. None of this stops a person from editing the
+   file by hand, or an agent from building the path at run time. The hook
+   command itself fails closed under a shell with errexit on, and is
+   registered with a timeout long enough that a slow scan never reaches
+   Claude Code's default, since a hook that times out lets the call
+   proceed. Only managed settings are immune: the
    hook registered there (`pbipx init --managed` prints a
    `managed-settings.d` drop-in), ideally with `"allowManagedHooksOnly":
    true`, cannot be turned off by any repository or user setting.
@@ -71,7 +79,10 @@ should set up:
    checks the policy against a digest a person approved at a terminal,
    stored outside the repository, and denies every call until a changed
    policy is re-approved
-   ([ADR-0006](../adr/0006-policy-integrity.md)).
+   ([ADR-0006](../adr/0006-policy-integrity.md)). It digests the same bytes
+   it parsed, refuses a store inside the repository, and denies an agent's
+   write into the store, so an agent cannot forge an approval through the
+   gate's own paths.
 7. **The agent's own sandbox and file-system deny rules** for Desktop's local
    state and caches. These are the real containment; the gate explains each
    denial.

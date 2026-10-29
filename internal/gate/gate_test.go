@@ -434,21 +434,22 @@ func TestCheckPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var gotRoot, gotPath string
+	var gotRoot string
+	var gotData []byte
 	unapproved := &gate.Decision{Reason: gate.ReasonPolicyUnapproved, Message: "the policy has no approval"}
 	d := gate.Decide(gate.Event{Tool: gate.Other, Cwd: root}, gate.Options{
-		CheckPolicy: func(r, p string) *gate.Decision {
-			gotRoot, gotPath = r, p
+		CheckPolicy: func(r string, data []byte) *gate.Decision {
+			gotRoot, gotData = r, data
 			return unapproved
 		},
 	})
 	check(t, d, gate.ReasonPolicyUnapproved)
-	if gotRoot != resolved || gotPath != filepath.Join(resolved, ".pbipx.toml") {
-		t.Errorf("CheckPolicy(%q, %q), want the repository root and its policy", gotRoot, gotPath)
+	if gotRoot != resolved || string(gotData) != defaultPolicy(t) {
+		t.Errorf("CheckPolicy got root %q and %d bytes, want the repository root and its policy's bytes", gotRoot, len(gotData))
 	}
 
 	d = gate.Decide(gate.Event{Tool: gate.Read, Path: reportJSON, Cwd: root}, gate.Options{
-		CheckPolicy: func(string, string) *gate.Decision { return nil },
+		CheckPolicy: func(string, []byte) *gate.Decision { return nil },
 	})
 	check(t, d, "")
 
@@ -458,7 +459,7 @@ func TestCheckPolicy(t *testing.T) {
 	}
 	called := false
 	d = gate.Decide(gate.Event{Tool: gate.Other, Cwd: root}, gate.Options{
-		CheckPolicy: func(string, string) *gate.Decision { called = true; return nil },
+		CheckPolicy: func(string, []byte) *gate.Decision { called = true; return nil },
 	})
 	check(t, d, gate.ReasonPolicyError)
 	if called {
@@ -469,7 +470,7 @@ func TestCheckPolicy(t *testing.T) {
 func TestPanicDenies(t *testing.T) {
 	root := newRepo(t, cleanFiles())
 	d := gate.Decide(gate.Event{Tool: gate.Other, Cwd: root}, gate.Options{
-		CheckPolicy: func(string, string) *gate.Decision { panic("Doe, Jane") },
+		CheckPolicy: func(string, []byte) *gate.Decision { panic("Doe, Jane") },
 	})
 	check(t, d, gate.ReasonInternalError)
 }

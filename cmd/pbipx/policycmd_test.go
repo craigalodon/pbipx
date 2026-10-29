@@ -263,3 +263,21 @@ func TestGateRequiresApproval(t *testing.T) {
 	writeFile(t, root, policy.FileName, approvalPolicy)
 	gateRun("internal-error")
 }
+
+// TestPolicyCommandsRefuseAStoreInTheRepository checks that approve and
+// status exit 3, writing nothing, when PBIPX_CONFIG_DIR is inside the
+// repository.
+func TestPolicyCommandsRefuseAStoreInTheRepository(t *testing.T) {
+	root := newApprovalRepo(t)
+	dir := filepath.Join(root, "config")
+	t.Setenv(approval.EnvConfigDir, dir)
+	for _, args := range [][]string{{"policy", "approve"}, {"policy", "status"}} {
+		o := runIn(t, approveWord+"\n", args...)
+		if o.code != finding.ExitOperational || !strings.Contains(o.stderr, "inside the repository") {
+			t.Errorf("%v: exit %d, stderr %q", args, o.code, o.stderr)
+		}
+	}
+	if _, err := os.Stat(dir); err == nil {
+		t.Error("an approval was written inside the repository")
+	}
+}

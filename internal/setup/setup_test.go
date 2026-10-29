@@ -339,7 +339,7 @@ func TestWriteSettings(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if want := target + ".pbipx-backup-21000102T030405Z"; backup != want {
+		if want := target + ".pbipx-backup-21000102T030405.000000000Z"; backup != want {
 			t.Errorf("backup = %s, want %s", backup, want)
 		}
 		if got, _ := read(backup); string(got) != `{"old": true}` {
@@ -416,4 +416,55 @@ func ptr(s string) *string { return &s }
 // read reads a test's temporary file.
 func read(path string) ([]byte, error) {
 	return os.ReadFile(path) //nolint:gosec // G304: a test's temporary file
+}
+
+// TestWriteSettingsKeepsEveryBackup writes twice at the same instant: the
+// second backup must not replace the first.
+func TestWriteSettingsKeepsEveryBackup(t *testing.T) {
+	at := time.Date(2100, 1, 2, 3, 4, 5, 6, time.UTC)
+	path := filepath.Join(t.TempDir(), "settings.json")
+	if err := os.WriteFile(path, []byte("first"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	b1, err := setup.WriteSettings(path, []byte("second"), at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b2, err := setup.WriteSettings(path, []byte("third"), at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b1 != path+".pbipx-backup-21000102T030405.000000006Z" || b2 != b1+"-1" {
+		t.Errorf("backups = %s, %s", filepath.Base(b1), filepath.Base(b2))
+	}
+	if got, _ := read(b1); string(got) != "first" {
+		t.Errorf("the first backup = %q", got)
+	}
+	if got, _ := read(b2); string(got) != "second" {
+		t.Errorf("the second backup = %q", got)
+	}
+}
+
+func TestAppendIgnoresRefusesALink(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(t.TempDir(), "outside")
+	if err := os.WriteFile(target, []byte("outside\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(root, ".gitignore")); err != nil {
+		t.Skip("symlinks are not available")
+	}
+	if err := setup.AppendIgnores(root, setup.IgnoreLines); !errors.Is(err, setup.ErrNotRegular) {
+		t.Errorf("AppendIgnores = %v, want ErrNotRegular", err)
+	}
+	if got, _ := read(target); string(got) != "outside\n" {
+		t.Errorf("the link's target was written: %q", got)
+	}
+	dirRoot := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dirRoot, ".gitignore"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := setup.AppendIgnores(dirRoot, setup.IgnoreLines); !errors.Is(err, setup.ErrNotRegular) {
+		t.Errorf("AppendIgnores on a directory = %v, want ErrNotRegular", err)
+	}
 }

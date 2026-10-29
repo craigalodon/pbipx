@@ -64,10 +64,11 @@ type Decision struct {
 // Options configures Decide.
 type Options struct {
 	// CheckPolicy, if set, runs after the policy loads and before anything
-	// else is decided, with the repository root and the policy file's path.
-	// A non-nil Decision it returns is final. ADR-0006's approval check
-	// plugs in here.
-	CheckPolicy func(root string, policyPath string) *Decision
+	// else is decided, with the repository root and the exact bytes the
+	// policy was parsed from: the file is read once, so the policy checked is
+	// the policy enforced. A non-nil Decision it returns is final. ADR-0006's
+	// approval check plugs in here.
+	CheckPolicy func(root string, policyData []byte) *Decision
 
 	// Now is when baseline expiry is judged; zero means time.Now().
 	Now time.Time
@@ -159,7 +160,7 @@ func load(ev Event, opts Options) (*setup, *Decision) {
 		return fail(deny(ReasonInternalError, "git could not say which repository the working directory is in"))
 	}
 	policyPath := filepath.Join(repo.Root, policy.FileName)
-	p, err := policy.Load(policyPath)
+	p, policyData, err := policy.LoadData(policyPath)
 	if err != nil {
 		var pe *policy.Error
 		if errors.As(err, &pe) {
@@ -168,7 +169,7 @@ func load(ev Event, opts Options) (*setup, *Decision) {
 		return fail(deny(ReasonPolicyError, "%s cannot be loaded", policy.FileName))
 	}
 	if opts.CheckPolicy != nil {
-		if d := opts.CheckPolicy(repo.Root, policyPath); d != nil {
+		if d := opts.CheckPolicy(repo.Root, policyData); d != nil {
 			return fail(*d)
 		}
 	}
