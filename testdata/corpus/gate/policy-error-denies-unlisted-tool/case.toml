@@ -1,0 +1,6 @@
+description = "The policy is loaded before the tool is considered, so a broken policy denies even a Write. Plants no value"
+command     = "gate"
+args        = []
+policy      = "tree"
+exit        = 2
+sentinels   = []

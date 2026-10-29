@@ -1,0 +1,6 @@
+description = "A JSON array instead of an object denies. Plants no value"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []

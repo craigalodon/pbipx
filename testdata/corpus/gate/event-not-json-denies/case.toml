@@ -1,0 +1,6 @@
+description = "Standard input that is not JSON denies. Plants no value"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []

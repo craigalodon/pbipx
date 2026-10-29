@@ -1,0 +1,9 @@
+{
+  "hook_event_name": "PreToolUse",
+  "cwd": "{root}",
+  "tool_name": "Write",
+  "tool_input": {
+    "file_path": "{root}/pbip/Example.Report/definition/new.json",
+    "content": "{}"
+  }
+}
