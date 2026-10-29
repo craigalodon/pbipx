@@ -14,3 +14,9 @@ private-terms.txt
 
 # Agent worktrees created by Claude Code.
 /.claude/worktrees/
+
+# Corpus fixtures are synthetic placeholders for those same file types, so
+# the cases that need them can exist.
+!/testdata/corpus/**/.pbi/
+!/testdata/corpus/**/*.abf
+!/testdata/corpus/**/*.pbix
