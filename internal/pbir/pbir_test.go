@@ -379,6 +379,27 @@ func TestLocatorsAreDeterministic(t *testing.T) {
 	}
 }
 
+func TestShapedKeysStayOutOfLocators(t *testing.T) {
+	for _, key := range []string{"123-45-6789", "555-867-5309", "5558675309", "Doe, Jane", "DoeJane@example.com"} {
+		doc := `{"visual": {"objects": {"` + key + `": [{"properties": {"filter": {"filter": ` +
+			in(from("s", "student"), col("s", "", "full_name"), lit("'Pat Example'")) + `}}}]}}}`
+		got := scan(t, doc)
+		if len(got) != 1 {
+			t.Fatalf("got %d findings, want 1", len(got))
+		}
+		want := "visual.objects.{?}[0].properties.filter.filter.Where[0].Condition.In.Values[0][0].Literal.Value"
+		if got[0].Locator != want {
+			t.Errorf("a shaped key reached the locator")
+		}
+	}
+	// Power BI's hex names are kept.
+	doc := `{"explorationState": {"sections": {"a1b2c3d4e5f6a7b8c9d0": {"visualContainers": {"0f9e8d7c6b5a": {"singleVisual": {"objects": {"general": [{"properties": {"filter": {"filter": ` +
+		in(from("s", "student"), col("s", "", "full_name"), lit("'Pat Example'")) + `}}}]}}}}}}}}`
+	if got := scan(t, doc); len(got) != 1 || !strings.Contains(got[0].Locator, "sections.a1b2c3d4e5f6a7b8c9d0.visualContainers.0f9e8d7c6b5a.") {
+		t.Errorf("hex names left the locator: %s", describe(got))
+	}
+}
+
 func TestOutsideContextsIsNotVisited(t *testing.T) {
 	doc := `{"name": "Doe, Jane", "visual": {"visualType": "tableEx",
 		"query": {"queryState": {"Values": {"projections": [{"field": ` + col("", "student", "full_name") + `, "queryRef": "student.full_name"}]}}},

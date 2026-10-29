@@ -18,6 +18,8 @@ import (
 	"strings"
 
 	"github.com/pelletier/go-toml/v2"
+
+	"github.com/craigalodon/pbipx/internal/shape"
 )
 
 // FileName is the policy's name at the repository root.
@@ -204,14 +206,13 @@ func decodeError(err error) *Error {
 	return &Error{Msg: "is not valid TOML, or a key has the wrong type"}
 }
 
-var plainKey = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
-
-// keyName joins a key's parts. A part that is not a bare TOML key is free
-// text, which may be a value written in the wrong place, so it is replaced.
+// keyName joins a key's parts. A part that shape.PrintableKey refuses is
+// free text, which may be a value written in the wrong place, so it is
+// replaced.
 func keyName(key toml.Key) string {
 	parts := make([]string, len(key))
 	for i, k := range key {
-		if plainKey.MatchString(k) {
+		if shape.PrintableKey(k) {
 			parts[i] = k
 		} else {
 			parts[i] = `"…"`

@@ -8,7 +8,6 @@
 package pbir
 
 import (
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -16,6 +15,7 @@ import (
 	"github.com/craigalodon/pbipx/internal/finding"
 	"github.com/craigalodon/pbipx/internal/judge"
 	"github.com/craigalodon/pbipx/internal/policy"
+	"github.com/craigalodon/pbipx/internal/shape"
 )
 
 var _ judge.Scanner = Scan
@@ -396,13 +396,11 @@ func sortMembers(ms []member) {
 	slices.SortStableFunc(ms, func(a, b member) int { return strings.Compare(a.key, b.key) })
 }
 
-// plainKey is a key written into a locator as itself. Any other key is
-// written as {?}, so a locator never carries text that is not schema.
-var plainKey = regexp.MustCompile(`^[A-Za-z0-9_$-]+$`)
-
-// join appends an object key to a locator.
+// join appends an object key to a locator. A key that shape.PrintableKey
+// refuses is written as {?}, so a locator, and the fingerprint that hashes
+// it, never carries text that is not schema.
 func join(path, key string) string {
-	if !plainKey.MatchString(key) {
+	if !shape.PrintableKey(key) {
 		key = "{?}"
 	}
 	if path == "" {

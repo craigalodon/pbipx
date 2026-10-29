@@ -27,6 +27,7 @@ import (
 	"github.com/pelletier/go-toml/v2"
 
 	"github.com/craigalodon/pbipx/internal/finding"
+	"github.com/craigalodon/pbipx/internal/shape"
 )
 
 // FileName is the baseline's name at the repository root.
@@ -107,9 +108,10 @@ func (e *Error) Unwrap() error { return e.err }
 var fingerprintShape = regexp.MustCompile(`^fp[0-9]+:[0-9a-f]+$`)
 
 // PrintableKey is an entry's key as it may be printed: the key when it has
-// the shape of a fingerprint, and a placeholder otherwise.
+// the shape of a fingerprint and no personal-data shape, and a placeholder
+// otherwise.
 func PrintableKey(key string) string {
-	if fingerprintShape.MatchString(key) {
+	if isFingerprint(key) {
 		return key
 	}
 	return `"…"`
@@ -174,13 +176,17 @@ func decodeError(err error) *Error {
 	return &Error{Msg: "is not valid TOML, or a key has the wrong type"}
 }
 
-var plainKey = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+func isFingerprint(key string) bool {
+	return fingerprintShape.MatchString(key) && len(shape.Literal(key, shape.Switches{})) == 0
+}
 
+// keyName joins a key's parts. A part that is neither a fingerprint nor a
+// key shape.PrintableKey allows is free text, and is replaced.
 func keyName(key toml.Key) string {
 	parts := make([]string, len(key))
 	for i, k := range key {
 		switch {
-		case plainKey.MatchString(k), fingerprintShape.MatchString(k):
+		case shape.PrintableKey(k), isFingerprint(k):
 			parts[i] = k
 		default:
 			parts[i] = `"…"`

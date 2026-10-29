@@ -104,3 +104,22 @@ func appendAnywhere(reasons []finding.Reason, s string, sw Switches) []finding.R
 	}
 	return reasons
 }
+
+// identifierKey and hexKey are the keys PrintableKey lets through: an
+// identifier, or a hex run with at least one letter, all lowercase or all
+// uppercase (Power BI's visual and section names).
+var (
+	identifierKey = regexp.MustCompile(`^[A-Za-z_$][A-Za-z0-9_$]*$`)
+	hexKey        = regexp.MustCompile(`^(?:[0-9a-f]*[a-f][0-9a-f]*|[0-9A-F]*[A-F][0-9A-F]*)$`)
+)
+
+// PrintableKey reports whether a key read from a scanned or configuration
+// file may be printed or written into a locator: it is an identifier or a
+// hex name, and it has no personal-data shape. Any other key is free text
+// that could hold a value, and is printed as a placeholder.
+func PrintableKey(key string) bool {
+	if !identifierKey.MatchString(key) && !hexKey.MatchString(key) {
+		return false
+	}
+	return len(Literal(key, Switches{})) == 0
+}

@@ -168,3 +168,17 @@ func TestLiteral(t *testing.T) {
 		})
 	}
 }
+
+func TestPrintableKey(t *testing.T) {
+	for _, key := range []string{"filterConfig", "$schema", "Literal", "_x1", "a1b2c3d4e5f6a7b8c9d0", "0A1B2C3D", "page1"} {
+		if !PrintableKey(key) {
+			t.Errorf("%q is not printable", key)
+		}
+	}
+	for _, key := range []string{"123-45-6789", "555-867-5309", "5558675309", "2105", "Doe, Jane", "Doe,Jane", "jane.doe@example.com",
+		"a-b", "", "0a1B", "Ab1 "} {
+		if PrintableKey(key) {
+			t.Errorf("a key that is not an identifier or hex name is printable")
+		}
+	}
+}
