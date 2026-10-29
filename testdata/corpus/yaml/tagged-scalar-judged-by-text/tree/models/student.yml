@@ -1,0 +1,9 @@
+version: 2
+
+models:
+  - name: student
+    meta:
+      a: !!null Doe, Jane
+      b: !!bool Roe, Richard
+      c: !!int Example, Pat
+      student_id: !!null S-1001

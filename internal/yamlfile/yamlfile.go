@@ -3,7 +3,8 @@
 //
 // Every key is judged on shape. Every scalar except nulls, booleans and
 // empty strings is judged, a number by its column only, and is associated
-// with its nearest mapping key, through sequences. dbt's conventions add to
+// with its nearest mapping key, through sequences. An explicit tag is not
+// trusted: a tagged scalar is judged by its text. dbt's conventions add to
 // that: an accepted_values test's values are also tied to the column the
 // test is on, where and expression values are lexed as SQL, and unit-test
 // rows are tied to nothing. Comments and the quoted runs inside values are
@@ -337,15 +338,43 @@ func scalarOf(m *yaml.Node, key string) string {
 	return ""
 }
 
+// isString says whether a scalar is read as a string: one the parser
+// resolves to !!str, or an explicitly tagged one that scalarKind judges as
+// a string.
 func isString(n *yaml.Node) bool {
-	return n.Kind == yaml.ScalarNode && n.ShortTag() == "!!str"
+	if n.Kind != yaml.ScalarNode {
+		return false
+	}
+	if n.Style&yaml.TaggedStyle != 0 {
+		kind, ok := scalarKind(n)
+		return ok && kind == judge.String
+	}
+	return n.ShortTag() == "!!str"
 }
 
 // scalarKind is how a scalar is judged, and false for one that is not:
-// a null, a boolean or an empty string. Integers and floats are numbers.
+// a plain, untagged null or boolean, or an empty string. Integers and
+// floats are numbers.
+//
+// An explicit tag is the author's claim about the content, and is not
+// trusted: `!!null Doe, Jane` and `!!int Doe, Jane` hold a string. An
+// explicitly tagged scalar, a custom tag's included, is judged as a string
+// unless its text, read as an untagged plain scalar, is a number. !!str is
+// taken at its word.
 func scalarKind(n *yaml.Node) (judge.Kind, bool) {
 	if n.Kind != yaml.ScalarNode || n.Value == "" {
 		return judge.String, false
+	}
+	if n.Style&yaml.TaggedStyle != 0 {
+		if n.ShortTag() == "!!str" {
+			return judge.String, true
+		}
+		plain := yaml.Node{Kind: yaml.ScalarNode, Value: n.Value}
+		switch plain.ShortTag() {
+		case "!!int", "!!float":
+			return judge.Number, true
+		}
+		return judge.String, true
 	}
 	switch n.ShortTag() {
 	case "!!null", "!!bool":

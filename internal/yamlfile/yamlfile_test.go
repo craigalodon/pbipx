@@ -326,6 +326,51 @@ func TestComments(t *testing.T) {
 	}
 }
 
+// An explicit tag is the author's claim, not the content: a tagged scalar
+// is judged by its text.
+func TestTaggedScalarsJudgedByText(t *testing.T) {
+	tests := []struct {
+		name  string
+		src   string
+		wants []want
+	}{
+		{"!!null", "a: !!null Doe, Jane\n",
+			[]want{{ctx: finding.YAML, tier: finding.Block, reasons: name, locator: "a"}}},
+		{"!!bool", "b: !!bool Doe, Jane\n",
+			[]want{{ctx: finding.YAML, tier: finding.Block, reasons: name}}},
+		{"!!int on text", "c: !!int Doe, Jane\n",
+			[]want{{ctx: finding.YAML, tier: finding.Block, reasons: name}}},
+		{"!!float on text", "c: !!float jane.doe@example.com\n",
+			[]want{{ctx: finding.YAML, tier: finding.Block, reasons: email}}},
+		{"custom tag", "d: !note Doe, Jane\n",
+			[]want{{ctx: finding.YAML, tier: finding.Block, reasons: name}}},
+		{"tagged null on a block column", "student_id: !!null S-1001\n",
+			[]want{{ctx: finding.YAML, column: "student_id", tier: finding.Block, reasons: blockCol}}},
+		{"tagged bool text on a block column", "full_name: !!bool true\n",
+			[]want{{ctx: finding.YAML, column: "full_name", tier: finding.Block, reasons: blockCol}}},
+		{"tagged block scalar", "a: !!null |\n  Doe, Jane\n",
+			[]want{{ctx: finding.YAML, tier: finding.Block, reasons: name}}},
+		{"tagged key", "!!null Doe, Jane: 1\n",
+			[]want{{ctx: finding.YAMLKey, tier: finding.Block, reasons: name}}},
+		{"tagged quoted runs", "a: !!int x 'Doe, Jane' y\n",
+			[]want{{ctx: finding.YAML, tier: finding.Block, reasons: name}}},
+		{"tagged where is SQL", "where: !!null \"full_name = 'S-1001'\"\n",
+			[]want{{ctx: finding.YAMLSQL, column: "full_name", tier: finding.Block, reasons: blockCol}}},
+		// A number in its text is still a number: judged by its column only.
+		{"tagged number text", "a: !!null 7041293\nb: !foo 2101.5\nstudent_id: !!bool 7041293\n",
+			[]want{{ctx: finding.YAML, column: "student_id", tier: finding.Block, reasons: blockCol}}},
+		{"!!str taken at its word", "a: !!str Doe, Jane\n",
+			[]want{{ctx: finding.YAML, tier: finding.Block, reasons: name}}},
+		{"tagged empty", "full_name: !!str \"\"\n", nil},
+		{"untagged null and bool stay skipped", "full_name: null\nfirst_name: true\n", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			check(t, scanYAML(t, tt.src), tt.wants...)
+		})
+	}
+}
+
 func TestAnchorsAndDocuments(t *testing.T) {
 	tests := []struct {
 		name  string

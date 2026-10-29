@@ -230,7 +230,8 @@ error.
 Contexts `yaml`, `yaml-key`, `yaml-comment` and `yaml-sql`.
 
 - Every key is judged on shape. Every scalar except nulls, booleans and empty
-  strings is judged; integers and floats are numbers.
+  strings is judged; integers and floats are numbers. A tag does not
+  decide that: a tagged scalar is judged by its text.
 - A scalar is associated with its nearest mapping key, through sequences. So
   `full_name: X` ties `X` to `full_name`.
 - dbt conventions: items of an `accepted_values` test's `values` are also tied
@@ -517,6 +518,11 @@ behavior (2026-10-29).
 - Unit-test rows have context `yaml`, including rows written as SQL. CSV
   rows are judged cell by cell.
 - An anchored node is judged once however many aliases refer to it.
+- An explicit tag is not trusted. A tagged scalar (`!!null`, `!!bool`,
+  `!!int`, a custom `!tag`) is judged by its text: as a string, column
+  verdict and shapes, unless its text read as a plain scalar is a number.
+  Only plain, untagged nulls and booleans, and empty strings, are skipped.
+  `!!str` is a string.
 
 ### Prose
 
