@@ -1,0 +1,7 @@
+description = "a cd earlier in the line moves where a later search runs: from notes/, cd .. then rg covers the protected tree"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
+known       = "predecessor"

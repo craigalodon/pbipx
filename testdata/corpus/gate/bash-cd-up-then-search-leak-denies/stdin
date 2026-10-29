@@ -1,0 +1,8 @@
+{
+  "hook_event_name": "PreToolUse",
+  "cwd": "{root}/notes",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "cd .. && rg student"
+  }
+}
