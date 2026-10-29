@@ -1,0 +1,166 @@
+package claudecode
+
+import (
+	"bytes"
+	"encoding/json"
+	"io"
+	"strings"
+	"testing"
+
+	"github.com/craigalodon/pbipx/internal/gate"
+)
+
+// sentinel stands for a value in an event. It must never be echoed.
+const sentinel = "Roe, Richard"
+
+func TestParseEvent(t *testing.T) {
+	tests := []struct {
+		name  string
+		event string
+		want  gate.Event
+	}{
+		{"read", `{"hook_event_name":"PreToolUse","cwd":"/r","tool_name":"Read","tool_input":{"file_path":"/r/a.json"}}`,
+			gate.Event{Tool: toolRead, Path: "/r/a.json", Cwd: "/r"}},
+		{"grep with a path", `{"cwd":"/r","tool_name":"Grep","tool_input":{"pattern":"x","path":"/r/pbip"}}`,
+			gate.Event{Tool: toolSearch, Path: "/r/pbip", Cwd: "/r"}},
+		{"grep without a path", `{"cwd":"/r","tool_name":"Grep","tool_input":{"pattern":"x"}}`,
+			gate.Event{Tool: toolSearch, Cwd: "/r"}},
+		{"glob is other", `{"cwd":"/r","tool_name":"Glob","tool_input":{"pattern":"**/*.json","path":"/r/pbip"}}`,
+			gate.Event{Tool: toolOther, Cwd: "/r"}},
+		{"bash", `{"cwd":"/r","tool_name":"Bash","tool_input":{"command":"ls -la"}}`,
+			gate.Event{Tool: toolShell, Command: "ls -la", Cwd: "/r"}},
+		{"write is other", `{"cwd":"/r","tool_name":"Write","tool_input":{"file_path":"/r/n.md","content":"x"}}`,
+			gate.Event{Tool: toolOther, Cwd: "/r"}},
+		{"no tool name", `{"cwd":"/r"}`, gate.Event{Tool: toolOther, Cwd: "/r"}},
+		{"read without input", `{"cwd":"/r","tool_name":"Read"}`, gate.Event{Tool: toolRead, Cwd: "/r"}},
+		{"null field", `{"tool_name":"Read","tool_input":{"file_path":null}}`, gate.Event{Tool: toolRead}},
+		{"leading space", " \n{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"pwd\"}}\n",
+			gate.Event{Tool: toolShell, Command: "pwd"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseEvent([]byte(tt.event))
+			if err != nil {
+				t.Fatalf("ParseEvent: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("ParseEvent = %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseEventRejects(t *testing.T) {
+	for name, event := range map[string]string{
+		"empty":              "",
+		"not json":           "Roe, Richard",
+		"array":              `[{"tool_name":"Read"}]`,
+		"null":               "null",
+		"string":             `"Roe, Richard"`,
+		"number":             "2",
+		"truncated":          `{"tool_name":"Read","tool_input":{"file_path":"Roe, Richard`,
+		"trailing data":      `{"tool_name":"Read"} {"tool_name":"Bash"}`,
+		"tool name a number": `{"tool_name":2}`,
+		"cwd an object":      `{"cwd":{"a":"Roe, Richard"},"tool_name":"Read"}`,
+		"input an array":     `{"tool_name":"Read","tool_input":["Roe, Richard"]}`,
+		"path a number":      `{"tool_name":"Read","tool_input":{"file_path":2}}`,
+		"command an array":   `{"tool_name":"Bash","tool_input":{"command":["Roe, Richard"]}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := ParseEvent([]byte(event))
+			if err == nil {
+				t.Fatal("ParseEvent accepted the event")
+			}
+			if strings.Contains(err.Error(), "Roe") {
+				t.Error("the error echoes the event")
+			}
+		})
+	}
+}
+
+// hookJSON is the deny Claude Code reads from stdout.
+type hookJSON struct {
+	HookSpecificOutput struct {
+		HookEventName            string `json:"hookEventName"`
+		PermissionDecision       string `json:"permissionDecision"`
+		PermissionDecisionReason string `json:"permissionDecisionReason"`
+	} `json:"hookSpecificOutput"`
+}
+
+func TestRender(t *testing.T) {
+	t.Run("allow", func(t *testing.T) {
+		var stdout, stderr bytes.Buffer
+		if code := Render(gate.Decision{Allow: true, Reason: "finding", Message: "ignored"}, &stdout, &stderr); code != ExitAllow {
+			t.Errorf("exit = %d, want %d", code, ExitAllow)
+		}
+		if stdout.Len() != 0 || stderr.Len() != 0 {
+			t.Error("an allow wrote output")
+		}
+	})
+	tests := []struct {
+		name string
+		d    gate.Decision
+		want string
+	}{
+		{"deny", Deny("finding", "pbip/a.json line 3: full_name (block column)"),
+			"pbipx: finding: pbip/a.json line 3: full_name (block column)"},
+		{"multi-line message", Deny("scan-error", "first\nsecond\r\nthird"), "pbipx: scan-error: first second third"},
+		{"no message", Deny("policy-error", ""), "pbipx: policy-error"},
+		{"no class", Deny("", "x"), "pbipx: internal-error: the gate returned a deny without a reason"},
+		{"bad class", Deny("Finding: x", "x"), "pbipx: internal-error: the gate returned a deny without a reason"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			if code := Render(tt.d, &stdout, &stderr); code != ExitDeny {
+				t.Errorf("exit = %d, want %d", code, ExitDeny)
+			}
+			first, _, _ := strings.Cut(stderr.String(), "\n")
+			if first != tt.want {
+				t.Errorf("stderr line 1 = %q, want %q", first, tt.want)
+			}
+			var h hookJSON
+			if err := json.Unmarshal(stdout.Bytes(), &h); err != nil {
+				t.Fatalf("stdout is not JSON: %v", err)
+			}
+			o := h.HookSpecificOutput
+			if o.HookEventName != "PreToolUse" || o.PermissionDecision != "deny" || o.PermissionDecisionReason != tt.want {
+				t.Errorf("hook JSON = %+v", o)
+			}
+		})
+	}
+}
+
+// panicReader panics on read, standing for a failure anywhere below Run.
+type panicReader struct{}
+
+func (panicReader) Read([]byte) (int, error) { panic(sentinel) }
+
+func TestRunDeniesWithoutDeciding(t *testing.T) {
+	tests := []struct {
+		name  string
+		stdin io.Reader
+		class string
+	}{
+		{"not json", strings.NewReader(sentinel), ReasonEventError},
+		{"array", strings.NewReader(`["` + sentinel + `"]`), ReasonEventError},
+		{"empty", strings.NewReader(""), ReasonEventError},
+		{"too large", bytes.NewReader(make([]byte, maxEvent+1)), ReasonEventError},
+		{"panic", panicReader{}, ReasonInternalError},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			code := Run(tt.stdin, &stdout, &stderr, gate.Options{})
+			if code != ExitDeny {
+				t.Errorf("exit = %d, want %d", code, ExitDeny)
+			}
+			if !strings.HasPrefix(stderr.String(), "pbipx: "+tt.class+":") {
+				t.Errorf("stderr does not start with the class %s", tt.class)
+			}
+			if strings.Contains(stdout.String()+stderr.String(), "Roe") {
+				t.Error("the output echoes the event")
+			}
+		})
+	}
+}

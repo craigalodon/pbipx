@@ -473,6 +473,27 @@ Gate reason classes: `finding`, `unvettable`, `scan-error`,
 `local-state`, `git-content`, `policy-error`, `event-error`,
 `not-a-repository`, `internal-error`.
 
+Glob is not gated: it prints file names, and names are schema (principle 1).
+
+`pbipx gate --agent claude-code` (the default and only agent) exits only 0
+or 2. A usage error of its own flags, a help request and a panic each deny
+with `internal-error`. The configured hook command fails closed on its own
+(principle 7): Claude Code proceeds on any exit but 0 and 2, so the command
+passes 0 and 2 through and turns every other outcome of running the binary
+(missing, not executable, killed, crashed, exit 1) into a deny with exit 2.
+`HookCommand` in [internal/gate/claudecode](../../internal/gate/claudecode)
+writes it:
+
+- POSIX `sh`, which Claude Code uses on Linux and macOS:
+  `'/path/to/pbipx' gate --agent claude-code; s=$?; [ "$s" -eq 0 ] && exit 0;
+  [ "$s" -eq 2 ] && exit 2; echo '...' >&2; exit 2`.
+- Windows: Claude Code runs hooks through Git Bash, or PowerShell when Git
+  Bash is missing, and a command written for one is a parse error (exit 1,
+  proceed) in the other. So the hook sets `"shell": "powershell"` and the
+  command is PowerShell: `$s` starts at -1, the binary runs inside
+  `try`/`catch`, only an exit code of 0 or 2 is passed through, and
+  everything else writes a reason to stderr and exits 2.
+
 ## `explain`
 
 - **Report JSON:** the number of contexts, and for each context its locator,
