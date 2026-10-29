@@ -1,0 +1,32 @@
+# Hooks for repositories that adopt pbipx (threat model, layer 1). In the
+# adopter's .pre-commit-config.yaml:
+#
+#   - repo: https://github.com/craigalodon/pbipx
+#     rev: <a release tag>
+#     hooks:
+#       - id: pbipx-scan
+#       - id: pbipx-commit-msg
+#
+# and install both hook types: pre-commit install --hook-type pre-commit
+# --hook-type commit-msg.
+#
+# `language: system` runs the pbipx binary on PATH, installed and pinned as
+# the README's Install section describes. pre-commit does not build it from
+# this repository: the scan must not run code an agent could change
+# (threat model, layer 4). A missing binary fails the hook.
+
+- id: pbipx-scan
+  name: pbipx scan (staged files)
+  description: Block a commit that persists personal data in a Power BI project.
+  entry: pbipx scan --staged
+  language: system
+  pass_filenames: false
+  always_run: true
+  stages: [pre-commit]
+
+- id: pbipx-commit-msg
+  name: pbipx scan-text (commit message)
+  description: Block a commit message that carries personal data.
+  entry: pbipx scan-text --commit-msg
+  language: system
+  stages: [commit-msg]
