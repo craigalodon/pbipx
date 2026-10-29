@@ -1,0 +1,6 @@
+description = "--show-values is refused with a usage error when standard output is not a terminal, and no value is printed"
+command     = "scan-text"
+args        = ["--show-values", "notes/review.md"]
+policy      = "default"
+exit        = 4
+sentinels   = ["Doe, Jane"]
