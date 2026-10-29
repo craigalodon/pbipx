@@ -43,11 +43,12 @@ var (
 	emailRE      = regexp.MustCompile(`[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}`)
 	ssnRE        = regexp.MustCompile(`(?:^|` + notWord + `)\d{3}-\d{2}-\d{4}(?:$|` + notWord + `)`)
 	// Years 19xx to 21xx: the 21xx years are a divergence from the
-	// predecessor, so synthetic 2100s fixtures exercise the shape.
+	// predecessor, so synthetic 2100s fixtures exercise the shape. Month and
+	// day are not range-checked: a shape check errs towards blocking.
 	dateRE = regexp.MustCompile(
 		`(?:^|` + notWord + `)(?:` +
-			`(?:19|20|21)\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])` +
-			`|(?:0?[1-9]|1[0-2])/(?:0?[1-9]|[12]\d|3[01])/(?:19|20|21)\d{2}` +
+			`(?:19|20|21)\d{2}-\d{2}-\d{2}` +
+			`|\d{1,2}/\d{1,2}/(?:19|20|21)\d{2}` +
 			`)(?:$|` + notWord + `)`)
 	// A North American number: an optional +1, an area code that may be
 	// parenthesized, then ddd-dddd, separated by "-", "." or a space.
