@@ -1,0 +1,7 @@
+description = "a Bash command that redirects into .claude/settings.json denies, and the reason does not echo the command"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
+known       = "predecessor"

@@ -247,7 +247,7 @@ func TestMergeHookShapes(t *testing.T) {
 		{"windows shell", "{}", win, false, 0},
 		{"same command, other matcher", `{"hooks": {"PreToolUse": [{"matcher": "Read", "hooks": [{"type": "command", "command": ` + quote(testHook.Command) + `}]}]}}`, testHook, false, 0},
 		{"stale binary", `{"hooks": {"PreToolUse": [{"matcher": "Read|Grep|Bash", "hooks": [{"type": "command", "command": "'/old/pbipx' gate --agent claude-code; exit 2"}]}]}}`, testHook, false, 1},
-		{"present among others", `{"hooks": {"PreToolUse": ["odd", {"matcher": "Read|Grep|Bash", "hooks": [{"type": "command", "command": "x"}, {"type": "command", "command": ` + quote(testHook.Command) + `}]}]}}`, testHook, true, 0},
+		{"present among others", `{"hooks": {"PreToolUse": ["odd", {"matcher": ` + quote(setup.HookMatcher) + `, "hooks": [{"type": "command", "command": "x"}, {"type": "command", "command": ` + quote(testHook.Command) + `}]}]}}`, testHook, true, 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

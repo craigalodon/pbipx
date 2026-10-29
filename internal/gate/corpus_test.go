@@ -20,9 +20,10 @@ type hookEvent struct {
 	Cwd       string `json:"cwd"`
 	ToolName  string `json:"tool_name"`
 	ToolInput struct {
-		FilePath string `json:"file_path"`
-		Path     string `json:"path"`
-		Command  string `json:"command"`
+		FilePath     string `json:"file_path"`
+		Path         string `json:"path"`
+		Command      string `json:"command"`
+		NotebookPath string `json:"notebook_path"`
 	} `json:"tool_input"`
 }
 
@@ -46,6 +47,10 @@ func eventFrom(stdin []byte) (gate.Event, bool) {
 		ev.Tool, ev.Path = gate.Search, he.ToolInput.Path
 	case "Bash":
 		ev.Tool, ev.Command = gate.Shell, he.ToolInput.Command
+	case "Write", "Edit", "MultiEdit":
+		ev.Tool, ev.Path = gate.Write, he.ToolInput.FilePath
+	case "NotebookEdit":
+		ev.Tool, ev.Path = gate.Write, he.ToolInput.NotebookPath
 	}
 	return ev, true
 }

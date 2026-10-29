@@ -13,6 +13,7 @@ import (
 	"github.com/craigalodon/pbipx/internal/finding"
 	"github.com/craigalodon/pbipx/internal/gate/claudecode"
 	"github.com/craigalodon/pbipx/internal/policy"
+	"github.com/craigalodon/pbipx/internal/setup"
 )
 
 // initEnv is a test repository for init, with a Claude Code configuration
@@ -167,7 +168,7 @@ func TestInitOneProject(t *testing.T) {
 }
 
 func setupHookLine(exe string) string {
-	return "Read|Grep|Bash " + claudecode.HookCommand(exe, runtime.GOOS)
+	return setup.HookMatcher + " " + claudecode.HookCommand(exe, runtime.GOOS)
 }
 
 func TestInitLayouts(t *testing.T) {

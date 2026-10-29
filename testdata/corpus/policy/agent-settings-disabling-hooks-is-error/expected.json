@@ -1,0 +1,15 @@
+{
+  "findings": [
+    {
+      "path": ".claude/settings.json",
+      "context": null,
+      "column": null,
+      "tier": "error",
+      "reasons": [
+        "hooks-disabled"
+      ]
+    }
+  ],
+  "accepted": 0,
+  "suppressed": 0
+}

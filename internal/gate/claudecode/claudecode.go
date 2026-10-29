@@ -45,6 +45,7 @@ const (
 	toolRead   gate.Tool = "read"
 	toolSearch gate.Tool = "search"
 	toolShell  gate.Tool = "shell"
+	toolWrite  gate.Tool = "write"
 	toolOther  gate.Tool = "other"
 )
 
@@ -66,9 +67,12 @@ func Deny(reason, message string) gate.Decision {
 //   - Read is a read of tool_input.file_path.
 //   - Grep is a search of tool_input.path (empty: the working directory).
 //   - Bash is a shell command, tool_input.command.
+//   - Write, Edit and MultiEdit are a write of tool_input.file_path, and
+//     NotebookEdit a write of tool_input.notebook_path.
 //   - Every other tool is "other", Glob included: it prints file names, and
-//     names are schema (principle 1). behavior.md lists Read, Grep and Bash
-//     as the gated tools; every tool not listed is allowed.
+//     names are schema (principle 1). behavior.md lists Read, Grep, Bash and
+//     the writing tools as the gated tools; every tool not listed is
+//     allowed.
 //
 // The event must be a JSON object; tool_name and cwd, when present, strings;
 // tool_input, when present, an object; and the field the tool is judged by,
@@ -116,6 +120,12 @@ func ParseEvent(data []byte) (gate.Event, error) {
 	case "Bash":
 		ev.Tool = toolShell
 		ev.Command, err = field("command")
+	case "Write", "Edit", "MultiEdit":
+		ev.Tool = toolWrite
+		ev.Path, err = field("file_path")
+	case "NotebookEdit":
+		ev.Tool = toolWrite
+		ev.Path, err = field("notebook_path")
 	default:
 		ev.Tool = toolOther
 	}

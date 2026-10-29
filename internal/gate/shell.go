@@ -15,6 +15,16 @@ const toolName = "pbipx"
 // in a message: it can carry anything.
 func (s *setup) shell(line string) Decision {
 	cmds := splitCommands(line)
+	// Naming a Claude Code settings file in the repository denies, before
+	// anything else: even the tool alone could redirect into one.
+	for _, c := range cmds {
+		for _, w := range c {
+			if s.wordNamesAgentSettings(w) {
+				return deny(ReasonAgentSettings, "the command names a Claude Code settings file "+
+					"(.claude/settings.json or .claude/settings.local.json); %s", agentSettingsWhy)
+			}
+		}
+	}
 	// 1. The tool alone redacts on its own.
 	if toolAlone(line, cmds) {
 		return allow()
@@ -57,20 +67,37 @@ func toolAlone(line string, cmds []simple) bool {
 	return false
 }
 
+// candidates are the paths a word can stand for: as written, the value of
+// a --flag=value, and what an unquoted glob in it matches, without empty
+// ones.
+func (s *setup) candidates(w word) []string {
+	out := []string{w.text}
+	if _, v, ok := strings.Cut(w.text, "="); ok {
+		out = append(out, v)
+	}
+	out = append(out, s.expand(w)...)
+	return slices.DeleteFunc(out, func(c string) bool { return c == "" })
+}
+
+// wordNamesAgentSettings reports whether w names a Claude Code settings file
+// in the repository, as written, as the value of a --flag=value, or as what
+// an unquoted glob in it matches. No path is returned for a message: a file
+// that does not exist yet is named only by the command's text.
+func (s *setup) wordNamesAgentSettings(w word) bool {
+	for _, c := range s.candidates(w) {
+		if _, ok := s.namesAgentSettings(c); ok {
+			return true
+		}
+	}
+	return false
+}
+
 // namesLocalState reports whether w names a local-state file or a
 // directory local state is kept in, as written, as the value of a
 // --flag=value, or as what an unquoted glob in it matches. It returns the
 // path, repository-relative.
 func (s *setup) namesLocalState(w word) (string, bool) {
-	candidates := []string{w.text}
-	if _, v, ok := strings.Cut(w.text, "="); ok && v != "" {
-		candidates = append(candidates, v)
-	}
-	candidates = append(candidates, s.expand(w)...)
-	for _, c := range candidates {
-		if c == "" {
-			continue
-		}
+	for _, c := range s.candidates(w) {
 		for _, rel := range s.rels(c) {
 			if class, _ := s.policy.Classify(rel); class == policy.LocalState || s.policy.LocalStateDir(rel) {
 				return rel, true

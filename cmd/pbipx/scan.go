@@ -99,7 +99,7 @@ func runScan(cmd *cobra.Command, args []string, f *scanFlags) error {
 	}
 	defer func() { _ = set.Close() }()
 
-	res := scan.Run(set.Paths, set, scan.Options{Policy: p, Baseline: base, Scanners: scanners(), Now: now()})
+	res := scan.Run(set.Paths, set, scan.Options{Policy: p, Baseline: base, Scanners: scanners(), Now: now(), AgentSettings: true})
 	if err := f.out.writeResult(cmd.OutOrStdout(), res, f.strict); err != nil {
 		return operational(cmd, "writing the result failed")
 	}
