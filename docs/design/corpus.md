@@ -41,7 +41,9 @@ A runner, one per implementation, does this for each case:
    file, except those listed in `untracked` (left untracked) and `staged`
    (added to the index, not committed). A file the tree's own `.gitignore`
    ignores is not committed. The commit uses a fixed synthetic author and
-   date.
+   date. Then delete the files listed in `deleted` from the root: they stay
+   in the commit, so git history holds what the working tree no longer
+   does.
 4. Replace `{root}` in `args` and `stdin` with the root's absolute path.
 5. Run the command in the root, with `CI`, `PRE_COMMIT` and
    `PBIPX_NO_REVEAL` unset and standard output not a terminal, unless `env`
@@ -72,6 +74,7 @@ sentinels = ["Doe, Jane"]
 git        = true                    # false: the root is not a git repository
 untracked  = []                      # paths left untracked
 staged     = []                      # paths staged but not committed
+deleted    = []                      # paths committed, then deleted
 env        = { CI = "true" }         # environment for the command
 known      = "predecessor"           # see "Known differences"
 approved   = false                   # gate only: run with no policy approval

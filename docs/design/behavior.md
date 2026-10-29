@@ -324,9 +324,16 @@ Errors are findings with reasons and no value:
 `pbipx scan`, from every source, checks each Claude Code settings file in
 the files it scans (`.claude/settings.json` or `.claude/settings.local.json`
 in any directory), whatever the policy's scan scope: one that is not a JSON
-object, or that sets `disableAllHooks` to anything but `false`, is an error
-finding with `hooks-disabled`. It names the path and the reason only. Such
-a file turns off the gate's user-level hook (threat model, layer 5). The
+object, that sets `disableAllHooks` to anything but `false`, or whose `env`
+is not an object or sets one of `PBIPX_CONFIG_DIR`, `CLAUDE_CONFIG_DIR`,
+`PATH`, `BASH_ENV`, `ENV` or `SHELLOPTS` (names compared without regard to
+case), is an error finding with `hooks-disabled`. It names the path and the
+reason only. Such a file turns off the gate's user-level hook, or defeats
+it (threat model, layer 5): `PBIPX_CONFIG_DIR` points the gate at an
+approval store that approves anything, `CLAUDE_CONFIG_DIR` moves the
+settings the hook is in, `PATH` changes the programs the hook's shell runs,
+`BASH_ENV` and `ENV` run a script in it, and `SHELLOPTS` sets its options.
+`PBIPX_NO_REVEAL` is allowed: it only takes a power away. The
 gate's own scans do not check it; the gate denies an agent's write to it
 instead.
 
@@ -458,7 +465,16 @@ The record is TOML holding `version = 1`, `digest = "sha256:<hex>"` and
 `approved` (the UTC time), written atomically (a temporary file renamed
 into place) with mode 0600 in directories created 0700. A relative
 `PBIPX_CONFIG_DIR` is refused: resolved against the working directory, it
-could point into the repository. `scan` does not check approval.
+could point into the repository. So is a configuration directory inside the
+repository root, as given or with symlinks resolved (of the root, and of
+the directory's deepest existing ancestor): the gate denies every call with
+`internal-error`, and `policy approve` and `policy status` exit 3. `scan`
+does not check approval.
+
+The gate reads `.pbipx.toml` once. It parses those bytes and checks the
+digest of the same bytes against the approval, so a policy swapped between
+two reads cannot be enforced while a different one is checked. `policy
+approve` likewise records the digest of the bytes it loaded.
 
 Decisions by tool. Every tool not listed is allowed.
 
@@ -482,21 +498,65 @@ Decisions by tool. Every tool not listed is allowed.
      protected root:
      - always content: `blame`, `annotate`, `grep`, `archive`,
        `format-patch`, `difftool`, `range-diff`;
-     - `diff` and `show` unless a summary flag is given (`--stat`,
-       `--numstat`, `--shortstat`, `--name-only`, `--name-status`,
-       `--dirstat`, `--compact-summary`, `--summary`, `--raw`, `--no-patch`,
-       `-s`, `--quiet`), and a patch flag overrides the summary;
-     - `log`, `reflog` and `whatchanged` only with a patch flag (`-p`, `-u`,
-       `--patch` and kin, `--cc`, `--full-diff`, `-L`);
-     - `stash show` with a patch flag; `cat-file` except `-t`, `-s`, `-e`,
-       `--batch-check`;
-     - git's global options `-C`, `-c`, `--git-dir`, `--work-tree` and
-       `--namespace` consume their argument;
+     - content that cannot be placed, whatever the pathspecs:
+       `fast-export`, `pack-objects`, `unpack-file`, `filter-branch`;
+       `rebase` and `am` with `--show-current-patch`; `rebase` with `-x` or
+       `--exec`, `submodule foreach` and `bisect run`, which run a command;
+       `request-pull -p`; `bundle create` to `-` or a `/dev/` path (to a
+       file it is allowed); `merge-tree --trivial-merge`, or with three
+       commits and no `--write-tree`; `merge-file --object-id`;
+     - `diff` unless a summary flag is given (`--stat`, `--numstat`,
+       `--shortstat`, `--name-only`, `--name-status`, `--dirstat`,
+       `--compact-summary`, `--summary`, `--raw`, `--no-patch`, `-s`,
+       `--quiet`), and a patch flag overrides the summary;
+     - `log`, `reflog` and `whatchanged`, and `diff-index` and `diff-files`,
+       only with a patch flag (`-p`, `-u`, `--patch` and kin, `--cc`, `-c`,
+       `--dd`, `--remerge-diff`, `--full-diff`, `-L`, and the content
+       searches `-S` and `-G`); `diff-tree` with a patch flag or `--stdin`;
+     - `show`: a `REV:path` or `:path` argument prints that blob; any
+       argument holding `:/` or `^{/` (a search of commit messages) cannot
+       be placed. Every other argument is resolved in the repository with
+       `git cat-file -t`: a commit, a range of commits or a tag of a commit
+       prints a diff, as `diff` does (an annotated tag prints its target);
+       a blob, a tree, a tag of anything else, or a name that does not
+       resolve prints content that cannot be placed, whatever the summary
+       flags say. `--all`, `--branches`, `--tags`, `--remotes`, `--glob`,
+       `--stdin` and the like cannot be placed either;
+     - `stash show` with a patch flag, or with no summary flag when
+       `stash.showPatch` is true; `cat-file` except `-t`, `-s`, `-e`,
+       `--batch-check`, and an object name other than `REV:path` cannot be
+       placed;
+     - hunks shown interactively: `add -p` and `add -i`, `checkout -p`,
+       `restore -p`, `reset -p`, `stash -p` (and `stash push -p`), `commit
+       -p` and `commit --interactive`, short options clustered too (`-ap`);
+     - an alias: a subcommand that is not one of git's own is looked up
+       with `git config --get alias.<name>`. A shell alias (`!`), an alias
+       that does not split, or an alias of an alias is denied; otherwise the
+       expansion, split as git splits it, replaces the subcommand and is
+       judged with the rest of the arguments;
+     - git's global options `-C`, `-c`, `--config-env`, `--git-dir`,
+       `--work-tree`, `--namespace` and `--attr-source` consume their
+       argument. `--git-dir` and `--work-tree` make every content
+       unprovable. `-c` or `--config-env` with a key not known to be
+       harmless (an alias, a pager, an editor, `diff.external`, a textconv
+       or other driver, `stash.showPatch`, `log.*`, anything that can run a
+       command) and `--exec-path=` deny any subcommand. The known-harmless
+       keys are `color.*`, `user.*`, `advice.*` and similar, a pager set to
+       `cat`, empty or a boolean, and an editor set to `true`;
+       `--literal-pathspecs`, `--glob-pathspecs` and `--icase-pathspecs`
+       make every pathspec unprovable;
+     - environment assignments before git: any `GIT_` variable but the
+       author and committer identities, tracing and a few others, a
+       `GIT_PAGER` or `PAGER` other than `cat`, an editor other than `true`
+       and `LESSOPEN` deny any subcommand;
      - pathspecs avoid the roots when every root is excluded (`:!`, `:^`,
        `:(exclude)`), or when there is no glob and no positive pathspec
-       touches a root. Pathspecs are those after `--`; for `show` and
-       `cat-file`, `REV:path`, relative to the repository root; for `blame`,
-       the last argument.
+       touches a root. Pathspecs are those after `--` (or
+       `--pathspec-from-file`, which cannot be placed); for `show` and
+       `cat-file`, `REV:path`, relative to the repository root; for `blame`
+       and `annotate`, every positional argument before or after `--`, and
+       `--contents`, since git takes the file before or after the
+       revision; for `add -p` and `restore -p`, every positional argument.
   3. If the working directory is inside a protected root, or the command
      names a root as a whole word, the protected tree is scanned as for Grep.
   4. A recursive search (`grep`, `egrep` and `fgrep` with `-r` or `-R`;
@@ -517,8 +577,24 @@ Decisions by tool. Every tool not listed is allowed.
   `.claude/settings.json` or `.claude/settings.local.json` in the
   repository root or any directory below it, names compared without regard
   to case. Such a file can set `disableAllHooks`, which turns off the gate's
-  own user-level hook (threat model, layer 5). Every other write is allowed:
-  the gate does not otherwise judge writes.
+  own user-level hook (threat model, layer 5).
+
+  A write outside the repository is denied with `agent-settings` too when,
+  under any spelling (and with the symlinks of the deepest existing
+  ancestor resolved, for a path not yet there), it is one of the files that
+  control the gate:
+  - inside the pbipx approval store: `$PBIPX_CONFIG_DIR`, and
+    `<user config dir>/pbipx` in any case (layer 6; a forged record would
+    approve a weakened policy);
+  - a user-level Claude Code settings file: a file named `settings*.json`
+    (case ignored) directly in `$CLAUDE_CONFIG_DIR` or in `~/.claude`;
+  - inside Claude Code's managed settings directory (`/etc/claude-code`,
+    `/Library/Application Support/ClaudeCode` or
+    `C:\Program Files\ClaudeCode`), `managed-settings.json` and the
+    `managed-settings.d` drop-ins included.
+
+  The message says which of these the path is, and does not name it. Every
+  other write is allowed: the gate does not otherwise judge writes.
 
 A deny writes the Claude Code decision JSON (`permissionDecision: deny` and a
 reason) to stdout, writes the reason to stderr, and exits 2. An allow writes
@@ -542,14 +618,25 @@ passes 0 and 2 through and turns every other outcome of running the binary
 writes it:
 
 - POSIX `sh`, which Claude Code uses on Linux and macOS:
-  `'/path/to/pbipx' gate --agent claude-code; s=$?; [ "$s" -eq 0 ] && exit 0;
-  [ "$s" -eq 2 ] && exit 2; echo '...' >&2; exit 2`.
+  `set +e; '/path/to/pbipx' gate --agent claude-code; s=$?;
+  [ "$s" -eq 0 ] && exit 0; [ "$s" -eq 2 ] && exit 2; echo '...' >&2;
+  exit 2`. `set +e` comes first because errexit can be on before the first
+  line runs (`SHELLOPTS=errexit` in the environment, or a `BASH_ENV` script
+  when the shell is bash); under it, a binary exiting 1 would end the shell
+  with 1, which proceeds.
 - Windows: Claude Code runs hooks through Git Bash, or PowerShell when Git
   Bash is missing, and a command written for one is a parse error (exit 1,
   proceed) in the other. So the hook sets `"shell": "powershell"` and the
   command is PowerShell: `$s` starts at -1, the binary runs inside
   `try`/`catch`, only an exit code of 0 or 2 is passed through, and
   everything else writes a reason to stderr and exits 2.
+
+`pbipx init` registers the hook with `"timeout": 300` (seconds). Claude
+Code treats a hook that times out as a non-blocking error and lets the call
+proceed, so a search or shell call that scans a large protected tree must
+not reach Claude Code's default timeout. A hook this binary registered in
+an earlier command form is recognised by the binary's path and rewritten in
+place.
 
 ## `explain`
 
@@ -736,8 +823,9 @@ behavior (2026-10-29).
   checks Claude Code's settings. pbipx denies an agent's write to, or shell
   command naming, `.claude/settings.json` or `.claude/settings.local.json`
   in the repository with `agent-settings`, and `pbipx scan` reports a
-  committed one that sets `disableAllHooks` with `hooks-disabled`, because
-  such a file turns off the gate's user-level hook. (Decided 2026-10-29.)
+  committed one that sets `disableAllHooks`, or whose `env` sets a variable
+  that can defeat the hook, with `hooks-disabled`, because such a file
+  turns off the gate's user-level hook. (Decided 2026-10-29.)
 
 ### Baseline
 

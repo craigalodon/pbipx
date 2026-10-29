@@ -17,6 +17,14 @@ import "strings"
 // its shell explicitly (HookShell), and its command is written for that
 // shell.
 
+// HookTimeout is the timeout, in seconds, to configure on the hook. Claude
+// Code treats a hook that times out as a non-blocking error, and the call
+// proceeds, so the gate must never reach it: a search or shell call over a
+// protected root scans the tree first, which on a large repository or a
+// cold disk can outlast the default. A gate that hangs is still stopped,
+// but only after this long.
+const HookTimeout = 300
+
 // failedReason is the shell's deny reason when the gate did not decide.
 const failedReason = "pbipx: " + ReasonInternalError + ": the gate did not run or did not decide"
 
@@ -43,8 +51,13 @@ func HookShell(goos string) string {
 // posixCommand runs the binary as a simple command, so a missing or
 // unexecutable file is an exit status (127, 126), not a fatal shell error,
 // and the lines after it still run. stdin, the event, is inherited.
+//
+// It starts with `set +e`: errexit can be on before the first line runs
+// (SHELLOPTS=errexit in the environment, or a BASH_ENV script that sets
+// -e when the shell is bash), and under it a binary that exits 1 would end
+// the shell with 1, which proceeds, before the status is looked at.
 func posixCommand(binaryPath string) string {
-	return shQuote(binaryPath) + " gate --agent " + Agent + `; s=$?; ` +
+	return "set +e; " + shQuote(binaryPath) + " gate --agent " + Agent + `; s=$?; ` +
 		`[ "$s" -eq 0 ] && exit 0; [ "$s" -eq 2 ] && exit 2; ` +
 		`echo '` + failedReason + `' >&2; exit 2`
 }

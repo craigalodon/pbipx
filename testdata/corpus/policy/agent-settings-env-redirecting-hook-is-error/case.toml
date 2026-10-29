@@ -1,0 +1,7 @@
+description = "a committed .claude/settings.json whose env sets PBIPX_CONFIG_DIR is an error finding: it points the gate at another approval store"
+command     = "scan"
+args        = ["--all"]
+policy      = "tree"
+exit        = 3
+sentinels   = ["Doe, Jane", "example-approvals"]
+known       = "predecessor"

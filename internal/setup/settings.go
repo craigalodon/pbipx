@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -23,12 +24,16 @@ const gateArgs = " gate --agent claude-code"
 type Hook struct {
 	Command string
 	Shell   string // "" to leave the field out
+	// Timeout is the hook's timeout in seconds; 0 leaves the field out,
+	// and leaves an existing registration's timeout as it is.
+	Timeout int
 }
 
 type hookJSON struct {
 	Type    string `json:"type"`
 	Command string `json:"command"`
 	Shell   string `json:"shell,omitempty"`
+	Timeout int    `json:"timeout,omitempty"`
 }
 
 type entryJSON struct {
@@ -37,7 +42,20 @@ type entryJSON struct {
 }
 
 func (h Hook) entry() entryJSON {
-	return entryJSON{Matcher: HookMatcher, Hooks: []hookJSON{{Type: "command", Command: h.Command, Shell: h.Shell}}}
+	return entryJSON{Matcher: HookMatcher, Hooks: []hookJSON{{Type: "command", Command: h.Command, Shell: h.Shell, Timeout: h.Timeout}}}
+}
+
+// shellPrefix starts a POSIX gate hook command (claudecode.HookCommand).
+// Commands written before it was added lack it.
+const shellPrefix = "set +e; "
+
+// hookBinary is the part of a gate hook command that names the binary: the
+// text before gateArgs, without shellPrefix. Two commands with the same
+// hookBinary run the same binary, whichever version of the command form
+// wrote them.
+func hookBinary(command string) string {
+	before, _, _ := strings.Cut(command, gateArgs)
+	return strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(before), shellPrefix))
 }
 
 // ErrSettings is a settings file pbipx will not change: not a JSON object, or
@@ -56,6 +74,44 @@ func SettingsPath() (string, error) {
 		return "", err
 	}
 	return filepath.Join(home, ".claude", "settings.json"), nil
+}
+
+// UserSettingsDirs are the directories Claude Code may read user-level
+// settings from: $CLAUDE_CONFIG_DIR when it is set, made absolute, and
+// ~/.claude in any case, since a session started without the variable reads
+// it. A directory that cannot be found is left out.
+func UserSettingsDirs() []string {
+	var dirs []string
+	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
+		if a, err := filepath.Abs(dir); err == nil {
+			dirs = append(dirs, a)
+		}
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		dirs = append(dirs, filepath.Join(home, ".claude"))
+	}
+	return dirs
+}
+
+// IsUserSettingsName reports whether name is a file name Claude Code reads
+// user-level settings from, or one like it: settings*.json, compared without
+// regard to case.
+func IsUserSettingsName(name string) bool {
+	n := strings.ToLower(name)
+	return strings.HasPrefix(n, "settings") && strings.HasSuffix(n, ".json")
+}
+
+// ManagedSettingsDir is where Claude Code reads managed settings on the
+// system goos names (a GOOS value): managed-settings.json and the
+// managed-settings.d drop-in directory.
+func ManagedSettingsDir(goos string) string {
+	switch goos {
+	case "windows":
+		return `C:\Program Files\ClaudeCode`
+	case "darwin":
+		return "/Library/Application Support/ClaudeCode"
+	}
+	return "/etc/claude-code"
 }
 
 // Merge is the result of merging the hook into a settings file.
@@ -80,7 +136,7 @@ type Merge struct {
 // entry's index and the hook's index within it.
 type gateHook struct {
 	entry, hook int
-	same        bool // the command is h's: the same binary
+	same        bool // the command runs h's binary
 }
 
 // preEntry is one PreToolUse entry, split into its members so that it can
@@ -100,9 +156,10 @@ type preEntry struct {
 // not a pbipx gate hook, is kept, in its order. The result is indented with
 // two spaces.
 //
-// A pbipx gate hook is recognised by its command. One for the same command
-// as h is upgraded in place: its entry's matcher and its shell are set to
-// h's, and any further registrations of it are removed. When its entry
+// A pbipx gate hook is recognised by its command. One that runs the same
+// binary as h (hookBinary) is upgraded in place: its command, its entry's
+// matcher, its shell and, when h has one, its timeout are set to h's, and
+// any further registrations of it are removed. When its entry
 // holds hooks of other tools under another matcher, it is moved out into an
 // entry of its own right after, so that their matcher is not changed. A
 // gate hook for another binary is counted in Others and left alone, unless
@@ -148,7 +205,7 @@ func MergeHook(existing []byte, h Hook, replaceOthers bool) (Merge, error) {
 			if json.Unmarshal(hr, &x) != nil || !strings.Contains(x.Command, gateArgs) {
 				continue
 			}
-			same := x.Command == want.Command
+			same := hookBinary(x.Command) == hookBinary(want.Command)
 			switch {
 			case same:
 				found = append(found, gateHook{i, j, true})
@@ -321,15 +378,28 @@ func upToDate(e preEntry, i int, want hookJSON) bool {
 	if json.Unmarshal(e.hooks[i], &x) != nil {
 		return false
 	}
-	return e.matcher == HookMatcher && x.Type == want.Type && x.Command == want.Command && x.Shell == want.Shell
+	return e.matcher == HookMatcher && x.Type == want.Type && x.Command == want.Command && x.Shell == want.Shell &&
+		(want.Timeout == 0 || x.Timeout == want.Timeout)
 }
 
-// rewriteHook sets a hook's type, command and shell to want's, keeping its
-// other keys. An empty shell removes the key.
+// rewriteHook sets a hook's type, command and shell to want's, and its
+// timeout when want has one, keeping its other keys. An empty shell removes
+// the key.
 func rewriteHook(raw json.RawMessage, want hookJSON) (json.RawMessage, error) {
 	members, err := objectMembers(raw)
 	if err != nil {
 		return nil, err
+	}
+	if want.Timeout > 0 {
+		i, err := find(members, "timeout")
+		if err != nil {
+			return nil, err
+		}
+		v, err := marshal(want.Timeout)
+		if err != nil {
+			return nil, err
+		}
+		members = set(members, i, "timeout", v)
 	}
 	for _, kv := range [][2]string{{"type", want.Type}, {"command", want.Command}, {"shell", want.Shell}} {
 		i, err := find(members, kv[0])
@@ -365,8 +435,10 @@ func Snippet(h Hook) ([]byte, error) {
 // temporary file in the same directory, renamed over it. A symbolic link is
 // followed, so the file it names is replaced and the link kept. When the
 // file exists, a copy of it is kept first beside it, named
-// settings.json.pbipx-backup-<time>; the copy's path is returned. A new
-// file and its directory are readable by the user alone.
+// settings.json.pbipx-backup-<time>, the time to the nanosecond, with -<n>
+// added when that name is taken; the copy's path is returned. A backup is
+// created exclusively, so it never replaces an earlier one. A new file and
+// its directory are readable by the user alone.
 func WriteSettings(path string, data []byte, now time.Time) (backup string, err error) {
 	target := path
 	if resolved, rerr := filepath.EvalSymlinks(path); rerr == nil {
@@ -379,8 +451,7 @@ func WriteSettings(path string, data []byte, now time.Time) (backup string, err 
 		if info, serr := os.Stat(target); serr == nil {
 			mode = info.Mode().Perm()
 		}
-		backup = target + ".pbipx-backup-" + now.UTC().Format("20060102T150405Z")
-		if err := os.WriteFile(backup, old, 0o600); err != nil { //nolint:gosec // G703: beside the user's own settings file
+		if backup, err = writeBackup(target+".pbipx-backup-"+now.UTC().Format("20060102T150405.000000000Z"), old); err != nil {
 			return "", err
 		}
 	case errors.Is(rerr, fs.ErrNotExist):
@@ -391,6 +462,38 @@ func WriteSettings(path string, data []byte, now time.Time) (backup string, err 
 		return "", rerr
 	}
 	return backup, writeAtomic(target, data, mode)
+}
+
+// maxBackupTries bounds the names writeBackup tries.
+const maxBackupTries = 1000
+
+// writeBackup writes data to a new file named base, or base-<n> for the
+// first n from 1 whose name is free, and returns its path. It never
+// replaces a file.
+func writeBackup(base string, data []byte) (string, error) {
+	for n := 0; n < maxBackupTries; n++ {
+		name := base
+		if n > 0 {
+			name = fmt.Sprintf("%s-%d", base, n)
+		}
+		f, err := os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // G304: beside the user's own settings file
+		if errors.Is(err, fs.ErrExist) {
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		_, werr := f.Write(data)
+		if cerr := f.Close(); werr == nil {
+			werr = cerr
+		}
+		if werr != nil {
+			_ = os.Remove(name)
+			return "", werr
+		}
+		return name, nil
+	}
+	return "", errors.New("no free name for the settings backup")
 }
 
 // writeAtomic writes data to a temporary file beside path and renames it

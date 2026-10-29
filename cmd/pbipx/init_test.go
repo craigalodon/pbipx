@@ -146,6 +146,9 @@ func TestInitOneProject(t *testing.T) {
 	if got := registeredHooks(t, e.settings); len(got) != 1 || got[0] != want {
 		t.Errorf("hooks = %q, want [%q]", got, want)
 	}
+	if data, _ := os.ReadFile(e.settings); !strings.Contains(string(data), `"timeout": 300`) {
+		t.Errorf("the hook has no 300-second timeout")
+	}
 
 	// A second run changes nothing and keeps the policy.
 	before, _ := os.ReadFile(e.settings)
@@ -231,7 +234,7 @@ func TestInitKeepsSettings(t *testing.T) {
 	if err := json.Unmarshal(data, &s); err != nil || s["theme"] != "dark" {
 		t.Errorf("an unrelated key changed")
 	}
-	backup := e.settings + ".pbipx-backup-21000102T030405Z"
+	backup := e.settings + ".pbipx-backup-21000102T030405.000000000Z"
 	if got, err := os.ReadFile(backup); err != nil || string(got) != existing { //nolint:gosec // G304: a test's temporary file
 		t.Errorf("backup = %q, %v", got, err)
 	}
@@ -356,5 +359,71 @@ func TestInitNeedsARepository(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
 		t.Errorf("something was written")
+	}
+}
+
+// TestInitRefusesSymlinks checks that init writes nothing through a
+// .pbipx.toml or .gitignore that is a symbolic link, which could point
+// outside the repository.
+func TestInitRefusesSymlinks(t *testing.T) {
+	tests := []struct {
+		name, file string
+		args       []string
+	}{
+		{"policy with --force", policy.FileName, []string{"init", "--force"}},
+		{"gitignore with --gitignore", ".gitignore", []string{"init", "--gitignore"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newInitRepo(t, "pbip/Example.Report/definition.pbir")
+			target := filepath.Join(filepath.Dir(e.root), "outside.txt")
+			writeFile(t, filepath.Dir(target), filepath.Base(target), "outside\n")
+			if err := os.Symlink(target, filepath.Join(e.root, tt.file)); err != nil {
+				t.Skip("symlinks are not available")
+			}
+			o := runIn(t, "", tt.args...)
+			if o.code != finding.ExitUsage || !strings.Contains(o.stderr, "symbolic link") {
+				t.Fatalf("exit = %d, stderr %q", o.code, o.stderr)
+			}
+			if got, _ := os.ReadFile(target); string(got) != "outside\n" { //nolint:gosec // G304: a test's temporary file
+				t.Errorf("the link's target was written: %q", got)
+			}
+			if _, err := os.Stat(e.settings); err == nil {
+				t.Errorf("the settings were written")
+			}
+		})
+	}
+
+	t.Run("a dangling link", func(t *testing.T) {
+		e := newInitRepo(t, "pbip/Example.Report/definition.pbir")
+		target := filepath.Join(filepath.Dir(e.root), "absent.toml")
+		if err := os.Symlink(target, filepath.Join(e.root, policy.FileName)); err != nil {
+			t.Skip("symlinks are not available")
+		}
+		if o := runIn(t, "", "init", "--force"); o.code != finding.ExitUsage {
+			t.Fatalf("exit = %d, stderr %q", o.code, o.stderr)
+		}
+		if _, err := os.Lstat(target); err == nil {
+			t.Errorf("the link's target was created")
+		}
+	})
+}
+
+// TestInitRefusesSettingsLinkedIntoRepository checks the settings path with
+// symlinks resolved: CLAUDE_CONFIG_DIR outside the repository, but a link
+// to a directory inside it.
+func TestInitRefusesSettingsLinkedIntoRepository(t *testing.T) {
+	e := newInitRepo(t, "pbip/Example.Report/definition.pbir", ".claude/")
+	link := filepath.Join(filepath.Dir(e.root), "linked-config")
+	if err := os.Symlink(filepath.Join(e.root, ".claude"), link); err != nil {
+		t.Skip("symlinks are not available")
+	}
+	t.Setenv("CLAUDE_CONFIG_DIR", link)
+	o := runIn(t, "", "init")
+	if o.code != finding.ExitUsage || !strings.Contains(o.stderr, "inside the repository") {
+		t.Fatalf("exit = %d, stderr %q", o.code, o.stderr)
+	}
+	if _, err := os.Stat(filepath.Join(e.root, ".claude", "settings.json")); err == nil {
+		t.Errorf("settings were written into the repository")
 	}
 }
