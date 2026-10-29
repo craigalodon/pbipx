@@ -75,6 +75,33 @@ Pre-alpha: releases are for trying it out, not for relying on it.
    changed by the agent it is meant to check
    ([threat model](docs/design/threat-model.md), layer 4).
 
+## Getting started
+
+1. Install pbipx as above.
+2. In the repository that holds your Power BI projects, run `pbipx init`. It
+   writes a commented starting policy, `.pbipx.toml`, that protects the
+   directories holding your `*.Report` and `*.SemanticModel` folders, and
+   registers the gate as a Claude Code hook in your user-level settings
+   (`~/.claude/settings.json`, or `$CLAUDE_CONFIG_DIR`), where a project
+   cannot remove it. `--dry-run` shows what it would do; `--managed` prints
+   the hook for an administrator's managed settings instead; `--gitignore`
+   adds `.pbi/`, `*.pbix` and `*.abf` to `.gitignore`.
+3. Review the policy, above all its column lists: they are a generic start.
+4. Approve it at a terminal with `pbipx policy approve`
+   ([ADR-0006](docs/adr/0006-policy-integrity.md)), and again after every
+   change.
+5. Add the commit hooks to `.pre-commit-config.yaml` and run
+   `pre-commit install --hook-type pre-commit --hook-type commit-msg`. They
+   run the `pbipx` on your `PATH`:
+
+   ```yaml
+   - repo: https://github.com/craigalodon/pbipx
+     rev: <a release tag>
+     hooks:
+       - id: pbipx-scan
+       - id: pbipx-commit-msg
+   ```
+
 ## Principles
 
 The rules everything else follows. The reasoning is in
