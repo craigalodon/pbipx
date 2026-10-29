@@ -1,0 +1,6 @@
+description = "with --show-shape a blocked value is printed only as its silhouette, never as text"
+command     = "scan"
+args        = ["--all", "--show-shape"]
+policy      = "default"
+exit        = 1
+sentinels   = ["Doe, Jane"]

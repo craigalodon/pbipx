@@ -1,0 +1,6 @@
+description = "a typed visual title with no shape stays clean: a title has no columns"
+command     = "scan"
+args        = ["--all"]
+policy      = "default"
+exit        = 0
+sentinels   = ["Enrollment by term"]
