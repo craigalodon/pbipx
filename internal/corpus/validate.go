@@ -80,6 +80,12 @@ func (v *validator) run() {
 		if !envName.MatchString(k) {
 			v.addf(caseFile, "env has a key that is not an environment variable name")
 		}
+		if k == configDirEnv {
+			v.addf(caseFile, "env sets %s, which the runner owns", configDirEnv)
+		}
+	}
+	if s.Approved != nil && s.Command != commandGate {
+		v.addf(caseFile, "approved is set, but only a gate case's policy is approved")
 	}
 	if s.Command != commandGate && s.HasResult() {
 		for i, a := range s.Args {
@@ -199,8 +205,8 @@ func (v *validator) checkBaseline() {
 	case !uses && s.Fingerprint != nil:
 		v.addf(caseFile, "[fingerprint] is set, but no argument uses %s", fingerprintPlaceholder)
 	}
-	if v.cs.HasAfter && !s.NeedsResolve() {
-		v.addf(afterDir, "is applied only in a case with [[baseline]] or [fingerprint]")
+	if v.cs.HasAfter && !s.NeedsResolve() && !s.Approves() {
+		v.addf(afterDir, "is applied only in a case with [[baseline]] or [fingerprint], or a gate case whose policy is approved")
 	}
 }
 

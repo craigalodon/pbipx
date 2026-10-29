@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/craigalodon/pbipx/internal/approval"
 	"github.com/craigalodon/pbipx/internal/corpus"
 	"github.com/craigalodon/pbipx/internal/gate"
 )
@@ -51,7 +52,7 @@ func eventFrom(stdin []byte) (gate.Event, bool) {
 }
 
 // TestCorpusGateCases drives every case under testdata/corpus/gate/ through
-// Decide and checks the decision and its reason class, and that no
+// Decide, with the approval check on the case's own store, and checks the decision and its reason class, and that no
 // sentinel appears in the message.
 func TestCorpusGateCases(t *testing.T) {
 	isolateGit(t)
@@ -69,8 +70,8 @@ func TestCorpusGateCases(t *testing.T) {
 			if cs.Expected == nil {
 				t.Fatal("the case has no expected.json")
 			}
-			root := tempRoot(t)
-			if _, err := c.Prepare(cs, root, ""); err != nil {
+			root, config := tempRoot(t), t.TempDir()
+			if _, err := c.Prepare(cs, root, config, ""); err != nil {
 				t.Fatal(err)
 			}
 			stdin := bytes.ReplaceAll(cs.Stdin, []byte("{root}"), []byte(root))
@@ -83,7 +84,8 @@ func TestCorpusGateCases(t *testing.T) {
 				}
 				return
 			}
-			d := gate.Decide(ev, gate.Options{})
+			store := &approval.Store{Dir: config}
+			d := gate.Decide(ev, gate.Options{CheckPolicy: gate.RequireApproval(store)})
 			decision := "deny"
 			if d.Allow {
 				decision = "allow"

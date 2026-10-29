@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +14,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/craigalodon/pbipx/internal/approval"
 )
 
 // The fixed synthetic identity and date of a case's commit. The date is
@@ -40,23 +43,36 @@ const commandTimeout = 2 * time.Minute
 // redactionEnv is unset for every command unless a case's env sets it.
 var redactionEnv = []string{"CI", "PRE_COMMIT", "PBIPX_NO_REVEAL"}
 
+// configDirEnv is the variable that points pbipx at its configuration
+// directory, where policy approvals are kept (ADR-0006). The runner sets it
+// for every command to the case's own directory.
+const configDirEnv = approval.EnvConfigDir
+
 // Prepared is a case's root, ready to run in.
 type Prepared struct {
 	Root string
+	// ConfigDir is the case's private configuration directory, outside the
+	// root: PBIPX_CONFIG_DIR for every command the case runs.
+	ConfigDir string
 	// Fingerprint is the resolved fingerprint of the case's [fingerprint],
 	// empty when it has none.
 	Fingerprint string
 }
 
 // Prepare builds a case's root (corpus.md, "Running a case", steps 1 to 3,
-// and "Baseline cases"): it copies tree/ (a case without one starts from an
-// empty root) and writes the policy. A case with [[baseline]] or
-// [fingerprint] then has its findings resolved by a scan with binary, its
-// baseline written and after/tree/ copied over the root. Last, unless
-// git = false, the root is committed. root must be an empty directory;
-// binary is needed only to resolve findings.
-func (c *Corpus) Prepare(cs *Case, root, binary string) (*Prepared, error) {
-	p := &Prepared{Root: root}
+// "Baseline cases" and "Policy approval"): it copies tree/ (a case without
+// one starts from an empty root) and writes the policy. A gate case then has
+// its policy approved in configDir, unless approved = false. A case with
+// [[baseline]] or [fingerprint] has its findings resolved by a scan with
+// binary and its baseline written. Then after/tree/ is copied over the
+// root, and last, unless git = false, the root is committed. root and
+// configDir must be empty directories, configDir outside root; binary is
+// needed only to resolve findings.
+func (c *Corpus) Prepare(cs *Case, root, configDir, binary string) (*Prepared, error) {
+	if configDir == "" || !filepath.IsAbs(configDir) {
+		return nil, fmt.Errorf("%s: the configuration directory must be an absolute path", cs.ID())
+	}
+	p := &Prepared{Root: root, ConfigDir: configDir}
 	if cs.HasTree {
 		if err := copyTree(cs.TreeDir(), root); err != nil {
 			return nil, fmt.Errorf("%s: copying tree/: %w", cs.ID(), err)
@@ -71,14 +87,19 @@ func (c *Corpus) Prepare(cs *Case, root, binary string) (*Prepared, error) {
 			return nil, fmt.Errorf("%s: writing the policy: %w", cs.ID(), err)
 		}
 	}
+	if cs.Spec.Approves() {
+		if err := Approve(root, configDir); err != nil {
+			return nil, fmt.Errorf("%s: %w", cs.ID(), err)
+		}
+	}
 	if cs.Spec.NeedsResolve() {
 		if err := c.resolve(cs, binary, p); err != nil {
 			return nil, fmt.Errorf("%s: %w", cs.ID(), err)
 		}
-		if cs.HasAfter {
-			if err := copyTree(cs.AfterTreeDir(), root); err != nil {
-				return nil, fmt.Errorf("%s: copying after/tree/: %w", cs.ID(), err)
-			}
+	}
+	if cs.HasAfter {
+		if err := copyTree(cs.AfterTreeDir(), root); err != nil {
+			return nil, fmt.Errorf("%s: copying after/tree/: %w", cs.ID(), err)
 		}
 	}
 	if cs.Spec.UsesGit() {
@@ -88,6 +109,28 @@ func (c *Corpus) Prepare(cs *Case, root, binary string) (*Prepared, error) {
 	}
 	return p, nil
 }
+
+// Approve records the policy at root/.pbipx.toml as approved for root in
+// the store at configDir, as `pbipx policy approve` would, with the case's
+// fixed date. A root without a policy file has nothing to approve: the gate
+// denies it with policy-error first.
+func Approve(root, configDir string) error {
+	digest, err := approval.DigestFile(filepath.Join(root, policyFile))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("approving the policy: %w", err)
+	}
+	store := &approval.Store{Dir: configDir}
+	if err := store.Approve(root, digest, time.Unix(caseTime, 0)); err != nil {
+		return fmt.Errorf("approving the policy: %w", err)
+	}
+	return nil
+}
+
+// caseTime is GitDate as a Unix time: the approval date of every case.
+const caseTime = 4102444800
 
 // GitSetup makes root a git repository and commits every file in it that git
 // would add (a file the tree's own .gitignore ignores stays out), except
@@ -147,16 +190,18 @@ func GitEnv(base []string) []string {
 }
 
 // CommandEnv is the environment the binary runs in: GitEnv(base) without
-// CI, PRE_COMMIT and PBIPX_NO_REVEAL, then the case's env.
-func CommandEnv(base []string, spec *Spec) []string {
+// CI, PRE_COMMIT and PBIPX_NO_REVEAL, with PBIPX_CONFIG_DIR set to
+// configDir, then the case's env.
+func CommandEnv(base []string, spec *Spec, configDir string) []string {
 	env := slices.DeleteFunc(GitEnv(base), func(kv string) bool {
 		name, _, _ := strings.Cut(kv, "=")
-		if slices.Contains(redactionEnv, name) {
+		if slices.Contains(redactionEnv, name) || name == configDirEnv {
 			return true
 		}
 		_, set := spec.Env[name]
 		return set
 	})
+	env = append(env, configDirEnv+"="+configDir)
 	for _, k := range sortedKeys(spec.Env) {
 		env = append(env, k+"="+spec.Env[k])
 	}
@@ -191,7 +236,7 @@ func Execute(cs *Case, binary string, p *Prepared) (Outcome, error) {
 	if cs.HasStdin {
 		stdin = bytes.ReplaceAll(cs.Stdin, []byte(rootPlaceholder), []byte(p.Root))
 	}
-	out, err := runBinary(binary, p.Root, CommandArgs(cs, p), CommandEnv(os.Environ(), &cs.Spec), stdin)
+	out, err := runBinary(binary, p.Root, CommandArgs(cs, p), CommandEnv(os.Environ(), &cs.Spec, p.ConfigDir), stdin)
 	if err != nil {
 		return out, fmt.Errorf("%s: %w", cs.ID(), err)
 	}

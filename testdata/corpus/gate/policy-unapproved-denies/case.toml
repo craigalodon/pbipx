@@ -1,0 +1,8 @@
+description = "With no approval of the policy on this machine, the gate denies even a Read outside the roots (ADR-0006). Plants no value"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []
+approved    = false
+known       = "predecessor"

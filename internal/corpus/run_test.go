@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/craigalodon/pbipx/internal/approval"
 )
 
 func needGit(t *testing.T) {
@@ -33,7 +35,7 @@ func TestPrepare(t *testing.T) {
 	needGit(t)
 	c := openTest(t, testCorpusDir)
 	root := t.TempDir()
-	if _, err := c.Prepare(findCase(t, c, staging), root, ""); err != nil {
+	if _, err := c.Prepare(findCase(t, c, staging), root, t.TempDir(), ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -65,7 +67,7 @@ func TestPrepare(t *testing.T) {
 func TestPrepareWithoutGit(t *testing.T) {
 	c := openTest(t, testCorpusDir)
 	root := t.TempDir()
-	if _, err := c.Prepare(findCase(t, c, usage), root, ""); err != nil {
+	if _, err := c.Prepare(findCase(t, c, usage), root, t.TempDir(), ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(root, ".git")); !os.IsNotExist(err) {
@@ -76,10 +78,82 @@ func TestPrepareWithoutGit(t *testing.T) {
 	}
 }
 
+// TestPrepareApproves checks that a gate case runs against an approved
+// policy unless it says approved = false, that after/tree/ is applied after
+// the approval, and that no other case is approved.
+func TestPrepareApproves(t *testing.T) {
+	needGit(t)
+	tests := []struct {
+		name   string
+		id     string
+		mutate func(t *testing.T, dir string)
+		want   approval.Status
+	}{
+		{"gate case", gate, nil, approval.Approved},
+		{"approved = false", gate, appendTo("case.toml", "approved = false\n"), approval.Unapproved},
+		{"policy changed by after/tree/", gate, func(t *testing.T, dir string) {
+			data, err := os.ReadFile(filepath.Join(testCorpusDir, policiesDir, "minimal.toml"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			write("case.toml", strings.Replace(string(readCase(t, dir)), `"minimal"`, `"tree"`, 1))(t, dir)
+			write("tree/"+policyFile, string(data))(t, dir)
+			write("after/tree/"+policyFile, string(data)+"# edited\n")(t, dir)
+		}, approval.Changed},
+		{"not a gate case", slicer, nil, approval.Unapproved},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := copyTestCorpus(t)
+			if tt.mutate != nil {
+				tt.mutate(t, filepath.Join(dir, filepath.FromSlash(tt.id)))
+			}
+			c := openTest(t, dir)
+			cs := findCase(t, c, tt.id)
+			if errs := c.Validate(cs); len(errs) > 0 {
+				t.Fatal(errs)
+			}
+			root, config := t.TempDir(), t.TempDir()
+			p, err := c.Prepare(cs, root, config, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if p.ConfigDir != config {
+				t.Error("Prepared.ConfigDir is not the configuration directory")
+			}
+			st, err := (&approval.Store{Dir: config}).Status(root, filepath.Join(root, policyFile))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if st != tt.want {
+				t.Errorf("status = %s, want %s", st, tt.want)
+			}
+		})
+	}
+}
+
+func readCase(t *testing.T, dir string) []byte {
+	t.Helper()
+	data, err := readIn(dir, caseFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+func TestPrepareNeedsAConfigDir(t *testing.T) {
+	c := openTest(t, testCorpusDir)
+	for _, config := range []string{"", "relative"} {
+		if _, err := c.Prepare(findCase(t, c, gate), t.TempDir(), config, ""); err == nil {
+			t.Errorf("Prepare accepted the configuration directory %q", config)
+		}
+	}
+}
+
 func TestPrepareKeepsReportBytes(t *testing.T) {
 	c := openTest(t, testCorpusDir)
 	root := t.TempDir()
-	if _, err := c.Prepare(findCase(t, c, slicer), root, ""); err != nil {
+	if _, err := c.Prepare(findCase(t, c, slicer), root, t.TempDir(), ""); err != nil {
 		t.Fatal(err)
 	}
 	rel := filepath.FromSlash(strings.TrimPrefix(visual, "tree/"))
@@ -108,8 +182,11 @@ func TestGitEnvIgnoresTheCallersRepository(t *testing.T) {
 }
 
 func TestCommandEnv(t *testing.T) {
-	base := []string{"PATH=/bin", "CI=true", "PRE_COMMIT=1", "PBIPX_NO_REVEAL=1", "HOME=/home/example"}
-	env := CommandEnv(base, &Spec{})
+	base := []string{"PATH=/bin", "CI=true", "PRE_COMMIT=1", "PBIPX_NO_REVEAL=1", "HOME=/home/example", "PBIPX_CONFIG_DIR=/home/example/.config/pbipx"}
+	env := CommandEnv(base, &Spec{}, "/cfg")
+	if !slices.Contains(env, "PBIPX_CONFIG_DIR=/cfg") || slices.Contains(env, "PBIPX_CONFIG_DIR=/home/example/.config/pbipx") {
+		t.Error("PBIPX_CONFIG_DIR is not the case's own directory")
+	}
 	for _, name := range redactionEnv {
 		for _, kv := range env {
 			if strings.HasPrefix(kv, name+"=") {
@@ -117,7 +194,7 @@ func TestCommandEnv(t *testing.T) {
 			}
 		}
 	}
-	env = CommandEnv(base, &Spec{Env: map[string]string{"CI": "1", "HOME": "/tmp/h"}})
+	env = CommandEnv(base, &Spec{Env: map[string]string{"CI": "1", "HOME": "/tmp/h"}}, "/cfg")
 	if !slices.Contains(env, "CI=1") || slices.Contains(env, "CI=true") {
 		t.Error("the case's CI does not replace the caller's")
 	}

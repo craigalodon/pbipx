@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/craigalodon/pbipx/internal/approval"
 	"github.com/craigalodon/pbipx/internal/baseline"
 	"github.com/craigalodon/pbipx/internal/corpus"
 	"github.com/craigalodon/pbipx/internal/finding"
@@ -71,15 +72,20 @@ func isolate(t *testing.T) {
 	}
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
-	prevScanners, prevTerminal, prevNow := scanners, stdoutIsTerminal, now
+	// Approvals go to a store of the test's own, never the user's.
+	t.Setenv(approval.EnvConfigDir, t.TempDir())
+	prevScanners, prevTerminal, prevStdin, prevNow := scanners, stdoutIsTerminal, stdinIsTerminal, now
 	scanners = func() map[policy.Kind]judge.Scanner {
 		m := scan.Scanners()
 		m[policy.Report] = reportScanner
 		return m
 	}
 	stdoutIsTerminal = func(io.Writer) bool { return false }
+	stdinIsTerminal = func(io.Reader) bool { return false }
 	now = func() time.Time { return time.Date(2100, 6, 15, 12, 0, 0, 0, time.UTC) }
-	t.Cleanup(func() { scanners, stdoutIsTerminal, now = prevScanners, prevTerminal, prevNow })
+	t.Cleanup(func() {
+		scanners, stdoutIsTerminal, stdinIsTerminal, now = prevScanners, prevTerminal, prevStdin, prevNow
+	})
 }
 
 // newRepo makes a committed repository in a directory named dirName, with

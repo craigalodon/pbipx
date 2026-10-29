@@ -90,7 +90,7 @@ func newRootCmd() *cobra.Command {
 		Short: "tools for agentic Power BI project development",
 		Long: `pbipx: tools for agentic Power BI project development
 
-Commands: init, scan, scan-text, baseline, explain, gate.
+Commands: init, scan, scan-text, baseline, explain, gate, policy.
 Planned: stage, collect, perf. See docs/ROADMAP.md.`,
 		Version:            version,
 		SilenceErrors:      true,
@@ -105,7 +105,7 @@ Planned: stage, collect, perf. See docs/ROADMAP.md.`,
 	root.SetVersionTemplate("pbipx {{.Version}}\n")
 	root.SetFlagErrorFunc(func(*cobra.Command, error) error { return errUsage })
 	root.SetHelpCommand(newHelpCmd())
-	root.AddCommand(newVersionCmd(), newScanCmd(), newScanTextCmd(), newBaselineCmd(), newExplainCmd(), newGateCmd(), newInitCmd())
+	root.AddCommand(newVersionCmd(), newScanCmd(), newScanTextCmd(), newBaselineCmd(), newExplainCmd(), newGateCmd(), newInitCmd(), newPolicyCmd())
 	return root
 }
 

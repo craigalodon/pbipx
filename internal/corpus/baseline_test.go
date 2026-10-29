@@ -193,7 +193,7 @@ func TestPrepareResolvesBaseline(t *testing.T) {
 	c := openTest(t, testCorpusDir)
 	cs := findCase(t, c, accepted)
 	root := t.TempDir()
-	p, err := c.Prepare(cs, root, bin)
+	p, err := c.Prepare(cs, root, t.TempDir(), bin)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +239,7 @@ func TestPrepareResolvesFingerprint(t *testing.T) {
 	bin := fakeScanner(t)
 	c := openTest(t, testCorpusDir)
 	cs := findCase(t, c, record)
-	p, err := c.Prepare(cs, t.TempDir(), bin)
+	p, err := c.Prepare(cs, t.TempDir(), t.TempDir(), bin)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,7 +258,7 @@ func TestPrepareResolveFailsWithoutAMatch(t *testing.T) {
 	dir := copyTestCorpus(t)
 	replace("case.toml", `["warn-column"]`, `["warn-column", "date-shape"]`)(t, filepath.Join(dir, filepath.FromSlash(record)))
 	c := openTest(t, dir)
-	_, err := c.Prepare(findCase(t, c, record), t.TempDir(), bin)
+	_, err := c.Prepare(findCase(t, c, record), t.TempDir(), t.TempDir(), bin)
 	if err == nil || !strings.Contains(err.Error(), "matches 0 findings") {
 		t.Errorf("err = %v, want a failed match", err)
 	}

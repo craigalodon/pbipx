@@ -419,6 +419,37 @@ The event is JSON on stdin. Every failure denies:
   broken policy denies every call, not only calls near a protected root;
 - any other error.
 
+**Divergence (policy integrity).** In pbipx, the first check after the
+policy loads, before the baseline or the tool is looked at, is its approval
+([ADR-0006](../adr/0006-policy-integrity.md)). The SHA-256 digest of
+`.pbipx.toml`'s exact bytes must equal the one a person recorded with
+`pbipx policy approve` for this repository on this machine. With no approval,
+or a policy changed since (a comment or whitespace edit included), every call
+is denied with `policy-unapproved`. An approval store that cannot be found
+or read denies with `internal-error`. A policy that fails to load still
+denies with `policy-error`, since that check runs first. The predecessor has
+no integrity check; the corpus cases for it are marked
+`known = "predecessor"`.
+
+`pbipx policy approve` is refused with a usage error (exit 4) unless stdin
+and stdout are terminals and none of `CI`, `PRE_COMMIT` and
+`PBIPX_NO_REVEAL` is set (set but empty counts). It loads the policy first
+(a policy error exits 3 and approves nothing), shows `.pbipx.toml` and its
+digest, and records the approval only when `approve` is typed in full;
+anything else exits 4. `pbipx policy status` prints `approved`,
+`unapproved`, `changed` or `missing` (no policy file), and exits 0 only
+when approved, 3 otherwise. Neither prints policy content.
+
+The approval is kept outside the repository, in
+`${PBIPX_CONFIG_DIR:-<user config dir>/pbipx}/approved/<key>`. The key is
+the hex SHA-256 of the repository root's absolute, cleaned,
+symlink-resolved path, so a second clone or a move needs its own approval.
+The record is TOML holding `version = 1`, `digest = "sha256:<hex>"` and
+`approved` (the UTC time), written atomically (a temporary file renamed
+into place) with mode 0600 in directories created 0700. A relative
+`PBIPX_CONFIG_DIR` is refused: resolved against the working directory, it
+could point into the repository. `scan` does not check approval.
+
 Decisions by tool. Every tool not listed is allowed.
 
 - **Read** of `file_path`: allowed if it is empty, outside the repository, a
@@ -470,8 +501,8 @@ nothing and exits 0. The reason names the file, the column and the reasons,
 and never a value.
 
 Gate reason classes: `finding`, `unvettable`, `scan-error`,
-`local-state`, `git-content`, `policy-error`, `event-error`,
-`not-a-repository`, `internal-error`.
+`local-state`, `git-content`, `policy-error`, `policy-unapproved` (pbipx
+only), `event-error`, `not-a-repository`, `internal-error`.
 
 Glob is not gated: it prints file names, and names are schema (principle 1).
 
@@ -663,7 +694,9 @@ behavior (2026-10-29).
 ### Gate
 
 - The repository and the policy are checked before the tool is looked at,
-  so `not-a-repository` and `policy-error` deny every tool.
+  so `not-a-repository` and `policy-error` deny every tool. In pbipx so does
+  `policy-unapproved`, checked right after the policy loads (see "The gate
+  (Claude Code)", divergence on policy integrity).
 - When a scan finds both a block and an error, the gate reports `finding`.
   (A scan's exit code reports the error: 3.)
 - A shell command that reads local state (`cat .pbi/localSettings.json`) is
