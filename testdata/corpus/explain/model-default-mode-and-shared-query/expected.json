@@ -1,0 +1,59 @@
+{
+  "files": [
+    {
+      "path": "pbip/School.SemanticModel/definition/expressions.tmdl",
+      "kind": "model",
+      "expressions": [
+        {
+          "name": "SharedSource",
+          "kind": "query"
+        }
+      ],
+      "literals": {
+        "tmdl-m": 2
+      }
+    },
+    {
+      "path": "pbip/School.SemanticModel/definition/model.tmdl",
+      "kind": "model",
+      "model": {
+        "default_mode": "directQuery"
+      },
+      "literals": {}
+    },
+    {
+      "path": "pbip/School.SemanticModel/definition/tables/student.tmdl",
+      "kind": "model",
+      "tables": [
+        {
+          "name": "student",
+          "columns": [
+            {
+              "name": "student_id",
+              "type": "string",
+              "calculated": false
+            }
+          ],
+          "measures": [],
+          "partitions": [
+            {
+              "name": "student",
+              "source": "m",
+              "mode": "directQuery",
+              "connectors": [
+                "Sql.Database"
+              ],
+              "reads": [
+                "school.dbo.student"
+              ],
+              "native_sql_reads": []
+            }
+          ]
+        }
+      ],
+      "literals": {
+        "tmdl-m": 2
+      }
+    }
+  ]
+}

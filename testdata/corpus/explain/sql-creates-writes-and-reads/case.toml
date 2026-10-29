@@ -1,0 +1,6 @@
+description = "a SQL file is described by the relations it creates, writes and reads, CTEs and unqualified reads apart, and its literal count"
+command     = "explain"
+args        = ["sql"]
+policy      = "default"
+exit        = 0
+sentinels   = ["Doe, Jane"]

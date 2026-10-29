@@ -1,0 +1,6 @@
+description = "a model file that does not parse is an entry with its error reason and nothing else, and the command exits 3"
+command     = "explain"
+args        = ["pbip"]
+policy      = "default"
+exit        = 3
+sentinels   = ["Doe, Jane"]

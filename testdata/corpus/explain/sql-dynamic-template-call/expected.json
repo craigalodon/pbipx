@@ -1,0 +1,17 @@
+{
+  "files": [
+    {
+      "path": "sql/models/flex.sql",
+      "kind": "sql",
+      "creates": [],
+      "writes": [],
+      "reads": [
+        "<dynamic>"
+      ],
+      "reads_unqualified": [],
+      "literals": {
+        "sql": 2
+      }
+    }
+  ]
+}

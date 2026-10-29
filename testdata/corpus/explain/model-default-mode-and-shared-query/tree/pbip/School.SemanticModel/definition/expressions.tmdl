@@ -1,0 +1,6 @@
+expression SharedSource =
+		let
+			Source = Sql.Database("contoso.example.cloud", "school")
+		in
+			Source
+	lineageTag: 00000000-0000-0000-0000-000000000030

@@ -1,0 +1,6 @@
+description = "a path that does not exist is a usage error named by position, and the argument is never echoed"
+command     = "explain"
+args        = ["Doe, Jane"]
+policy      = "default"
+exit        = 4
+sentinels   = ["Doe, Jane"]

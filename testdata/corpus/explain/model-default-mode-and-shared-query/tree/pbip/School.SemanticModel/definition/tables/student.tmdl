@@ -1,0 +1,14 @@
+table student
+
+	column student_id
+		dataType: string
+		summarizeBy: none
+		sourceColumn: student_id
+
+	partition student = m
+		source =
+				let
+					Source = SharedSource,
+					student = Source{[Schema = "dbo", Item = "student"]}[Data]
+				in
+					student

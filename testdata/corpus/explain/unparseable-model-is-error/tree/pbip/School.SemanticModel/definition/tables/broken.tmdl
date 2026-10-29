@@ -1,0 +1,4 @@
+table broken
+
+  column 'Doe, Jane'
+		dataType: string

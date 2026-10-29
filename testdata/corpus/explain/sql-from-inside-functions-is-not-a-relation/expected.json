@@ -1,0 +1,17 @@
+{
+  "files": [
+    {
+      "path": "sql/marts/terms.sql",
+      "kind": "sql",
+      "creates": [],
+      "writes": [],
+      "reads": [
+        "warehouse.dbo.enrollment"
+      ],
+      "reads_unqualified": [],
+      "literals": {
+        "sql": 4
+      }
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+description = "the model's default mode is described and inherited by a partition without one, which reads through a query expression"
+command     = "explain"
+args        = ["pbip"]
+policy      = "default"
+exit        = 0
+sentinels   = ["contoso.example.cloud"]

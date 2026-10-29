@@ -1,0 +1,19 @@
+{
+  "files": [
+    {
+      "path": "pbip/School.SemanticModel/definition/relationships.tmdl",
+      "kind": "model",
+      "relationships": [
+        {
+          "from": "enrollment.student_id",
+          "to": "student.student_id"
+        },
+        {
+          "from": "enrollment.course code",
+          "to": "course catalog.course code"
+        }
+      ],
+      "literals": {}
+    }
+  ]
+}
