@@ -1,0 +1,4 @@
+table student
+
+	measure 'Selected Rows' = IF(COUNTROWS(student) > 9900417, 1, 0)
+		formatString: 0

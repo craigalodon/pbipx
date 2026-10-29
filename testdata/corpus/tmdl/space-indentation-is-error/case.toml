@@ -1,0 +1,6 @@
+description = "a line indented with spaces is a parse error; plants no value"
+command     = "scan"
+args        = ["--all"]
+policy      = "default"
+exit        = 3
+sentinels   = []

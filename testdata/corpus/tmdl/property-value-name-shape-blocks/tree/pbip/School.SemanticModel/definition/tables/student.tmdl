@@ -1,0 +1,5 @@
+table student
+
+	measure 'Active Rows' = COUNTROWS(student)
+		formatString: 0
+		displayFolder: Roe, Richard

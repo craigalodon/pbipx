@@ -1,0 +1,16 @@
+{
+  "findings": [
+    {
+      "path": "pbip/School.SemanticModel/definition/roles/advisor_self.tmdl",
+      "context": "tmdl-dax",
+      "column": "student.email",
+      "tier": "block",
+      "reasons": [
+        "block-column",
+        "email-shape"
+      ]
+    }
+  ],
+  "accepted": 0,
+  "suppressed": 0
+}

@@ -1,0 +1,9 @@
+table contact_sample
+
+	partition contact_sample = m
+		mode: import
+		source =
+				let
+					Source = Table.FromRows(Json.Document(Binary.Decompress(Binary.FromText("i45W%%not!base64", BinaryEncoding.Base64), Compression.Deflate)), let _t = ((type nullable text) meta [Serialized.Text = true]) in type table [full_name = _t])
+				in
+					Source

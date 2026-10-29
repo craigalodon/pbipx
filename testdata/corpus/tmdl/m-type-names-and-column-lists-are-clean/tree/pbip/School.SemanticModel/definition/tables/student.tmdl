@@ -1,0 +1,11 @@
+table student
+
+	partition student = m
+		mode: import
+		source =
+				let
+					Source = Sql.Database("contoso.example.cloud", "school"),
+					student = Source{[Schema = "enrollment", Item = "student"]}[Data],
+					#"Changed Type" = Table.TransformColumnTypes(student, {{"full_name", type text}, {"student_id", Int64.Type}, {"date_of_birth", type date}})
+				in
+					#"Changed Type"

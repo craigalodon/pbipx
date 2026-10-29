@@ -1,0 +1,6 @@
+description = "a line more than one level deeper than its parent, outside an expression, is a parse error; plants no value"
+command     = "scan"
+args        = ["--all"]
+policy      = "default"
+exit        = 3
+sentinels   = []

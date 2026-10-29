@@ -1,0 +1,6 @@
+description = "DATATABLE cells are associated with the header names declared in the same call, which take the table being declared"
+command     = "scan"
+args        = ["--all"]
+policy      = "default"
+exit        = 1
+sentinels   = ["Doe, Jane", "Roe, Richard"]

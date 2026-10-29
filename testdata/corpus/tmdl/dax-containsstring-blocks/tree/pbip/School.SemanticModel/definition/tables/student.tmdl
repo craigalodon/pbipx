@@ -1,0 +1,4 @@
+table student
+
+	measure 'Selected Rows' = CALCULATE(COUNTROWS(student), CONTAINSSTRING(student[full_name], "Roe"))
+		formatString: 0

@@ -1,0 +1,6 @@
+description = "a number compared with a warn column warns; without --strict the scan exits 0"
+command     = "scan"
+args        = ["--all"]
+policy      = "default"
+exit        = 0
+sentinels   = ["2101"]

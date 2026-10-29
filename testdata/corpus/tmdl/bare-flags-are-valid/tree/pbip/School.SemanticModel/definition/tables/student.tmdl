@@ -1,0 +1,20 @@
+table student
+
+	measure 'Active Rows' = COUNTROWS(student)
+		formatString: 0
+		isHidden
+
+	column student_id
+		dataType: int64
+		isHidden
+		isKey
+		isNullable: false
+		summarizeBy: none
+		sourceColumn: student_id
+
+	column campus
+		dataType: string
+		isNameInferred
+		isDefaultLabel
+		summarizeBy: none
+		sourceColumn: campus

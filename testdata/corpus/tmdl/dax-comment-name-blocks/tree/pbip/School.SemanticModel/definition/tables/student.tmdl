@@ -1,0 +1,6 @@
+table student
+
+	measure 'Split Rows' =
+			// Roe, Richard requested this split
+			CALCULATE(COUNTROWS(student), student[campus] = "North")
+		formatString: 0

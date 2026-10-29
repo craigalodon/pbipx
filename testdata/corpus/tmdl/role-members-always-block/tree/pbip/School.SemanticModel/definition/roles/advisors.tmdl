@@ -1,0 +1,8 @@
+role advisors
+	modelPermission: read
+
+	member 'jane.doe@example.com'
+		memberType: user
+
+	member 'Advising Staff'
+		memberType: group

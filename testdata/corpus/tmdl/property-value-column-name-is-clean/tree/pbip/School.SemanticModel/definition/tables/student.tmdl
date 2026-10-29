@@ -1,0 +1,17 @@
+table student
+
+	column full_name
+		dataType: string
+		summarizeBy: none
+		sourceColumn: full_name
+
+	column student_id
+		dataType: int64
+		summarizeBy: none
+		sourceColumn: student_id
+
+	column date_of_birth
+		dataType: dateTime
+		summarizeBy: none
+		sourceColumn: date_of_birth
+

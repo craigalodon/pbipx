@@ -1,0 +1,15 @@
+{
+  "findings": [
+    {
+      "path": "pbip/School.SemanticModel/definition/tables/student.tmdl",
+      "context": null,
+      "column": null,
+      "tier": "error",
+      "reasons": [
+        "unparseable-tmdl"
+      ]
+    }
+  ],
+  "accepted": 0,
+  "suppressed": 0
+}

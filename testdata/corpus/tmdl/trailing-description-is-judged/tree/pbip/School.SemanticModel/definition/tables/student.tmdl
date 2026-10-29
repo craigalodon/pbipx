@@ -1,0 +1,6 @@
+table student
+
+	measure 'Active Rows' = COUNTROWS(student)
+		formatString: 0
+
+/// call 555-555-0142 before changing this table

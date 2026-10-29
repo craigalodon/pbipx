@@ -1,0 +1,6 @@
+description = "an Enter data blob that is not base64 is a parse error"
+command     = "scan"
+args        = ["--all"]
+policy      = "default"
+exit        = 3
+sentinels   = ["i45W%%not!base64"]

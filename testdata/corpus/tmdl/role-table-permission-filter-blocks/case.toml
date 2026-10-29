@@ -1,0 +1,6 @@
+description = "an RLS tablePermission filter is DAX; a string compared with a block column there blocks"
+command     = "scan"
+args        = ["--all"]
+policy      = "default"
+exit        = 1
+sentinels   = ["jane.doe@example.com"]

@@ -1,0 +1,10 @@
+table roster_sample
+
+	column full_name
+		dataType: string
+		summarizeBy: none
+		sourceColumn: full_name
+
+	partition roster_sample = calculated
+		mode: import
+		source = DATATABLE("full_name", STRING, {{"Doe, Jane"}, {"Roe, Richard"}})
