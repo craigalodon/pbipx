@@ -27,18 +27,20 @@ private (ADR-0003).
 - [x] Settle the vocabulary: finding contexts, reasons, gate reason classes
       (`testdata/corpus/vocabulary.toml`)
 - [x] `policies/default.toml`: a generic policy for the corpus
-- [ ] Cases, written fresh and synthetic, for each area:
-  - [ ] `pbir`: the six report contexts that carry values; which literals are
+- [x] Cases, written fresh and synthetic, for each area (247 cases):
+  - [x] `pbir`: the seven report contexts that carry values; which literals are
         judged; column association; neutral-filter sentinels
-  - [ ] `tmdl`: partitions and expressions, "Enter data" tables, `DATATABLE`,
+  - [x] `tmdl`: partitions and expressions, "Enter data" tables, `DATATABLE`,
         RLS filters and members, descriptions, annotations; parse errors
-  - [ ] `sql`, `yaml`: comparisons with identifier columns; shapes in
+  - [x] `sql`, `yaml`: comparisons with identifier columns; shapes in
         comments and descriptions
-  - [ ] `text`: prose rules (anchored names, no date shape)
-  - [ ] `baseline`, `policy`: blocks never baselined; acceptances; policy errors
-  - [ ] `gate`: the classification table; Read, search and shell decisions;
+  - [x] `text`: prose rules (anchored names, no date shape)
+  - [x] `baseline`, `policy`: blocks never baselined; acceptances; policy errors
+  - [x] `gate`: the classification table; Read, search and shell decisions;
         every error path
-  - [ ] `explain`: structure only; non-identifier names replaced
+  - [ ] `explain`: structure only; non-identifier names replaced (deferred to
+        phase 3, with its output schema)
+- [x] A Go corpus runner and case validator (`internal/corpus`)
 - [ ] In the predecessor's repository: a normalized JSON output and a corpus
       runner pointed at a local pbipx checkout
 
