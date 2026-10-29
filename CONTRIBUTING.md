@@ -2,11 +2,22 @@
 
 ## Setup
 
+You need Go (the version in `go.mod` or newer) and
+[pre-commit](https://pre-commit.com) (`uv tool install pre-commit` or
+`pipx install pre-commit`).
+
 ```sh
 go build ./...
 go test ./...
-git config core.hooksPath .githooks   # maintainers: enables the private-terms check
+pre-commit install              # installs the pre-commit and commit-msg hooks
+pre-commit run --all-files      # what CI's lint job runs
 ```
+
+The hooks run golangci-lint (`.golangci.yml`, which includes `gofmt`,
+`goimports` and `go vet`), `go mod tidy`, rumdl for Markdown (`.rumdl.toml`),
+actionlint for workflows, and general file checks. CI runs the same file, so a
+commit that passes locally passes there. A clone with `core.hooksPath` set
+from an older setup needs `git config --unset core.hooksPath` first.
 
 ## Synthetic data
 
@@ -38,11 +49,12 @@ one case-insensitive term per line:
 ${PBIPX_PRIVATE_TERMS:-$HOME/.config/pbipx/private-terms.txt}
 ```
 
-With `core.hooksPath` set to `.githooks`, every commit's staged paths,
+With the pre-commit hooks installed, every commit's staged paths,
 content and message are checked against it. The check fails closed: if the
 list is missing or empty, the commit is refused. It reports which file matched
 and never the term. The list itself must never be committed.
 
 ## Commits
 
-Describe structure, never a value. Never use `--no-verify`.
+Describe structure, never a value. Never use `--no-verify`, or `SKIP=` on a
+commit.

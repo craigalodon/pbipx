@@ -34,11 +34,16 @@ go build ./...
 go test ./...
 go vet ./...
 gofmt -l .                      # must print nothing
-git config core.hooksPath .githooks   # once per clone (maintainers)
+pre-commit run --all-files      # every lint CI runs, plus private terms
+pre-commit install              # once per clone
 ```
 
-Never use `git commit --no-verify`. If a hook blocks you, fix the cause or
-tell the user.
+Lint rules live in `.golangci.yml`, `.rumdl.toml` and
+`.pre-commit-config.yaml`. Fix the code rather than loosen a rule; a
+`//nolint` needs the linter named and a reason.
+
+Never use `git commit --no-verify`, or `SKIP=` on a commit. If a hook blocks
+you, fix the cause or tell the user.
 
 ## Layout
 
@@ -49,5 +54,5 @@ testdata/corpus/    the language-neutral behavior corpus (docs/design/corpus.md)
 docs/ROADMAP.md     phases and exit criteria
 docs/design/        principles, threat model, corpus format
 docs/adr/           decision records
-scripts/, .githooks/  the maintainer's private-terms check
+scripts/            the maintainer's private-terms check, run by pre-commit
 ```

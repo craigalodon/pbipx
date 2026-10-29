@@ -14,6 +14,9 @@ is phases 1 to 4. Stage, collect and perf can follow it.
 - [x] ADRs 0001 to 0004
 - [x] Go module, `pbipx version`, the `secret.Value` type and its tests
 - [x] CI workflow (format, vet, test), private-terms commit hooks
+- [ ] pre-commit for every lint (golangci-lint, rumdl, actionlint), run
+      locally and in CI; govulncheck; Dependabot
+- [ ] CLI on cobra (ADR-0005)
 - [ ] Push to a private GitHub repository; CI green there
 
 ## Phase 1: the corpus, and the predecessor passing it
