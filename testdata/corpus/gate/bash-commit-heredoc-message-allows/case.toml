@@ -1,0 +1,7 @@
+description = "a commit message read from a here-document in a command substitution is data: the git show it mentions does not run. Plants no value"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = []
+known       = "predecessor"

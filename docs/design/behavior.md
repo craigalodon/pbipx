@@ -520,11 +520,48 @@ Decisions by tool. Every tool not listed is allowed.
     `${PWD}` (the working directory as the line leaves it) and `$OLDPWD`
     are expanded; any other expansion (`$X`, `${X:-y}`, `$1`, `$(...)`,
     backticks) leaves its word unknown;
-  - `sh`, `bash`, `zsh` and kin with `-c`, `script -c`, `eval` and every
-    command substitution are read as nested lines, at most four deep, with
-    every rule applied to them. A deeper line, or one whose text is built
-    at run time (`bash -c "$CMD"`), counts as touching every protected
-    root. `eval`'s `cd` moves the line after it; the others' does not.
+  - a here-document (`<<WORD`, `<<-WORD`) is read as bash reads it: its
+    body runs from the line after the operator to the line that is the
+    delimiter (leading tabs removed for `<<-`), or to the end of the line
+    when there is none, and the command line goes on after it. A body is
+    data, never commands: with a quoted delimiter (`<<'EOF'`, `<<"EOF"`,
+    `<<\EOF`) all of it; with an unquoted one, all but its command
+    substitutions (`$(...)` and backticks), which are read as nested lines.
+    A here-document inside a command substitution is read the same way;
+  - with unbalanced quotes or a trailing backslash, the line is split on
+    whitespace, at newlines and at `;`, `&`, `|`, `(` and `)` whether or
+    not a space sets them apart, quotes kept as written. A reading or
+    searching command in such a line, or any `$(` or backtick in it,
+    counts as touching every protected root;
+  - wrappers are skipped, with their options and operands, to the command
+    they run: `env`, `command`, `exec`, `nohup`, `builtin`, `time`, `nice`,
+    `sudo`, `doas`, `xargs`, `stdbuf`, `timeout`, `ionice`, `setsid`,
+    `caffeinate`, `unbuffer`, `chronic`, `taskset`, `flock`, `coproc`,
+    `busybox`, `xvfb-run` and a few tracers and sandboxes. Their long
+    options that take a value given apart (`timeout --signal KILL 5`) are
+    read as such. `command -v` and `-V` run nothing. Any other program,
+    unless it is one known never to run its words (`echo`, `which`, `man`,
+    package managers and the like), whose first word that is not an option
+    is a reader, a search, git, `find`, `fd`, a shell or `eval`, is judged
+    as that program: an unknown wrapper is judged by what it runs;
+  - `sh`, `bash`, `zsh` and kin with `-c` (after `--`, and after
+    long options that take a value such as `--rcfile`), `script -c`,
+    `flock FILE -c`, `watch` (its words, joined), `env -S`, GNU `parallel`
+    (its template with each argument after `:::`, or each argument alone),
+    `eval` and every command substitution are read as nested lines, at
+    most four deep, with every rule applied to them. So is the script a
+    shell reads from a here-document, a here-string (`<<<`), `source
+    /dev/stdin`, or a pipe from a here-document, a here-string, `echo` or
+    `printf`; a shell reading any other pipe runs a script built at run
+    time. A deeper line, or one whose text is built at run time
+    (`bash -c "$CMD"`, an unquoted here-document with an expansion), counts
+    as touching every protected root. `eval`'s `cd` moves the line after
+    it; the others' does not;
+  - there is no parser for PowerShell or `cmd`: `pwsh`, `powershell` or
+    `cmd` with any argument but a version or help request, or reading a
+    pipe, counts as touching every protected root. So do `ssh` with a
+    command after the host or reading a pipe, `su` or `runuser` with a
+    command, and `machinectl shell`.
   1. The tool itself alone (one simple command, optionally after environment
      assignments, with no `$(` or backtick) is allowed: it redacts on its own.
      `policy approve` is never the tool alone (below).
@@ -610,6 +647,35 @@ Decisions by tool. Every tool not listed is allowed.
        the rest pathspecs. `REV:path` is cut at the first `:` outside
        braces, so `HEAD@{10:00}` is a revision and `HEAD@{10:00}:x` the
        path `x`.
+
+     In pbipx the message names the subcommand only when it is one of
+     git's own; any other word, an alias's name included, is printed as
+     `git`.
+
+     **Divergence (a read after a tree change).** In pbipx, once a command
+     in the line changes the working tree with content the gate has not
+     seen, every later command in the line, nested lines included, that
+     reads is **denied** with `git-content`: its read would be judged
+     against the tree as it was before the change. The changes are git's
+     `switch`, `checkout`, `restore` (not `--staged` alone), `merge`,
+     `pull`, `cherry-pick`, `revert`, `am`, `apply` (not `--check`,
+     `--stat`, `--numstat`, `--summary` or `--cached`), `rebase`, `clone`,
+     `stash` (but `list`, `show`, `create`, `store`, `drop`, `clear`),
+     `reset --hard`, `--merge` or `--keep`, `read-tree -u`,
+     `checkout-index`, `sparse-checkout` (but `list`), `bisect` (but `log`
+     and the like), `submodule update`, `add` or `foreach`, `worktree add`,
+     `bundle unbundle`, `merge-file` (but `-p`), `filter-branch` and
+     `mergetool`, and any subcommand that is not git's own (an alias, a
+     plugin); and an archive extracted or a patch applied: `tar -x`,
+     `unzip`, `7z x`, `cpio -i`, `ar x`, `gunzip` and kin (not to stdout),
+     `patch`. A command reads when it is a reader, a search, `find`, `fd`,
+     a shell or `eval`, or when any word of it but an output redirection's
+     target is or may be a path: unknown, a glob, with a separator, `.`,
+     `..`, `~` first, or a name that exists where it runs (an option by its
+     `=value`). `echo`, `printf` and the like never read, and git's own
+     reads are judged by rule 2. The change alone, with nothing reading
+     after it, is allowed: the next call is judged against the changed
+     tree.
   3. If the working directory is inside a protected root, or the command
      names a root as a whole word, the protected tree is scanned as for Grep.
      In pbipx the tree is scanned too when:
@@ -622,7 +688,13 @@ Decisions by tool. Every tool not listed is allowed.
        path as written), is a protected root, is inside one, or contains
        one. That includes the value of a `--flag=value`, what an unquoted
        glob matches, and for a word with `**` (which zsh, and bash with
-       `globstar`, read as any depth) everything under its literal prefix;
+       `globstar`, read as any depth) everything under its literal prefix.
+       Each word is expanded once per decision, whichever rule asks. All
+       the globs of one decision together read or walk at most 200,000
+       directory entries (a match costs ten); a glob past that, or with
+       more than 64 segments after its literal prefix, counts as touching
+       every root, and so does every glob after it. `**` is matched in time
+       proportional to the pattern's and the path's lengths;
      - a word of a reading or searching command (`cat`, `head`, `less`,
        the grep family, `rg`, `sed`, `awk`, `sort`, `jq`, `cp`, `tar` and
        the like) is unknown;
@@ -631,12 +703,19 @@ Decisions by tool. Every tool not listed is allowed.
        root; `xargs` running a reading command counts as reading under its
        working directory. The command `-exec` runs is judged as a command
        of its own;
+     - `fd` (or `fdfind`) with `-x`, `--exec`, `-X` or `--exec-batch`, or
+       piped to `xargs` or `parallel`, has a search path (the positional
+       arguments after the pattern and `--search-path`, under
+       `--base-directory`; default `.`) that touches a root, as for `find`;
+       the command it runs is judged as a command of its own. `fd` alone
+       prints names, which are schema;
      - a nested line is too deep or built at run time.
 
      A root's name is compared without regard to case in these tests, on
      every platform: they only decide whether the real roots are scanned.
   4. A recursive search (`grep`, `egrep` and `fgrep` with `-r` or `-R`;
-     `rg`, `ag` and `ack` always) over a path that touches a root scans the
+     `rg`, `ag` and `ack` always; in pbipx also `rga`, `ugrep`, `ug`,
+     `sift` and `pt` always) over a path that touches a root scans the
      tree. Its paths are the positional arguments after the pattern (unless
      `-e` or `-f` gave it), default `.`, from the command's working
      directory.
@@ -793,6 +872,13 @@ proceed, so a search or shell call that scans a large protected tree must
 not reach Claude Code's default timeout. A hook this binary registered in
 an earlier command form is recognised by the binary's path and rewritten in
 place.
+
+For the same reason the adapter denies, with `internal-error` and a fixed
+message, an event whose command line or path is longer than 1 MiB: the
+gate's work grows with the command's length. Below that, reading a command
+line is linear in its length, and the glob budget above bounds the file
+system work. A line holding more than 20,000 simple commands, nested lines
+included, is denied with `internal-error` rather than judged in part.
 
 ## `explain`
 
@@ -996,7 +1082,12 @@ behavior (2026-10-29).
   directory or an unknown word of a reading command counts as touching
   every root. It also denies writing into a `.claude` directory and running
   `pbipx policy approve` with `agent-settings`. The corpus cases for it are
-  marked `known = "predecessor"`. (Decided 2026-10-29.)
+  marked `known = "predecessor"`. (Decided 2026-10-29.) pbipx also reads
+  here-documents as bash does, so a body is data (a commit message that
+  mentions `git show` is allowed) and an apostrophe in one cannot hide the
+  commands after it; unwraps more wrappers, and judges an unknown one by
+  what it runs; and denies a read after a tree-changing command in the
+  same line (rule 2). (Decided 2026-10-30.)
 - **Divergence (git's name-only check):** the predecessor denies `git
   diff`, `git show`, `git log -p`, `git stash show -p` and `git grep`
   unless pathspecs after `--` exclude every root, so the commands agents

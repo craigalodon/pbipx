@@ -1,0 +1,6 @@
+description = "git switch alone reads nothing; the next call is judged against the switched tree. Plants no value"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = []

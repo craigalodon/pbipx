@@ -1,0 +1,7 @@
+description = "an apostrophe in a here-document's body does not hide the search on the line after the delimiter; the protected tree is scanned and the leak denies"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
+known       = "predecessor"

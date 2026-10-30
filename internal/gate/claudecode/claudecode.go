@@ -53,6 +53,11 @@ const (
 // the file's content, so it is generous; a larger event denies.
 const maxEvent = 64 << 20
 
+// maxField bounds the command line or path one event carries. The gate's
+// work grows with the command's length, and a hook that runs past Claude
+// Code's timeout lets the call through, so a longer one denies.
+const maxField = 1 << 20
+
 // errEvent is the only parse error. Its text is fixed: the event's own text
 // is never quoted.
 var errEvent = errors.New("the hook event is not a valid PreToolUse JSON object")
@@ -158,6 +163,9 @@ func decide(stdin io.Reader, opts gate.Options) gate.Decision {
 	ev, err := ParseEvent(data)
 	if err != nil {
 		return Deny(ReasonEventError, err.Error())
+	}
+	if len(ev.Command) > maxField || len(ev.Path) > maxField {
+		return Deny(ReasonInternalError, "the command or path is too long to judge")
 	}
 	return gate.Decide(ev, opts)
 }
