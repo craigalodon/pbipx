@@ -575,22 +575,25 @@ const (
 
 // The hints a refusal ends with: one short thing to do instead.
 const (
-	hintSearch  = "Name the files to search explicitly, or exclude the protected folders."
-	hintCwd     = "Run it from outside the protected folders; use Read for a single file there."
-	hintNames   = "Leave the protected folders out of the command; use Read for a single file there."
-	hintExpand  = "Write the paths out in full, without variables or command substitutions."
-	hintPlain   = "Write the command out plainly, without building it at run time or nesting it more than 4 deep."
-	hintOther   = "Run the command in bash directly, with its paths written out."
-	hintLister  = "Point find or fd away from the protected folders, or exclude them."
-	hintQuotes  = "Balance the quotes in the command."
-	hintGit     = "Limit the paths (`-- src`) or use --stat."
-	hintChange  = "Run the change on its own, then the read as a separate call."
-	hintSelect  = "Clear the selection in Power BI Desktop and save, or ask a person to run `pbipx scan` at a terminal."
-	hintValue   = "Remove the value from the file in Power BI Desktop or an editor, or ask a person to run `pbipx scan` at a terminal."
-	hintVet     = "Ask a person to cover the file in the policy (.pbipx.toml), or leave it out of the call."
-	hintUnread  = "Check that the file can be read, or ask a person to run `pbipx scan` at a terminal."
-	hintLocal   = "Leave Power BI Desktop's .pbi folders out of the call; Desktop keeps them on its own."
-	hintSetting = "Ask a person to make the change at a terminal."
+	hintSearch = "Name the files to search explicitly, or exclude the protected folders."
+	hintCwd    = "Run it from outside the protected folders; use Read for a single file there."
+	hintNames  = "Leave the protected folders out of the command; use Read for a single file there."
+	hintExpand = "Write the paths out in full, without variables or command substitutions."
+	hintPlain  = "Write the command out plainly, without building it at run time or nesting it more than 4 deep."
+	hintOther  = "Run the command in bash directly, with its paths written out."
+	hintLister = "Point find or fd away from the protected folders, or exclude them."
+	hintQuotes = "Balance the quotes in the command."
+	hintGit    = "Limit the paths (`-- src`) or use --stat."
+	// hintGitExpand ends a git refusal for an argument the gate cannot
+	// expand.
+	hintGitExpand = "Write git's arguments out in full, without variables or command substitutions."
+	hintChange    = "Run the change on its own, then the read as a separate call."
+	hintSelect    = "Clear the selection in Power BI Desktop and save, or ask a person to run `pbipx scan` at a terminal."
+	hintValue     = "Remove the value from the file in Power BI Desktop or an editor, or ask a person to run `pbipx scan` at a terminal."
+	hintVet       = "Ask a person to cover the file in the policy (.pbipx.toml), or leave it out of the call."
+	hintUnread    = "Check that the file can be read, or ask a person to run `pbipx scan` at a terminal."
+	hintLocal     = "Leave Power BI Desktop's .pbi folders out of the call; Desktop keeps them on its own."
+	hintSetting   = "Ask a person to make the change at a terminal."
 )
 
 // simple records one simple command run from st, reads what it nests, and
@@ -1757,8 +1760,19 @@ func policyApprove(args []string) bool {
 
 // gitRule decides rule 2 for v, from each spelling of its working
 // directory; from an unknown one, as if from each protected root, where
-// every relative pathspec touches the root.
+// every relative pathspec touches the root. An argument that cannot be
+// told (an expansion) could be any pathspec, revision, option or
+// directory: a subcommand that prints content is then unprovable
+// (gitContent).
 func (s *setup) gitRule(v view) *gitDenial {
+	var unknown []string
+	if v.name == "git" {
+		for i, k := range v.restKnown {
+			if !k {
+				unknown = append(unknown, v.rest[i])
+			}
+		}
+	}
 	dirs := v.cwd.dirs
 	if !v.cwd.known() {
 		dirs = []string{s.repo.Root}
@@ -1769,7 +1783,7 @@ func (s *setup) gitRule(v view) *gitDenial {
 	for _, d := range dirs {
 		in := *s
 		in.cwd = d
-		if g := in.gitContent(v.argv); g != nil {
+		if g := in.gitContent(v.argv, unknown); g != nil {
 			return g
 		}
 	}

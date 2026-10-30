@@ -111,6 +111,45 @@ var gitNameOnly = []string{
 	"--name-status", "-z", "--no-color", "--no-ext-diff", "--no-textconv", "--no-relative",
 }
 
+// gitNeverContent are git's commands that print no file content whatever
+// their options: a word given to one that cannot be told is judged as
+// usual. Before "--", such a word given to any other could be an option
+// that turns content on (-p, -v, --cc, --file), and denies it.
+var gitNeverContent = map[string]bool{
+	"branch": true, "fetch": true, "push": true, "remote": true, "tag": true, "init": true,
+	"ls-remote": true, "ls-files": true, "ls-tree": true, "rev-parse": true, "merge-base": true,
+	"describe": true, "show-ref": true, "for-each-ref": true, "count-objects": true, "version": true,
+	"help": true, "gc": true,
+}
+
+// unknownOption reports whether one of args, sub's words before "--", is
+// one that cannot be told (unknown) and could be an option: any but a
+// message, the value of -m or --message given apart or attached, for a
+// subcommand whose -m takes one (git commit -m "$(cat <<EOF ...)").
+func unknownOption(sub string, args, unknown []string) bool {
+	takesMessage := gitMessageSubs[sub]
+	for i, a := range args {
+		if !slices.Contains(unknown, a) {
+			continue
+		}
+		message := strings.HasPrefix(a, "--message=") || (strings.HasPrefix(a, "-m") && !strings.HasPrefix(a, "--")) ||
+			(i > 0 && (args[i-1] == "-m" || args[i-1] == "--message"))
+		if !takesMessage || !message {
+			return true
+		}
+	}
+	return false
+}
+
+// gitMessageSubs are the subcommands whose -m and --message take a message.
+var gitMessageSubs = map[string]bool{"commit": true, "merge": true, "stash": true, "notes": true, "tag": true}
+
+// whyUnknownSpec is why git given an argument that cannot be told is
+// denied when that argument could be a pathspec, a revision or a
+// directory. It reads after the subcommand.
+const whyUnknownSpec = "is given an argument the gate cannot expand (a variable or a command substitution), " +
+	"which could name a path in a protected root"
+
 // gitBuiltins are git's own commands. git runs a built-in command before it
 // looks for an alias of the same name, so these are never resolved as
 // aliases. A name that is neither one of these nor an alias is denied when
@@ -198,6 +237,9 @@ type gitInvocation struct {
 	// oddSpecs is true when a global option changes how every pathspec
 	// matches (--literal-pathspecs, --glob-pathspecs, --icase-pathspecs).
 	oddSpecs bool
+	// unknown is true when an argument cannot be told (gitContent): no
+	// query that could find the command prints nothing is made with it.
+	unknown bool
 
 	// place is where dir is (locate). For gitHere, top is the root of the
 	// work tree git runs in ("" inside a git directory), and prefix is
@@ -503,8 +545,10 @@ func (g gitDenial) message() string {
 // gitContent decides rule 2 for one simple command: whether it is git
 // printing content that could come from a protected root. args is the
 // whole simple command, with any assignments and wrappers before git. It
-// returns why the command is denied, and nil otherwise.
-func (s *setup) gitContent(args []string) *gitDenial {
+// returns why the command is denied, and nil otherwise. unknown are git's
+// arguments that cannot be told: with any, a subcommand that prints
+// content is denied, as one whose pathspecs are unprovable.
+func (s *setup) gitContent(args, unknown []string) *gitDenial {
 	name, rest := program(args)
 	if name != "git" {
 		return nil
@@ -517,12 +561,28 @@ func (s *setup) gitContent(args []string) *gitDenial {
 		return &gitDenial{inv.sub, "runs after an assignment (a GIT_ variable, a pager, an editor or LESSOPEN) " +
 			"that can change what it prints", "Drop the assignment before git."}
 	}
+	if slices.Contains(unknown, inv.sub) {
+		// The subcommand itself cannot be told; gitLabel never echoes it.
+		return &gitDenial{inv.sub, "runs a subcommand the gate cannot expand (a variable or a command substitution), " +
+			"whose output cannot be told", hintGitExpand}
+	}
+	if slices.ContainsFunc(inv.globals, func(g string) bool { return slices.Contains(unknown, g) }) {
+		return &gitDenial{inv.sub, "is given a global option the gate cannot expand (a variable or a command substitution), " +
+			"which could be any of them", hintGitExpand}
+	}
 	inv, why := s.resolveAlias(inv)
 	if why != "" {
 		return &gitDenial{inv.sub, why, "Run the git command the alias stands for, with the paths limited (`-- src`) or --stat."}
 	}
 	if inv.unsafe {
 		return &gitDenial{inv.sub, inv.unsafeWhy, "Drop that global option, or use --stat."}
+	}
+	inv.unknown = len(unknown) > 0
+	if !gitNeverContent[inv.sub] && unknownOption(inv.sub, inv.args, unknown) {
+		// Before "--" a word that cannot be told could be an option that
+		// turns content on: -p, -v, --cc, a stash or reflog subcommand.
+		return &gitDenial{inv.sub, "is given, before --, an argument the gate cannot expand " +
+			"(a variable or a command substitution), which could be an option that prints content (-p, -v, --cc)", hintGitExpand}
 	}
 	s.locate(&inv)
 	switch inv.place {
@@ -532,6 +592,10 @@ func (s *setup) gitContent(args []string) *gitDenial {
 		// --no-index).
 		if where := s.foreignReads(inv); where != "" {
 			return &gitDenial{inv.sub, "runs outside this repository and names a path that " + where, hintGit}
+		}
+		if inv.unknown && s.gitSpecs(inv).content {
+			// An argument that cannot be told could name one.
+			return &gitDenial{inv.sub, whyUnknownSpec, hintGitExpand}
 		}
 		return nil
 	}
@@ -547,6 +611,9 @@ func (s *setup) gitContent(args []string) *gitDenial {
 	case inv.place == gitUnknown:
 		return &gitDenial{inv.sub, "runs in a directory the gate cannot place in a work tree (one not made yet, or above the repository)",
 			"Run it from inside the repository, with the directory made first."}
+	case inv.unknown:
+		// Never the name-only query with a word left unexpanded.
+		return &gitDenial{inv.sub, whyUnknownSpec, hintGitExpand}
 	case c.bySpecs && inv.oddSpecs:
 		return &gitDenial{inv.sub, "runs with --literal-pathspecs, --glob-pathspecs or --icase-pathspecs, " +
 			"which make every pathspec unprovable", "Drop that global option, or use --stat."}
@@ -1224,7 +1291,7 @@ func (s *setup) kindOf(inv gitInvocation, a string) (revKind, string) {
 	if p, ok := revPath(a); ok {
 		return revBlobPath, p
 	}
-	if inv.elsewhere || inv.place != gitHere {
+	if inv.elsewhere || inv.unknown || inv.place != gitHere {
 		return revUnplaceable, ""
 	}
 	g := s.git()
@@ -1312,7 +1379,7 @@ func (s *setup) stashCheck(inv gitInvocation) gitCheck {
 // answer, more than one word, or a repository the gate cannot ask about
 // leaves the decision to the name-only run, which fails closed.
 func (s *setup) stashAbsent(inv gitInvocation, args []string) bool {
-	if inv.elsewhere || inv.place != gitHere {
+	if inv.elsewhere || inv.unknown || inv.place != gitHere {
 		return false
 	}
 	var words []string

@@ -44,16 +44,17 @@ func runMessages(t *testing.T, root string, cases []messageCase) {
 
 // The hints messages end with.
 const (
-	hintSearch = "Name the files to search explicitly, or exclude the protected folders."
-	hintGit    = "Limit the paths (`-- src`) or use --stat."
-	hintSelect = "Clear the selection in Power BI Desktop and save, or ask a person to run `pbipx scan` at a terminal."
-	hintCwd    = "Run it from outside the protected folders; use Read for a single file there."
-	hintNames  = "Leave the protected folders out of the command; use Read for a single file there."
-	hintExpand = "Write the paths out in full, without variables or command substitutions."
-	hintPlain  = "Write the command out plainly, without building it at run time or nesting it more than 4 deep."
-	hintLister = "Point find or fd away from the protected folders, or exclude them."
-	hintChange = "Run the change on its own, then the read as a separate call."
-	hintOption = "Drop that global option, or use --stat."
+	hintSearch    = "Name the files to search explicitly, or exclude the protected folders."
+	hintGit       = "Limit the paths (`-- src`) or use --stat."
+	hintSelect    = "Clear the selection in Power BI Desktop and save, or ask a person to run `pbipx scan` at a terminal."
+	hintCwd       = "Run it from outside the protected folders; use Read for a single file there."
+	hintNames     = "Leave the protected folders out of the command; use Read for a single file there."
+	hintExpand    = "Write the paths out in full, without variables or command substitutions."
+	hintPlain     = "Write the command out plainly, without building it at run time or nesting it more than 4 deep."
+	hintLister    = "Point find or fd away from the protected folders, or exclude them."
+	hintChange    = "Run the change on its own, then the read as a separate call."
+	hintOption    = "Drop that global option, or use --stat."
+	hintGitExpand = "Write git's arguments out in full, without variables or command substitutions."
 )
 
 // The file the leaky tree's tree scans reach first.
@@ -149,6 +150,18 @@ func TestMessagesNameTheTrigger(t *testing.T) {
 			[]string{"git diff runs after an assignment"}, "Drop the assignment before git."},
 		{"git --git-dir", sh("git --git-dir=.git log -p"), gate.ReasonGitContent,
 			[]string{"git log is pointed at another tree by --git-dir or --work-tree"}, ""},
+		// An argument git is given that the gate cannot expand is never
+		// echoed.
+		{"git unknown subcommand word", sh("git $SUB"), gate.ReasonGitContent,
+			[]string{"git runs a subcommand the gate cannot expand"}, hintGitExpand},
+		{"git unknown global option", sh("git --namespace=$N log"), gate.ReasonGitContent,
+			[]string{"git log is given a global option the gate cannot expand"}, hintGitExpand},
+		{"git unknown option", sh("git log $(echo -p)"), gate.ReasonGitContent,
+			[]string{"git log is given, before --, an argument the gate cannot expand", "could be an option that prints content"},
+			hintGitExpand},
+		{"git unknown pathspec", sh("git diff -- $X"), gate.ReasonGitContent,
+			[]string{"git diff is given an argument the gate cannot expand", "could name a path in a protected root"},
+			hintGitExpand},
 
 		// A read after a tree change names the change.
 		{"read after a switch", sh("git switch -d HEAD && cat README.md"), gate.ReasonGitContent,
