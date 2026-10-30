@@ -60,6 +60,8 @@ var (
 	// ErrInRepository is a configuration directory inside the repository
 	// whose policy it approves, where an agent could write an approval.
 	ErrInRepository = errors.New("approval: the configuration directory is inside the repository")
+	// ErrStoreNotDir is a store whose record directory is not a directory.
+	ErrStoreNotDir = errors.New("approval: the approval records directory is not a directory")
 )
 
 // Status is how a repository's policy stands against its approval.
@@ -403,10 +405,15 @@ func (s *Store) Recorded(r Repository) (digests []string, ok bool, err error) {
 }
 
 // readRecord reads one record's digests; found is false when there is no
-// record at path.
+// record at path. A record directory that is not a directory is an error,
+// not an empty store: Windows reports a path through a file as missing,
+// where Unix reports ENOTDIR.
 func readRecord(path string) (digests []string, found bool, err error) {
 	data, err := os.ReadFile(path) //nolint:gosec // G304: the path is a hash under the store's own directory
 	if errors.Is(err, fs.ErrNotExist) {
+		if info, serr := os.Stat(filepath.Dir(path)); serr == nil && !info.IsDir() {
+			return nil, false, ErrStoreNotDir
+		}
 		return nil, false, nil
 	}
 	if err != nil {
