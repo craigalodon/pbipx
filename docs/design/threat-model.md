@@ -33,6 +33,30 @@ Out of scope: a malicious insider; an agent deliberately escaping; personal
 data shown in images; data that lives in the Power BI service rather than in
 files.
 
+## What no pre-tool hook sees
+
+The gate sees a tool call, and only one whose tool its matcher names
+(`pbipx init` registers it for every built-in Claude Code tool that can
+read file content: Read, Grep, Bash, PowerShell, LSP, and the writing
+tools). Content that reaches the agent without such a call passes it by:
+
+- **A file a person `@`-mentions in a prompt.** Claude Code inserts it into
+  the conversation without a tool call, so no hook runs. Setting
+  `CLAUDE_CODE_DISABLE_FILE_MENTIONS=1` (in managed settings' `env`, which
+  `pbipx init --managed` prints) turns file mentions off.
+- **MCP tools**, such as a filesystem server's. Their names and inputs are
+  the server's own, so the gate does not judge them. Do not install an MCP
+  server that reads files in a session that works in an adopted
+  repository, or deny its tools with permission rules
+  (`"deny": ["mcp__<server>"]`).
+- **A tool the matcher does not name**: a built-in tool added to Claude
+  Code after the installed pbipx, or a hook registered by an earlier pbipx
+  with a narrower matcher until `pbipx init` is re-run.
+- **PowerShell that builds a path at run time.** The gate cannot parse
+  PowerShell; it scans the whole protected tree of each adopted repository
+  a call reaches, but it finds those repositories from the working
+  directory and the words that look like paths.
+
 ## Layers
 
 Each layer covers what the one before it misses. In order of what an adopter

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -25,6 +26,9 @@ func TestParseEvent(t *testing.T) {
 			gate.Event{Tool: toolSearch, Path: "/r/pbip", Cwd: "/r"}},
 		{"grep without a path", `{"cwd":"/r","tool_name":"Grep","tool_input":{"pattern":"x"}}`,
 			gate.Event{Tool: toolSearch, Cwd: "/r"}},
+		// A glob narrows nothing the gate judges: the search covers path.
+		{"grep with a glob", `{"cwd":"/r","tool_name":"Grep","tool_input":{"pattern":"x","glob":"*.md","output_mode":"content","-i":true}}`,
+			gate.Event{Tool: toolSearch, Cwd: "/r"}},
 		{"glob is other", `{"cwd":"/r","tool_name":"Glob","tool_input":{"pattern":"**/*.json","path":"/r/pbip"}}`,
 			gate.Event{Tool: toolOther, Cwd: "/r"}},
 		{"bash", `{"cwd":"/r","tool_name":"Bash","tool_input":{"command":"ls -la"}}`,
@@ -37,8 +41,22 @@ func TestParseEvent(t *testing.T) {
 			gate.Event{Tool: toolWrite, Path: "/r/n.md", Cwd: "/r"}},
 		{"notebookedit", `{"cwd":"/r","tool_name":"NotebookEdit","tool_input":{"notebook_path":"/r/a.ipynb","new_source":"x"}}`,
 			gate.Event{Tool: toolWrite, Path: "/r/a.ipynb", Cwd: "/r"}},
-		{"notebookedit ignores file_path", `{"cwd":"/r","tool_name":"NotebookEdit","tool_input":{"file_path":"/r/b"}}`,
-			gate.Event{Tool: toolWrite, Cwd: "/r"}},
+		{"notebookedit falls back to file_path", `{"cwd":"/r","tool_name":"NotebookEdit","tool_input":{"file_path":"/r/b"}}`,
+			gate.Event{Tool: toolWrite, Path: "/r/b", Cwd: "/r"}},
+		{"notebookedit prefers notebook_path", `{"cwd":"/r","tool_name":"NotebookEdit","tool_input":{"notebook_path":"/r/a.ipynb","file_path":"/r/b"}}`,
+			gate.Event{Tool: toolWrite, Path: "/r/a.ipynb", Cwd: "/r"}},
+		{"powershell", `{"cwd":"/r","tool_name":"PowerShell","tool_input":{"command":"Get-ChildItem -Recurse","description":"x"}}`,
+			gate.Event{Tool: toolPS, Command: "Get-ChildItem -Recurse", Cwd: "/r"}},
+		{"lsp with a file path", `{"cwd":"/r","tool_name":"LSP","tool_input":{"operation":"hover","filePath":"/r/pbip/a.json","line":3}}`,
+			gate.Event{Tool: toolLSP, Paths: []string{"/r/pbip/a.json"}, Cwd: "/r"}},
+		{"lsp with a file uri", `{"cwd":"/r","tool_name":"LSP","tool_input":{"textDocument":{"uri":"file:///r/a%20b.go"}}}`,
+			gate.Event{Tool: toolLSP, Paths: []string{"/r/a b.go"}, Cwd: "/r"}},
+		{"lsp with a windows file uri", `{"cwd":"C:\\r","tool_name":"LSP","tool_input":{"uri":"file:///C:/r/x.go"}}`,
+			gate.Event{Tool: toolLSP, Paths: []string{"C:/r/x.go"}, Cwd: `C:\r`}},
+		{"lsp with several paths", `{"cwd":"/r","tool_name":"LSP","tool_input":{"path":"a","files":["b","c"],"name":"d"}}`,
+			gate.Event{Tool: toolLSP, Paths: []string{"b", "c", "a"}, Cwd: "/r"}},
+		{"lsp with no path", `{"cwd":"/r","tool_name":"LSP","tool_input":{"operation":"workspaceSymbol","query":"x"}}`,
+			gate.Event{Tool: toolLSP, Cwd: "/r"}},
 		{"no tool name", `{"cwd":"/r"}`, gate.Event{Tool: toolOther, Cwd: "/r"}},
 		{"read without input", `{"cwd":"/r","tool_name":"Read"}`, gate.Event{Tool: toolRead, Cwd: "/r"}},
 		{"null field", `{"tool_name":"Read","tool_input":{"file_path":null}}`, gate.Event{Tool: toolRead}},
@@ -51,7 +69,7 @@ func TestParseEvent(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ParseEvent: %v", err)
 			}
-			if got != tt.want {
+			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("ParseEvent = %+v, want %+v", got, tt.want)
 			}
 		})
@@ -60,21 +78,29 @@ func TestParseEvent(t *testing.T) {
 
 func TestParseEventRejects(t *testing.T) {
 	for name, event := range map[string]string{
-		"empty":                   "",
-		"not json":                "Roe, Richard",
-		"array":                   `[{"tool_name":"Read"}]`,
-		"null":                    "null",
-		"string":                  `"Roe, Richard"`,
-		"number":                  "2",
-		"truncated":               `{"tool_name":"Read","tool_input":{"file_path":"Roe, Richard`,
-		"trailing data":           `{"tool_name":"Read"} {"tool_name":"Bash"}`,
-		"tool name a number":      `{"tool_name":2}`,
-		"cwd an object":           `{"cwd":{"a":"Roe, Richard"},"tool_name":"Read"}`,
-		"input an array":          `{"tool_name":"Read","tool_input":["Roe, Richard"]}`,
-		"path a number":           `{"tool_name":"Read","tool_input":{"file_path":2}}`,
-		"command an array":        `{"tool_name":"Bash","tool_input":{"command":["Roe, Richard"]}}`,
-		"write path a number":     `{"tool_name":"Write","tool_input":{"file_path":2,"content":"Roe, Richard"}}`,
-		"notebook path an object": `{"tool_name":"NotebookEdit","tool_input":{"notebook_path":{"a":"Roe, Richard"}}}`,
+		"empty":                    "",
+		"not json":                 "Roe, Richard",
+		"array":                    `[{"tool_name":"Read"}]`,
+		"null":                     "null",
+		"string":                   `"Roe, Richard"`,
+		"number":                   "2",
+		"truncated":                `{"tool_name":"Read","tool_input":{"file_path":"Roe, Richard`,
+		"trailing data":            `{"tool_name":"Read"} {"tool_name":"Bash"}`,
+		"tool name a number":       `{"tool_name":2}`,
+		"cwd an object":            `{"cwd":{"a":"Roe, Richard"},"tool_name":"Read"}`,
+		"input an array":           `{"tool_name":"Read","tool_input":["Roe, Richard"]}`,
+		"path a number":            `{"tool_name":"Read","tool_input":{"file_path":2}}`,
+		"command an array":         `{"tool_name":"Bash","tool_input":{"command":["Roe, Richard"]}}`,
+		"write path a number":      `{"tool_name":"Write","tool_input":{"file_path":2,"content":"Roe, Richard"}}`,
+		"notebook path an object":  `{"tool_name":"NotebookEdit","tool_input":{"notebook_path":{"a":"Roe, Richard"}}}`,
+		"notebook without a path":  `{"tool_name":"NotebookEdit","tool_input":{"new_source":"Roe, Richard"}}`,
+		"notebook path empty":      `{"tool_name":"NotebookEdit","tool_input":{"notebook_path":""}}`,
+		"powershell no command":    `{"tool_name":"PowerShell","tool_input":{"description":"Roe, Richard"}}`,
+		"powershell no input":      `{"tool_name":"PowerShell"}`,
+		"powershell command array": `{"tool_name":"PowerShell","tool_input":{"command":["Roe, Richard"]}}`,
+		"lsp path a number":        `{"tool_name":"LSP","tool_input":{"filePath":2}}`,
+		"lsp uri a bool":           `{"tool_name":"LSP","tool_input":{"textDocument":{"uri":true}}}`,
+		"lsp bad file uri":         `{"tool_name":"LSP","tool_input":{"uri":"file://%zz/Roe, Richard"}}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := ParseEvent([]byte(event))

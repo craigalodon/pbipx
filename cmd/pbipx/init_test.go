@@ -277,6 +277,7 @@ func TestInitWritesNothing(t *testing.T) {
 		{"dry run", []string{"init", "--dry-run", "--gitignore"}, nil, 0, "Would register", "", false},
 		{"managed dry run", []string{"init", "--managed", "--dry-run"}, nil, 0, "managed-settings.d", "", false},
 		{"managed names allowManagedHooksOnly", []string{"init", "--managed", "--dry-run"}, nil, 0, `"allowManagedHooksOnly": true`, "", false},
+		{"managed names file mentions", []string{"init", "--managed", "--dry-run"}, nil, 0, `"CLAUDE_CODE_DISABLE_FILE_MENTIONS": "1"`, "", false},
 		{"user-level recommends managed", []string{"init", "--dry-run"}, nil, 0, "use pbipx init --managed", "", false},
 		{"managed", []string{"init", "--managed"}, nil, 0, `"PreToolUse"`, "", true},
 	}
