@@ -83,7 +83,11 @@ func TestShellGitNameOnly(t *testing.T) {
 		// HEAD@{...}:path cuts at the colon outside the braces.
 		{"show at a date, path under a root", sh("git show 'HEAD@{2000-01-01 10:00}:" + reportJSON + "'"), git},
 		{"cat-file at a reflog entry, path away", sh("git cat-file -p 'HEAD@{0}:README.md'"), ""},
-		{"show at a time is a commit, not a path", sh("git show 'HEAD@{10:00}'"), ""},
+		// The reflog's first entry is dated 2100 and its second today, so
+		// HEAD@{10:00} names the first commit once the clock passes 10:00
+		// and the second before; a time late in 2099 always names the
+		// second (git reads no year past 2099 as a date).
+		{"show at a time is a commit, not a path", sh("git show 'HEAD@{2099-12-31 10:00}'"), ""},
 
 		// An alias defined earlier in the line, or a git-<name> program.
 		{"alias defined earlier in the line", sh("git config alias.lp 'log -p' && git lp"), git},
