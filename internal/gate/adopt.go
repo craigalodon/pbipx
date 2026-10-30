@@ -291,8 +291,10 @@ func (f *finder) adoptedNow(root string) bool {
 
 // spots are the paths ev touches, and whether it touches something that
 // cannot be placed: the working directory; a read's or a write's file; a
-// search's path; and for a shell call, every working directory a command
-// runs in and every word placed against it (probeShell).
+// search's path; an LSP call's paths; for a shell call, every working
+// directory a command runs in and every word placed against it
+// (probeShell); and for a PowerShell call, the working directory and every
+// word that looks like a path (probePowerShell).
 func (f *finder) spots() (spots []spot, unknown bool) {
 	ev := f.ev
 	addAll := func(paths []string, container bool) {
@@ -316,6 +318,16 @@ func (f *finder) spots() (spots []spot, unknown bool) {
 		var probed []spot
 		f.probe, probed, unknown = probeShell(ev.Cwd, f.home, ev.Command)
 		spots = append(spots, probed...)
+	case PowerShell:
+		var probed []spot
+		probed, unknown = probePowerShell(ev.Cwd, f.home, ev.Command)
+		spots = append(spots, probed...)
+	case LSP:
+		for _, p := range ev.Paths {
+			if p != "" {
+				addAll(spellings(ev.Cwd, expandHome(p, f.home)), true)
+			}
+		}
 	}
 	return spots, unknown
 }
@@ -416,6 +428,14 @@ func (f *finder) controls() Decision {
 				return deny(ReasonAgentSettings, "the command runs 'pbipx policy approve'; "+
 					"approving the policy is a person's step at a terminal, and an agent may not approve the policy that binds it")
 			}
+		}
+	case PowerShell:
+		words, ok := psWords(f.ev.Command)
+		if !ok {
+			return deny(ReasonInternalError, "the PowerShell command holds more than %d words, too many to judge", maxPSWords)
+		}
+		if d, ok := psControl(f.ev.Cwd, f.home, words, ctl); ok {
+			return d
 		}
 	}
 	return allow()

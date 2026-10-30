@@ -201,6 +201,9 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 			"# or another drop-in in %s). Only managed hooks then\n"+
 			"# run: user and project hooks stop.\n#\n"+
 			"#   \"allowManagedHooksOnly\": true\n", managedSettingsDir())
+		fmt.Fprint(out, "#\n# A file a person @-mentions in a prompt is inserted without a tool call, so\n"+
+			"# no hook sees it. To turn @-mentions of files off, also set:\n#\n"+
+			"#   \"env\": {\"CLAUDE_CODE_DISABLE_FILE_MENTIONS\": \"1\"}\n")
 	case merge.Present:
 		fmt.Fprintf(out, "The gate's hook is already registered in %s.\n", settingsPath)
 	case f.dryRun:

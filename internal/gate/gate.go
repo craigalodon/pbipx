@@ -34,7 +34,13 @@ const (
 	Search Tool = "search" // searches the files under a path
 	Shell  Tool = "shell"  // runs a shell command line
 	Write  Tool = "write"  // creates or changes one file
-	Other  Tool = "other"  // anything else: allowed once the setup loads
+	// PowerShell runs a PowerShell command line, which the gate cannot
+	// parse (powershell.go).
+	PowerShell Tool = "powershell"
+	// LSP asks a language server about the files at Paths, or about the
+	// working directory's project when there are none (powershell.go).
+	LSP   Tool = "lsp"
+	Other Tool = "other" // anything else: allowed once the setup loads
 )
 
 // Event is one tool call, in the agent's terms translated.
@@ -44,7 +50,9 @@ type Event struct {
 	// covers (empty for the working directory), as the agent gave it: it
 	// may be relative to Cwd.
 	Path string
-	// Command is a shell call's command line.
+	// Paths are the files an LSP call names, as the agent gave them.
+	Paths []string
+	// Command is a shell or PowerShell call's command line.
 	Command string
 	// Cwd is the agent's working directory, absolute.
 	Cwd string
@@ -158,6 +166,10 @@ func (s *setup) decide(ev Event) Decision {
 		return s.shell(ev.Command)
 	case Write:
 		return s.write(ev.Path)
+	case PowerShell:
+		return s.powershell(ev.Command)
+	case LSP:
+		return s.lsp(ev.Paths)
 	}
 	return allow()
 }

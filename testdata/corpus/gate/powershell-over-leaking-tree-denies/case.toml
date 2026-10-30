@@ -1,0 +1,7 @@
+description = "the gate cannot parse PowerShell, so any PowerShell call in an adopted repository scans the protected tree"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
+known       = "predecessor"

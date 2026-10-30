@@ -343,6 +343,24 @@ func TestHookCommandScopesToAdoptedRepositories(t *testing.T) {
 	t.Run("outside, cat into the adopted repository", func(t *testing.T) {
 		wantDeny(t, runHook(t, in(outside), command, toolEvent(t, outside, "Bash", "command", "cat '"+filepath.Join(h.repo, visual)+"'")), "finding")
 	})
+	// PowerShell cannot be parsed: in the adopted repository any call
+	// scans the protected tree; elsewhere, touching nothing, it allows.
+	t.Run("adopted, powershell over a leaking tree", func(t *testing.T) {
+		wantDeny(t, runHook(t, h, command, toolEvent(t, h.repo, "PowerShell", "command", "Get-ChildItem")), "finding")
+	})
+	t.Run("not adopted, powershell", func(t *testing.T) {
+		allowed(t, runHook(t, in(plain), command, toolEvent(t, plain, "PowerShell", "command", "Get-Content "+visual)))
+	})
+	t.Run("outside, powershell into the adopted repository", func(t *testing.T) {
+		wantDeny(t, runHook(t, in(outside), command,
+			toolEvent(t, outside, "PowerShell", "command", "Get-Content '"+filepath.Join(h.repo, "notes")+"'")), "finding")
+	})
+	t.Run("powershell without a command", func(t *testing.T) {
+		wantDeny(t, runHook(t, in(outside), command, toolEvent(t, outside, "PowerShell", "description", "x")), "event-error")
+	})
+	t.Run("adopted, lsp on a leaking file", func(t *testing.T) {
+		wantDeny(t, runHook(t, h, command, toolEvent(t, h.repo, "LSP", "filePath", filepath.Join(h.repo, visual))), "finding")
+	})
 }
 
 // toolEvent is a PreToolUse event of tool with one input, from cwd.

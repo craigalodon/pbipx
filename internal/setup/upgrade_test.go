@@ -2,6 +2,7 @@ package setup_test
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/craigalodon/pbipx/internal/setup"
@@ -59,6 +60,12 @@ func TestMergeHookUpgrades(t *testing.T) {
 			name:     "old matcher updated in place",
 			existing: `[{"matcher": "Bash", "hooks": [` + other + `]}, {"matcher": "Read|Grep|Bash", "hooks": [` + gate + `]}, {"matcher": "Edit", "hooks": [` + other + `]}]`,
 			want:     `[{"matcher": "Bash", "hooks": [` + other + `]}, {"matcher": ` + cur + `, "hooks": [` + gate + `]}, {"matcher": "Edit", "hooks": [` + other + `]}]`,
+			updated:  true,
+		},
+		{
+			name:     "the previous release's matcher widened to PowerShell and LSP",
+			existing: `[{"matcher": "Read|Grep|Bash|Write|Edit|MultiEdit|NotebookEdit", "hooks": [` + gate + `]}]`,
+			want:     `[{"matcher": ` + cur + `, "hooks": [` + gate + `]}]`,
 			updated:  true,
 		},
 		{
@@ -165,6 +172,29 @@ func TestMergeHookUpgradesCommandForm(t *testing.T) {
 		mergeAndCheck(t, `{"model": "example-model"}`, h, false,
 			`[{"matcher": `+cur+`, "hooks": [{"type": "command", "command": `+quote(h.Command)+`, "timeout": 300}]}]`, false, 0, 0)
 	})
+}
+
+// TestHookMatcherNamesTheGatedTools checks the matcher is a list of exact
+// tool names, as Claude Code reads one holding only letters and "|", and
+// names every tool that can read file content.
+func TestHookMatcherNamesTheGatedTools(t *testing.T) {
+	for _, r := range setup.HookMatcher {
+		if (r < 'A' || r > 'Z') && (r < 'a' || r > 'z') && r != '|' {
+			t.Fatalf("the matcher holds %q, so Claude Code would read it as a regular expression", r)
+		}
+	}
+	names := map[string]bool{}
+	for _, n := range strings.Split(setup.HookMatcher, "|") {
+		names[n] = true
+	}
+	for _, want := range []string{"Read", "Grep", "Bash", "PowerShell", "LSP", "Write", "Edit", "MultiEdit", "NotebookEdit"} {
+		if !names[want] {
+			t.Errorf("the matcher does not name %s", want)
+		}
+	}
+	if names["Glob"] {
+		t.Error("the matcher names Glob, which prints names only")
+	}
 }
 
 // mergeAndCheck merges h into existing and checks the result, and that a

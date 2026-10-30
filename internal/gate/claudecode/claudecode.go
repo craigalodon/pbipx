@@ -46,6 +46,8 @@ const (
 	toolSearch gate.Tool = "search"
 	toolShell  gate.Tool = "shell"
 	toolWrite  gate.Tool = "write"
+	toolPS     gate.Tool = "powershell"
+	toolLSP    gate.Tool = "lsp"
 	toolOther  gate.Tool = "other"
 )
 
@@ -57,6 +59,10 @@ const maxEvent = 64 << 20
 // work grows with the command's length, and a hook that runs past Claude
 // Code's timeout lets the call through, so a longer one denies.
 const maxField = 1 << 20
+
+// maxPaths bounds the paths an LSP event names, which are judged one by
+// one: more deny, as a long field does.
+const maxPaths = 64
 
 // errEvent is the only parse error. Its text is fixed: the event's own text
 // is never quoted.
@@ -72,12 +78,22 @@ func Deny(reason, message string) gate.Decision {
 //   - Read is a read of tool_input.file_path.
 //   - Grep is a search of tool_input.path (empty: the working directory).
 //   - Bash is a shell command, tool_input.command.
+//   - PowerShell is a PowerShell command, tool_input.command, which must be
+//     present: the gate cannot parse it and judges it as touching every
+//     protected root it can reach.
+//   - LSP is a code intelligence call. Its input is not documented, so
+//     every string field whose name holds "path", "file" or "uri" (case
+//     ignored) is taken as a path, a file:// URI decoded; such a field that
+//     is not a string, or an input that is not an object, is errEvent. With
+//     no path the gate takes the call to touch the working directory's
+//     whole project.
 //   - Write, Edit and MultiEdit are a write of tool_input.file_path, and
-//     NotebookEdit a write of tool_input.notebook_path.
+//     NotebookEdit a write of tool_input.notebook_path, or file_path when
+//     there is none; a NotebookEdit with neither is errEvent.
 //   - Every other tool is "other", Glob included: it prints file names, and
-//     names are schema (principle 1). behavior.md lists Read, Grep, Bash and
-//     the writing tools as the gated tools; every tool not listed is
-//     allowed.
+//     names are schema (principle 1). behavior.md lists Read, Grep, Bash,
+//     PowerShell, LSP and the writing tools as the gated tools; every tool
+//     not listed is allowed.
 //
 // The event must be a JSON object; tool_name and cwd, when present, strings;
 // tool_input, when present, an object; and the field the tool is judged by,
@@ -128,9 +144,24 @@ func ParseEvent(data []byte) (gate.Event, error) {
 	case "Write", "Edit", "MultiEdit":
 		ev.Tool = toolWrite
 		ev.Path, err = field("file_path")
+	case "PowerShell":
+		ev.Tool = toolPS
+		ev.Command, err = field("command")
+		if err == nil && ev.Command == "" {
+			err = errEvent
+		}
+	case "LSP":
+		ev.Tool = toolLSP
+		ev.Paths, err = lspPaths(raw.ToolInput)
 	case "NotebookEdit":
 		ev.Tool = toolWrite
 		ev.Path, err = field("notebook_path")
+		if err == nil && ev.Path == "" {
+			ev.Path, err = field("file_path")
+		}
+		if err == nil && ev.Path == "" {
+			err = errEvent
+		}
 	default:
 		ev.Tool = toolOther
 	}
@@ -164,7 +195,11 @@ func decide(stdin io.Reader, opts gate.Options) gate.Decision {
 	if err != nil {
 		return Deny(ReasonEventError, err.Error())
 	}
-	if len(ev.Command) > maxField || len(ev.Path) > maxField {
+	paths := 0
+	for _, p := range ev.Paths {
+		paths += len(p)
+	}
+	if len(ev.Command) > maxField || len(ev.Path) > maxField || paths > maxField || len(ev.Paths) > maxPaths {
 		return Deny(ReasonInternalError, "the command or path is too long to judge")
 	}
 	return gate.Decide(ev, opts)
