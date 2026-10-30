@@ -1,7 +1,6 @@
 package gate_test
 
 import (
-	"bytes"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -79,8 +78,7 @@ func TestCorpusGateCases(t *testing.T) {
 			if _, err := c.Prepare(cs, root, config, ""); err != nil {
 				t.Fatal(err)
 			}
-			stdin := bytes.ReplaceAll(cs.Stdin, []byte("{root}"), []byte(root))
-			ev, ok := eventFrom(stdin)
+			ev, ok := eventFrom(corpus.Stdin(cs, root))
 			if !ok {
 				// Not an event at all: the adapter's case, not Decide's.
 				if cs.Expected.Decision != "deny" || cs.Expected.Reason != gate.ReasonEventError {

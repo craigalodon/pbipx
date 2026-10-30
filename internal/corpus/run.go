@@ -301,13 +301,18 @@ type Outcome struct {
 func Execute(cs *Case, binary string, p *Prepared) (Outcome, error) {
 	var stdin []byte
 	if cs.HasStdin {
-		stdin = bytes.ReplaceAll(cs.Stdin, []byte(rootPlaceholder), stdinRoot(cs, p.Root))
+		stdin = Stdin(cs, p.Root)
 	}
 	out, err := runBinary(binary, p.Root, CommandArgs(cs, p), CommandEnv(os.Environ(), &cs.Spec, p.ConfigDir), stdin)
 	if err != nil {
 		return out, fmt.Errorf("%s: %w", cs.ID(), err)
 	}
 	return out, nil
+}
+
+// Stdin is a case's stdin with {root} replaced by root (stdinRoot).
+func Stdin(cs *Case, root string) []byte {
+	return bytes.ReplaceAll(cs.Stdin, []byte(rootPlaceholder), stdinRoot(cs, root))
 }
 
 // stdinRoot is the root as {root} becomes in a case's stdin. A gate case's
