@@ -1,0 +1,6 @@
+description = "a build after git checkout names no protected root and runs no reader, so it is not a read after a tree change; allows while the tree leaks"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = ["Doe, Jane"]

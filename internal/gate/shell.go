@@ -142,6 +142,9 @@ func (s *setup) treeChange(v view) string {
 		if !gitBuiltins[inv.sub] {
 			return "git"
 		}
+		if s.branchOnly(inv) {
+			return ""
+		}
 		if gitChangesTree(inv.sub, inv.rest) {
 			return "git " + inv.sub
 		}
@@ -170,6 +173,57 @@ func (s *setup) treeChange(v view) string {
 		}
 	}
 	return ""
+}
+
+// branchOnly reports whether a git checkout -b/-B or switch -c/-C only
+// creates a branch, leaving the tree as it is: no start point, or one that
+// is HEAD's commit, and no paths. An orphan or detached switch is a change.
+func (s *setup) branchOnly(inv gitInvocation) bool {
+	var create []string
+	switch inv.sub {
+	case "checkout":
+		create = []string{"-b", "-B"}
+	case "switch":
+		create = []string{"-c", "-C", "--create", "--force-create"}
+	default:
+		return false
+	}
+	created := false
+	var pos []string
+	for i := 0; i < len(inv.rest); i++ {
+		a := inv.rest[i]
+		switch {
+		case a == "--":
+			return false
+		case slices.Contains(create, a):
+			created = true
+			i++ // the new branch's name
+		case !strings.HasPrefix(a, "-"):
+			pos = append(pos, a)
+		case a == "--orphan" || a == "--detach" || a == "-p" || a == "--patch" || a == "--merge" || a == "-m":
+			return false
+		case strings.HasPrefix(a, "--") && strings.Contains(a, "="):
+		case strings.HasPrefix(a, "--"):
+		default:
+			// A cluster ending in the create flag: -fb NEW.
+			if c := a[len(a)-1:]; slices.Contains(create, "-"+c) {
+				created = true
+				i++
+			}
+		}
+	}
+	switch {
+	case !created || len(pos) > 1:
+		return false
+	case len(pos) == 0:
+		return true
+	}
+	start, err := s.git().value(inv.dir, "rev-parse", "--verify", "--quiet", "--end-of-options", pos[0]+"^{commit}")
+	if err != nil {
+		return false
+	}
+	head, err := s.git().value(inv.dir, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
+	return err == nil && start == head
 }
 
 // gitChangesTree reports whether git's subcommand sub, with the words
@@ -232,58 +286,53 @@ var silent = map[string]bool{
 	"return": true, "sleep": true,
 }
 
-// readsAnything reports whether v, run after a command that changed the
-// working tree, may read what that command wrote: a reading or searching
-// program, or any word that is, or may be, a path. git's own reads are
-// judged by rule 2.
-func (s *setup) readsAnything(v view) bool {
+// reads reports whether v, run after a command that changed the working
+// tree, may read what that command wrote where it matters: a reading or
+// searching program (a reader, a search, find, fd, a shell or eval), or a
+// word, placed against v's working directory, that is, is inside or
+// contains a protected root, names local state or a file that controls
+// the gate, or cannot be placed. A word that only looks like a path
+// (./..., src/) does not count, nor does an output redirection's target.
+// git's own reads are judged by rule 2.
+func (w *walker) reads(v view) bool {
+	s := w.s
 	if judged(v.name) && v.name != "git" {
 		return true
 	}
 	if v.name == "git" || silent[v.name] {
 		return false
 	}
+	if !v.cwd.known() {
+		return true
+	}
 	for _, xw := range v.words {
 		if xw.redirect && !xw.input {
 			continue
 		}
-		if s.pathLike(v, xw) {
+		abss, unknown := s.wordSpellings(v, xw)
+		if unknown && !optionOnly(xw.text) {
+			return true
+		}
+		for _, a := range abss {
+			if w.cache.memo("touches", a, s.touchesAbs) || w.cache.control(a, false, w.controls()) != "" {
+				return true
+			}
+		}
+		if _, ok := s.namesLocalState(v, xw); ok {
 			return true
 		}
 	}
 	return false
 }
 
-// pathLike reports whether a word of v is or may be a path: unknown, a
-// glob, with a separator, ".", "..", "~" first, or a name that exists
-// where v runs. An option counts by its =value.
-func (s *setup) pathLike(v view, xw xword) bool {
-	if !xw.known || xw.glob {
-		return true
+// controls are the files that control the gate, loaded once a decision
+// needs them.
+func (w *walker) controls() controls {
+	if w.ctl == nil {
+		c := loadControls()
+		w.ctl = &c
 	}
-	t := xw.text
-	if strings.HasPrefix(t, "-") {
-		_, val, ok := strings.Cut(t, "=")
-		if !ok {
-			return false
-		}
-		t = val
-	}
-	if t == "" {
-		return false
-	}
-	if t == "." || t == ".." || strings.HasPrefix(t, "~") || strings.ContainsAny(t, `/\`) {
-		return true
-	}
-	if !v.cwd.known() {
-		return true
-	}
-	for _, d := range v.cwd.dirs {
-		if _, err := os.Lstat(filepath.Join(d, t)); err == nil {
-			return true
-		}
-	}
-	return false
+	return *w.ctl
 }
 
 // toolAlone reports whether line is one simple command running the tool,
@@ -370,6 +419,7 @@ type walker struct {
 	readAfterChange bool
 	// tooMany is set when the line holds more than maxCommands commands.
 	tooMany bool
+	ctl     *controls
 }
 
 // commands reads the simple commands cmds of line, nested depth deep, from
@@ -501,7 +551,7 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 
 	// Every command after one that changes the working tree is judged
 	// for reading; the first change is the one named.
-	if w.changed != "" && !w.readAfterChange && s.readsAnything(v) {
+	if w.changed != "" && !w.readAfterChange && w.reads(v) {
 		w.readAfterChange = true
 	}
 	if w.changed == "" {

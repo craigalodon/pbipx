@@ -668,14 +668,23 @@ Decisions by tool. Every tool not listed is allowed.
      `mergetool`, and any subcommand that is not git's own (an alias, a
      plugin); and an archive extracted or a patch applied: `tar -x`,
      `unzip`, `7z x`, `cpio -i`, `ar x`, `gunzip` and kin (not to stdout),
-     `patch`. A command reads when it is a reader, a search, `find`, `fd`,
-     a shell or `eval`, or when any word of it but an output redirection's
-     target is or may be a path: unknown, a glob, with a separator, `.`,
-     `..`, `~` first, or a name that exists where it runs (an option by its
-     `=value`). `echo`, `printf` and the like never read, and git's own
-     reads are judged by rule 2. The change alone, with nothing reading
-     after it, is allowed: the next call is judged against the changed
-     tree.
+     `patch`. Creating a branch is not a change: `git checkout -b` or `-B`
+     and `git switch -c` or `-C` with no paths and no start point, or a
+     start point that resolves to HEAD's commit (`--orphan` and
+     `--detach` are changes). A command reads when it is a reader, a
+     search, `find`, `fd`, a shell or `eval`; or when a word of it (not an
+     output redirection's target; an option by its `=value`), placed
+     against the working directory it runs in, is, is inside or contains a
+     protected root, names local state or a file that controls the gate, or
+     cannot be placed (an unknown expansion, an unknown working
+     directory). A word that only looks like a path (`./...`, `src/`, `-o
+     out.txt`) does not count, so `git checkout main && go test ./...`,
+     `git switch feature && make build` and `git pull && npm install` are
+     allowed (principle 6). `echo`, `printf` and the like never read, and
+     git's own reads are judged by rule 2. The change alone, with nothing
+     reading after it, is allowed: the next call is judged against the
+     changed tree. `git stash` stays a change: the read after it sees
+     HEAD's content, which is history.
   3. If the working directory is inside a protected root, or the command
      names a root as a whole word, the protected tree is scanned as for Grep.
      In pbipx the tree is scanned too when:
