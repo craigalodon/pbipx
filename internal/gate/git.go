@@ -115,6 +115,39 @@ var gitNameOnly = []string{
 	"--name-status", "-z", "--no-color", "--no-ext-diff", "--no-textconv", "--no-relative",
 }
 
+// gitNeverContent are git's commands that print no file content whatever
+// their options: a word given to one that cannot be told is judged as
+// usual. Before "--", such a word given to any other could be an option
+// that turns content on (-p, -v, --cc, --file), and denies it.
+var gitNeverContent = map[string]bool{
+	"branch": true, "fetch": true, "push": true, "remote": true, "tag": true, "init": true,
+	"ls-remote": true, "ls-files": true, "ls-tree": true, "rev-parse": true, "merge-base": true,
+	"describe": true, "show-ref": true, "for-each-ref": true, "count-objects": true, "version": true,
+	"help": true, "gc": true,
+}
+
+// unknownOption reports whether one of args, sub's words before "--", is
+// one that cannot be told (unknown) and could be an option: any but a
+// message, the value of -m or --message given apart or attached, for a
+// subcommand whose -m takes one (git commit -m "$(cat <<EOF ...)").
+func unknownOption(sub string, args, unknown []string) bool {
+	takesMessage := gitMessageSubs[sub]
+	for i, a := range args {
+		if !slices.Contains(unknown, a) {
+			continue
+		}
+		message := strings.HasPrefix(a, "--message=") || (strings.HasPrefix(a, "-m") && !strings.HasPrefix(a, "--")) ||
+			(i > 0 && (args[i-1] == "-m" || args[i-1] == "--message"))
+		if !takesMessage || !message {
+			return true
+		}
+	}
+	return false
+}
+
+// gitMessageSubs are the subcommands whose -m and --message take a message.
+var gitMessageSubs = map[string]bool{"commit": true, "merge": true, "stash": true, "notes": true, "tag": true}
+
 // gitBuiltins are git's own commands. git runs a built-in command before it
 // looks for an alias of the same name, so these are never resolved as
 // aliases. A name that is neither one of these nor an alias is denied when
@@ -494,11 +527,21 @@ func (s *setup) gitContent(args, unknown []string) string {
 		// The subcommand itself cannot be told.
 		return "git"
 	}
+	if slices.ContainsFunc(inv.globals, func(g string) bool { return slices.Contains(unknown, g) }) {
+		// A global option that cannot be told could be any of them.
+		return inv.sub
+	}
 	inv, ok = s.resolveAlias(inv)
 	if !ok || inv.unsafe {
 		return inv.sub
 	}
 	inv.unknown = len(unknown) > 0
+	if !gitNeverContent[inv.sub] && unknownOption(inv.sub, inv.args, unknown) {
+		// Before "--" a word that cannot be told could be an option
+		// that turns content on: -p, -v, --cc, a stash or reflog
+		// subcommand.
+		return inv.sub
+	}
 	s.locate(&inv)
 	switch inv.place {
 	case gitForeign, gitNongit:

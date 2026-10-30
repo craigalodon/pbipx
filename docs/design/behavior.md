@@ -648,11 +648,23 @@ Decisions by tool. Every tool not listed is allowed.
        make every pathspec unprovable;
      - an argument that cannot be told (`$X`, `"$X"`, `${X}ip`, `$(...)`,
        a Windows path that cannot be placed) could be any pathspec,
-       revision, option or directory (`-C $D`): a subcommand that prints
-       content is then denied without asking git anything with the word
-       unexpanded, and one that does not (`log --oneline $REV`, `status`,
-       `add`, `branch`, `fetch`) is allowed. A subcommand that cannot be
-       told (`git $SUB`) is denied;
+       revision, option or directory (`-C $D`). Before `--` it could be an
+       option that turns content on (`-p`, `-v`, `--cc`, `--file`, a
+       stash or reflog subcommand), so it denies every subcommand but
+       those that print no file content whatever their options (`branch`,
+       `fetch`, `push`, `remote`, `tag`, `init`, `ls-remote`, `ls-files`,
+       `ls-tree`, `rev-parse`, `merge-base`, `describe`, `show-ref`,
+       `for-each-ref`, `count-objects`, `version`, `help`, `gc`):
+       `git log --oneline $REV`, `git status $X`, `git add $X` and
+       `git config --get $K` are denied. A message is never an option:
+       the value of `-m` or `--message` for `commit`, `merge`, `stash`,
+       `notes` and `tag` (`git commit -m "$(cat <<'EOF' ...)"`) is
+       judged as usual. After `--` it is a pathspec, and
+       a subcommand that prints content is denied without asking git
+       anything with the word unexpanded, while one that does not
+       (`log --oneline -- $X`, `status -- $X`, `add -- $X`) is allowed.
+       A subcommand or a global option that cannot be told (`git $SUB`,
+       `git --namespace=$N`) is denied;
      - environment assignments before git: any `GIT_` variable but the
        author and committer identities, tracing and a few others, a
        `GIT_PAGER` or `PAGER` other than `cat`, an editor other than `true`

@@ -272,12 +272,39 @@ func TestShellGitUnknownWords(t *testing.T) {
 		{"cat-file of a variable", sh("git cat-file -p $OBJ"), git},
 		{"stash show -p of a variable", sh("git stash show -p $S"), git},
 		{"unknown subcommand", sh("git $SUB"), git},
-		{"log --oneline of a variable", sh("git log --oneline $REV"), ""},
-		{"diff --stat of a variable", sh("git diff --stat -- $X"), ""},
-		{"status of a variable", sh("git status --short -- $X"), ""},
+		{"unknown word before the subcommand", sh("git $OPT log --oneline"), git},
+		{"unknown global option", sh("git --namespace=$N log --oneline"), git},
+		// config --file reads any file as configuration.
+		{"config --get of a variable", sh("git config --get $K"), git},
+		// Before "--" a word that cannot be told could be -p, -v or the
+		// like.
+		{"log --oneline of a variable", sh("git log --oneline $REV"), git},
+		{"log of a variable", sh("git log $X"), git},
+		{"whatchanged of a variable", sh("git whatchanged $X"), git},
+		{"reflog of a variable", sh("git reflog $X"), git},
+		{"diff --stat of a variable", sh("git diff --stat $X"), git},
+		{"status of a variable", sh("git status $X"), git},
+		{"commit of a variable", sh("git commit $X"), git},
+		{"log -m of a variable", sh("git log -m $X"), git},
+		{"log -m with a variable attached", sh("git log -m$X"), git},
+		// A message is never an option.
+		{"commit -m of a variable", sh(`git commit -m "$MSG"`), ""},
+		{"commit -m of a substitution", sh("git commit -m \"$(cat <<'EOF'\nA message\nEOF\n)\""), ""},
+		{"commit --message= of a variable", sh(`git commit --message="$MSG"`), ""},
+		{"stash push -m of a variable", sh(`git stash push -m "$MSG"`), ""},
+		{"add of a variable", sh("git add $X"), git},
+		{"stash of a variable", sh("git stash $X"), git},
+		// After "--" it is a pathspec, never an option.
+		{"log --oneline limited to a variable", sh("git log --oneline -- $X"), ""},
+		{"diff --stat limited to a variable", sh("git diff --stat -- $X"), ""},
+		{"status limited to a variable", sh("git status --short -- $X"), ""},
+		{"add limited to a variable", sh("git add -- $X"), ""},
 		{"status in an unknown directory", sh("git -C $D status"), ""},
-		{"add of a variable", sh("git add -- $X"), ""},
+		// Commands that print no file content whatever their options.
 		{"branch of a variable", sh("git branch $B"), ""},
 		{"fetch of a variable", sh("git fetch $REMOTE"), ""},
+		{"push of a variable", sh("git push $REMOTE $B"), ""},
+		{"tag -l of a variable", sh("git tag -l $T"), ""},
+		{"remote of a variable", sh("git remote $X"), ""},
 	})
 }
