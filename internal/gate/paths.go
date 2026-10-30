@@ -400,8 +400,47 @@ func (s *setup) touchesIn(dir, p string) bool {
 	return slices.ContainsFunc(spellings(dir, p), s.touchesAbs)
 }
 
-// touches is touchesIn against the gate's working directory.
-func (s *setup) touches(p string) bool { return s.touchesIn(s.cwd, p) }
+// whereRel says, in words, how the repository-relative rel touches a
+// protected root (touchesRel): "is the protected root R", "is in the
+// protected root R" or "holds the protected root R", R being the root,
+// a nested work tree's with its place, printed by displayPath. A root
+// comes from the policy, never from the call.
+func (s *setup) whereRel(rel string) string {
+	fs := s.frames(rel)
+	for _, f := range fs {
+		for _, r := range f.roots() {
+			switch {
+			case strings.EqualFold(f.sub, r):
+				return "is the protected root " + displayPath(f.full(r))
+			case hasPrefixFold(f.sub, r):
+				return "is in the protected root " + displayPath(f.full(r))
+			}
+		}
+	}
+	for _, f := range fs {
+		for _, r := range f.roots() {
+			if f.sub == "." || hasPrefixFold(r, f.sub) {
+				return "holds the protected root " + displayPath(f.full(r))
+			}
+		}
+	}
+	for _, n := range s.nestedBelow(rel) {
+		for _, p := range s.nestedPolicies(n) {
+			if roots := p.ProtectedRoots(); len(roots) > 0 {
+				return "holds the protected root " + displayPath(n+"/"+roots[0])
+			}
+		}
+	}
+	return "holds a protected root"
+}
+
+// whereAbs is whereRel for an absolute spelling that touchesAbs.
+func (s *setup) whereAbs(a string) string {
+	if r, ok := relTo(s.repo.Root, a, true); ok {
+		return s.whereRel(r)
+	}
+	return "is above the repository, so it holds every protected root"
+}
 
 // hasGlob reports whether w has a shell glob character.
 func hasGlob(w string) bool { return strings.ContainsAny(w, "*?[") }

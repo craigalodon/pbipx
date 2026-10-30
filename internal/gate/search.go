@@ -214,16 +214,39 @@ type searchArgs struct {
 	// reads are the indexes of the arguments holding a file an option
 	// names for reading (-f FILE), with the file.
 	reads []searchRead
-	// unsafe is set by an option outside the allowlist, unknown by an
-	// option the gate does not know, everywhere by one that reads files
-	// the command line does not name; noConfig by one that turns the
-	// configuration off.
-	unsafe, unknown, everywhere, noConfig bool
+	// unsafe names the first option outside the allowlist, everywhere the
+	// first that reads files the command line does not name, each as the
+	// searcher's table spells it ("" for none); unknown is set by an
+	// option the gate does not know, which is never named; noConfig by one
+	// that turns the configuration off.
+	unsafe, everywhere string
+	unknown, noConfig  bool
 }
 
 type searchRead struct {
 	index int
 	file  string
+}
+
+// tableLong is "--" and the entry of list that opt is: an option's name
+// as the gate's own table spells it, so a message never echoes a word of
+// the command.
+func tableLong(list []string, opt string) string {
+	if i := slices.Index(list, opt); i >= 0 {
+		return "--" + list[i]
+	}
+	return ""
+}
+
+// tableShort is "-" and the letter c as set holds it ("-NUM" for a digit).
+func tableShort(set string, c byte) string {
+	if i := strings.IndexByte(set, c); i >= 0 {
+		return "-" + set[i:i+1]
+	}
+	if '0' <= c && c <= '9' {
+		return "-NUM"
+	}
+	return ""
 }
 
 // parseSearch sorts rest, the arguments of a search program described by
@@ -235,6 +258,16 @@ func parseSearch(sr searcher, rest []string) searchArgs {
 	read := func(i int, file string) {
 		if file != "" && file != "-" {
 			a.reads = append(a.reads, searchRead{i, file})
+		}
+	}
+	unsafe := func(name string) {
+		if a.unsafe == "" {
+			a.unsafe = name
+		}
+	}
+	everywhere := func(name string) {
+		if a.everywhere == "" {
+			a.everywhere = name
 		}
 	}
 	for i := 0; i < len(rest); i++ {
@@ -254,19 +287,25 @@ func parseSearch(sr searcher, rest []string) searchArgs {
 			}
 			switch {
 			case slices.Contains(sr.longEverywhere, opt):
-				a.everywhere = true
+				everywhere(tableLong(sr.longEverywhere, opt))
 			case slices.Contains(sr.noConfig, opt):
 				a.noConfig = true
 			case slices.Contains(sr.longSafe, opt):
-			case slices.Contains(sr.longWithValue, opt) || slices.Contains(sr.longFlags, opt):
-				a.unsafe = true
+			case slices.Contains(sr.longWithValue, opt):
+				name := tableLong(sr.longWithValue, opt)
+				if name == "--directories" && value == "recurse" {
+					name = "--directories=recurse"
+				}
+				unsafe(name)
+			case slices.Contains(sr.longFlags, opt):
+				unsafe(tableLong(sr.longFlags, opt))
 			default:
-				a.unsafe, a.unknown = true, true
+				a.unknown = true
 				// An abbreviation that getopt would take for an option
 				// that reads anywhere.
 				for _, e := range sr.longEverywhere {
 					if opt != "" && strings.HasPrefix(e, opt) {
-						a.everywhere = true
+						everywhere("an abbreviation of " + tableLong(sr.longEverywhere, e))
 					}
 				}
 			}
@@ -283,14 +322,20 @@ func parseSearch(sr searcher, rest []string) searchArgs {
 				safe := strings.IndexByte(sr.safe, c) >= 0
 				switch {
 				case strings.IndexByte(sr.everywhere, c) >= 0:
-					a.everywhere = true
+					everywhere(tableShort(sr.everywhere, c))
 					break cluster
 				case strings.IndexByte(sr.withValue, c) >= 0:
-					a.unsafe = a.unsafe || !safe
 					value, at := w[j+1:], i
 					if value == "" && i+1 < len(rest) {
 						i++
 						value, at = rest[i], i
+					}
+					if !safe {
+						name := tableShort(sr.withValue, c)
+						if name == "-d" && value == "recurse" {
+							name = "-d recurse"
+						}
+						unsafe(name)
 					}
 					if strings.IndexByte(sr.file, c) >= 0 {
 						read(at, value)
@@ -298,10 +343,12 @@ func parseSearch(sr searcher, rest []string) searchArgs {
 					patternGiven = patternGiven || strings.IndexByte(sr.pattern, c) >= 0
 					break cluster
 				case strings.IndexByte(sr.flags, c) >= 0 || sr.digits && '0' <= c && c <= '9':
-					a.unsafe = a.unsafe || !safe
+					if !safe {
+						unsafe(tableShort(sr.flags, c))
+					}
 					patternGiven = patternGiven || strings.IndexByte(sr.noPattern, c) >= 0
 				default:
-					a.unsafe, a.unknown = true, true
+					a.unknown = true
 					break cluster
 				}
 			}
@@ -316,10 +363,41 @@ func parseSearch(sr searcher, rest []string) searchArgs {
 	return a
 }
 
+// searchScope is what one search reads, and why.
+type searchScope struct {
+	// operands are the paths it searches, reads the files its options
+	// name, each read recursively from the command's working directory.
+	operands, reads []string
+	// widen says why it searches its working directory as well, ""
+	// when it does not; everywhere why it can read files the command line
+	// does not name, "" when it cannot. Both are fixed words and option
+	// names from the searcher's table.
+	widen, everywhere string
+}
+
+// paths are the operands, the working directory (".") when the search
+// widens to it, then the files its options name.
+func (sc searchScope) paths() []string {
+	out := slices.Clone(sc.operands)
+	if sc.widen != "" {
+		out = append(out, ".")
+	}
+	return append(out, sc.reads...)
+}
+
 // searchReads returns what the search v reads: the paths it reads under,
 // each read recursively from the command's working directory, and
 // everywhere when it can read files the command line does not name;
 // nothing when v is not a search.
+func (w *walker) searchReads(v view) (paths []string, everywhere bool) {
+	sc := w.searchScope(v)
+	if sc.everywhere != "" {
+		return nil, true
+	}
+	return sc.paths(), false
+}
+
+// searchScope is searchReads with the reasons.
 //
 // A search is confined to the files it names only when every option is in
 // its allowlist and no configuration applies; GNU grep given no file then
@@ -327,68 +405,84 @@ func parseSearch(sr searcher, rest []string) searchArgs {
 // an option the gate does not know, a configuration, or an operand that is
 // a glob, under its working directory as well. A file an option names
 // (-f FILE) is read as well.
-func (w *walker) searchReads(v view) (paths []string, everywhere bool) {
+func (w *walker) searchScope(v view) searchScope {
+	var sc searchScope
 	sr, ok := searchers[v.name]
 	if !ok {
-		return nil, false
+		return sc
 	}
 	// An argument that cannot be told could be any option or any path.
 	if slices.Contains(v.restKnown, false) {
-		return nil, true
+		sc.everywhere = "an argument the gate cannot expand"
+		return sc
 	}
 	a := parseSearch(sr, v.rest)
-	if a.everywhere {
-		return nil, true
+	if a.everywhere != "" {
+		sc.everywhere = "the option " + a.everywhere + ", which reads files the command does not name"
+		if strings.HasPrefix(a.everywhere, "an ") {
+			sc.everywhere = a.everywhere + ", which reads files the command does not name"
+		}
+		return sc
 	}
-	config := !a.noConfig && w.searchConfig(sr, v)
-	widen := a.unknown || config
-	if len(a.operands) == 0 {
-		widen = widen || !sr.stdin || a.unsafe
+	config := ""
+	if !a.noConfig {
+		config = w.searchConfig(sr, v)
+	}
+	switch {
+	case a.unknown:
+		sc.widen = "an option the gate does not know"
+	case config != "":
+		sc.widen = config
+	case len(a.operands) == 0 && a.unsafe != "":
+		sc.widen = "the option " + a.unsafe + ", with no file operands"
+	case len(a.operands) == 0 && !sr.stdin:
+		sc.widen = "no file operands"
 	}
 	for _, i := range a.operands {
 		op := v.rest[i]
 		if op == "-" {
 			continue
 		}
-		paths = append(paths, op)
-		if strings.ContainsAny(op, "*?[{") {
-			widen = true
+		sc.operands = append(sc.operands, op)
+		if strings.ContainsAny(op, "*?[{") && sc.widen == "" {
+			sc.widen = "a file operand that is a pattern"
 		}
 	}
-	if widen {
-		paths = append(paths, ".")
-	}
 	for _, r := range a.reads {
-		paths = append(paths, r.file)
+		sc.reads = append(sc.reads, r.file)
 	}
-	return paths, false
+	return sc
 }
 
-// searchConfig reports whether a configuration could change what the
-// search sr reads: one of its variables is set, in the gate's environment
-// or anywhere in the command line, or one of its files exists in the
-// command's working directory or the home directory (which counts as
-// existing when it cannot be told, or when the line sets HOME).
-func (w *walker) searchConfig(sr searcher, v view) bool {
+// searchConfig says what configuration could change what the search sr
+// reads, "" when none: one of its variables is set, in the gate's
+// environment or anywhere in the command line, or one of its files exists
+// in the command's working directory or the home directory (which counts
+// as existing when it cannot be told, or when the line sets HOME). It
+// names the variable or file from sr's table.
+func (w *walker) searchConfig(sr searcher, v view) string {
 	for _, name := range sr.configEnv {
 		if os.Getenv(name) != "" || w.linesMention(name) {
-			return true
+			return name + " is set"
 		}
 	}
 	if len(sr.configFiles) == 0 {
-		return false
+		return ""
 	}
-	if w.s.home == "" || w.linesMention("HOME=") {
-		return true
+	switch {
+	case w.s.home == "":
+		return "a " + sr.configFiles[0] + " configuration file may exist (the home directory is unknown)"
+	case w.linesMention("HOME="):
+		return "a " + sr.configFiles[0] + " configuration file may exist (the command sets HOME)"
 	}
 	for _, d := range append(slices.Clone(v.cwd.dirs), w.s.home) {
 		for _, f := range sr.configFiles {
 			if _, err := os.Lstat(filepath.Join(hostPath(d), f)); !errors.Is(err, fs.ErrNotExist) {
-				return true
+				return "a " + f + " configuration file"
 			}
 		}
 	}
-	return false
+	return ""
 }
 
 // linesMention reports whether any line read holds s.

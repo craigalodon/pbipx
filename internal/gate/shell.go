@@ -62,11 +62,8 @@ func (s *setup) shell(line string) Decision {
 	}
 	// 2. git printing content git history holds.
 	for _, v := range w.views {
-		if sub := s.gitRule(v); sub != "" {
-			return deny(ReasonGitContent,
-				"%s prints file content, and its pathspecs do not provably avoid every protected root; "+
-					"git history cannot be vetted. A summary (--stat, --name-only) or pathspecs that exclude the roots are allowed",
-				gitLabel(sub))
+		if g := s.gitRule(v); g != nil {
+			return deny(ReasonGitContent, "%s", g.message())
 		}
 	}
 	// A command that changes the working tree, then one that reads: the
@@ -74,21 +71,21 @@ func (s *setup) shell(line string) Decision {
 	if w.readAfterChange {
 		return deny(ReasonGitContent,
 			"%s changes the working tree, and a later command in the line reads files; the read would be judged "+
-				"against the tree as it was before. Run the change on its own, then the read as a separate call",
-			w.changed)
+				"against the tree as it was before. %s",
+			w.changed, hintChange)
 	}
 	// Divergence: naming local state denies, as a Read of it does.
 	for _, v := range w.views {
 		for _, xw := range v.words {
 			if rel, ok := s.namesLocalState(v, xw); ok {
-				return deny(ReasonLocalState, "the command names %s, Power BI Desktop local state, which is never read",
-					displayPath(rel))
+				return deny(ReasonLocalState, "the command names %s, Power BI Desktop local state, which is never read. %s",
+					displayPath(rel), hintLocal)
 			}
 		}
 	}
 	// 3 and 4: a command that can reach a protected root scans the tree.
-	if w.reaches() {
-		return s.tree("a shell command over a protected root")
+	if t := w.reaches(); t.set() {
+		return s.tree(t)
 	}
 	return allow()
 }
@@ -407,10 +404,10 @@ type walker struct {
 	s     *setup
 	views []view
 	lines []string
-	// reach is set when something read along the way touches every
-	// protected root: a line nested too deep or built at run time, or a
-	// find or xargs reading under a root.
-	reach bool
+	// reach is set, with the first trigger found, when something read
+	// along the way touches every protected root: a line nested too deep
+	// or built at run time, or a find or xargs reading under a root.
+	reach trigger
 	cache *spellCache
 	// changed names the first command that changes the working tree
 	// (treeChange), "" before one; readAfterChange is set when a command
@@ -432,7 +429,7 @@ type walker struct {
 // the working directory st, which cd changes for the commands after it.
 func (w *walker) commands(line string, cmds []simple, st *cwdState, depth int) {
 	if depth > maxDepth {
-		w.reach = true
+		w.setReach(whyTooDeep, hintPlain)
 		return
 	}
 	w.lines = append(w.lines, line)
@@ -461,7 +458,7 @@ func (w *walker) commands(line string, cmds []simple, st *cwdState, depth int) {
 		if c.fallback && (judged(v.name) || strings.Contains(line, "$(") || strings.Contains(line, "`")) {
 			// The line did not tokenize: what a reading command reads, or
 			// what a substitution runs, cannot be told.
-			w.reach = true
+			w.setReach("the line has an unbalanced quote or a trailing backslash, so what it reads cannot be told", hintQuotes)
 		}
 		if c.pipeIn && shellReadsScript(v) {
 			w.pipedScript(prev, v, depth)
@@ -474,7 +471,7 @@ func (w *walker) commands(line string, cmds []simple, st *cwdState, depth int) {
 		} else if lister != nil && (slices.Contains(v.under, "xargs") || v.name == "parallel") {
 			// find P ... | xargs ... reads every file find prints.
 			for _, p := range listRoots(*lister) {
-				w.reachesIn(lister.cwd, p)
+				w.reachesIn(lister.cwd, p, "xargs or parallel reads the files find or fd lists")
 			}
 		}
 		prev = &cmds[i]
@@ -484,7 +481,7 @@ func (w *walker) commands(line string, cmds []simple, st *cwdState, depth int) {
 // line reads a nested command line.
 func (w *walker) line(line string, st *cwdState, depth int) {
 	if depth > maxDepth {
-		w.reach = true
+		w.setReach(whyTooDeep, hintPlain)
 		return
 	}
 	w.commands(line, splitCommands(line), st, depth)
@@ -501,7 +498,7 @@ func shellReadsScript(v view) bool {
 // arguments of an echo or printf. Anything else is built at run time.
 func (w *walker) pipedScript(prev *simple, v view, depth int) {
 	if prev == nil {
-		w.reach = true
+		w.setReach(whyPipedScript, hintPlain)
 		return
 	}
 	pv := w.s.viewOf(*prev, v.cwd)
@@ -521,7 +518,7 @@ func (w *walker) pipedScript(prev *simple, v view, depth int) {
 		fed = true
 	}
 	if !fed {
-		w.reach = true
+		w.setReach(whyPipedScript, hintPlain)
 	}
 }
 
@@ -532,24 +529,69 @@ func docKnown(doc *heredoc) bool {
 }
 
 // reachesIn sets reach when p, from the working directory st, touches a
-// protected root, or when st is unknown and p relative.
-func (w *walker) reachesIn(st cwdState, p string) {
+// protected root, or when st is unknown and p relative. why says what
+// reads under p, in fixed words; hint what to do instead.
+func (w *walker) reachesIn(st cwdState, p, why string) {
 	if w.probe {
 		w.probeIn(st, p)
 		return
 	}
 	if !st.known() {
 		if !fullPath(p) || w.s.touchesIn("/", p) {
-			w.reach = true
+			w.setReach(why+", from a working directory the gate cannot tell", hintLister)
 		}
 		return
 	}
 	for _, d := range st.dirs {
-		if w.s.touchesIn(d, p) {
-			w.reach = true
+		for _, a := range spellings(d, p) {
+			if w.s.touchesAbs(a) {
+				w.setReach(why+", in a directory that "+w.s.whereAbs(a), hintLister)
+				return
+			}
 		}
 	}
 }
+
+// trigger is why a call reaches the protected tree, in fixed words and
+// paths printed by displayPath, and one short thing to do instead. The
+// zero trigger is none.
+type trigger struct{ why, hint string }
+
+func (t trigger) set() bool { return t.why != "" }
+
+// setReach records the first trigger that makes the line reach every
+// protected root.
+func (w *walker) setReach(why, hint string) {
+	if !w.reach.set() {
+		w.reach = trigger{why, hint}
+	}
+}
+
+// The triggers that recur.
+const (
+	whyTooDeep     = "a command line is nested more than 4 deep, too deep to follow"
+	whyPipedScript = "a shell reads its script from a pipe whose content is built at run time"
+)
+
+// The hints a refusal ends with: one short thing to do instead.
+const (
+	hintSearch  = "Name the files to search explicitly, or exclude the protected folders."
+	hintCwd     = "Run it from outside the protected folders; use Read for a single file there."
+	hintNames   = "Leave the protected folders out of the command; use Read for a single file there."
+	hintExpand  = "Write the paths out in full, without variables or command substitutions."
+	hintPlain   = "Write the command out plainly, without building it at run time or nesting it more than 4 deep."
+	hintOther   = "Run the command in bash directly, with its paths written out."
+	hintLister  = "Point find or fd away from the protected folders, or exclude them."
+	hintQuotes  = "Balance the quotes in the command."
+	hintGit     = "Limit the paths (`-- src`) or use --stat."
+	hintChange  = "Run the change on its own, then the read as a separate call."
+	hintSelect  = "Clear the selection in Power BI Desktop and save, or ask a person to run `pbipx scan` at a terminal."
+	hintValue   = "Remove the value from the file in Power BI Desktop or an editor, or ask a person to run `pbipx scan` at a terminal."
+	hintVet     = "Ask a person to cover the file in the policy (.pbipx.toml), or leave it out of the call."
+	hintUnread  = "Check that the file can be read, or ask a person to run `pbipx scan` at a terminal."
+	hintLocal   = "Leave Power BI Desktop's .pbi folders out of the call; Desktop keeps them on its own."
+	hintSetting = "Ask a person to make the change at a terminal."
+)
 
 // simple records one simple command run from st, reads what it nests, and
 // applies a cd to st.
@@ -608,18 +650,18 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 		if !strings.Contains(strings.Join(v.rest, " "), ":::") {
 			// Arguments from the input: like xargs.
 			if name, _ := program(parallelTemplate(v.rest)); readers[name] {
-				w.reachesIn(v.cwd, ".")
+				w.reachesIn(v.cwd, ".", "parallel runs a reader on the file names its input carries")
 			}
 		}
 	case "pwsh", "pwsh.exe", "powershell", "powershell.exe", "cmd", "cmd.exe":
 		// No parser for these: a command string, or a script on the
 		// input, could read anything.
 		if v.pipeIn || len(v.rest) > 0 && !versionOnly(v.rest) {
-			w.reach = true
+			w.setReach("PowerShell or cmd runs a command the gate cannot read", hintOther)
 		}
 	case "ssh", "su", "runuser", "machinectl", "sshpass":
 		if remoteCommand(v.name, v.rest) || v.pipeIn {
-			w.reach = true
+			w.setReach("ssh, su, runuser or machinectl runs a command the gate cannot follow", hintOther)
 		}
 	case "find":
 		for _, exec := range findExecs(v.rest) {
@@ -627,7 +669,7 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 		}
 		if findReads(v.rest) {
 			for _, p := range findPaths(v.rest) {
-				w.reachesIn(v.cwd, p)
+				w.reachesIn(v.cwd, p, "find runs a command on, or reads, the files it finds")
 			}
 		}
 	case "fd", "fdfind":
@@ -637,7 +679,7 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 		}
 		if len(execs) > 0 {
 			for _, p := range paths {
-				w.reachesIn(v.cwd, p)
+				w.reachesIn(v.cwd, p, "fd runs a command on the files it finds")
 			}
 		}
 	case "cd", "pushd", "popd", "chdir":
@@ -648,7 +690,7 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 	}
 	// xargs running a reader reads files named on its input, from here.
 	if slices.Contains(v.under, "xargs") && readers[v.name] {
-		w.reachesIn(v.cwd, ".")
+		w.reachesIn(v.cwd, ".", "xargs runs a reader on the file names its input carries")
 	}
 	return v
 }
@@ -927,7 +969,7 @@ func (w *walker) nested(line string, known bool, st cwdState, depth int) {
 func (w *walker) nestedIn(line string, known bool, st *cwdState, depth int) {
 	if !known {
 		// Built at run time: what it runs cannot be told.
-		w.reach = true
+		w.setReach("a nested command line is built at run time (an expansion in sh -c, eval or the like)", hintPlain)
 	}
 	w.line(line, st, depth+1)
 }
@@ -1716,7 +1758,7 @@ func policyApprove(args []string) bool {
 // gitRule decides rule 2 for v, from each spelling of its working
 // directory; from an unknown one, as if from each protected root, where
 // every relative pathspec touches the root.
-func (s *setup) gitRule(v view) string {
+func (s *setup) gitRule(v view) *gitDenial {
 	dirs := v.cwd.dirs
 	if !v.cwd.known() {
 		dirs = []string{s.repo.Root}
@@ -1727,11 +1769,11 @@ func (s *setup) gitRule(v view) string {
 	for _, d := range dirs {
 		in := *s
 		in.cwd = d
-		if sub := in.gitContent(v.argv); sub != "" {
-			return sub
+		if g := in.gitContent(v.argv); g != nil {
+			return g
 		}
 	}
-	return ""
+	return nil
 }
 
 // namesLocalState reports whether xw, in v, names a local-state file or a
@@ -1801,16 +1843,19 @@ var readers = map[string]bool{
 // one, or contains one; a reading command has a word that cannot be
 // placed; a search reads under a path that touches one; or find, xargs
 // or a nested line reach one (walker.reach). A command that only lists
-// names (lister) reaches nothing.
-func (w *walker) reaches() bool {
+// names (lister) reaches nothing. It returns the first trigger found, the
+// zero trigger when there is none. A trigger names programs only from the
+// gate's own tables and paths only as protected roots, never a word of the
+// command.
+func (w *walker) reaches() trigger {
 	s := w.s
-	if w.reach {
-		return true
+	if w.reach.set() {
+		return w.reach
 	}
 	for _, line := range w.lines {
 		for _, root := range s.policy.ProtectedRoots() {
 			if namesRootOutsideListers(line, root) {
-				return true
+				return trigger{"the command names the protected root " + displayPath(root), hintNames}
 			}
 		}
 	}
@@ -1820,33 +1865,76 @@ func (w *walker) reaches() bool {
 		}
 		inRoot := func(d string) bool { return w.cache.memo("inroot", d, s.dirInRoot) }
 		touches := func(a string) bool { return w.cache.memo("touches", a, s.touchesAbs) }
-		if !v.cwd.known() || slices.ContainsFunc(v.cwd.dirs, inRoot) {
-			return true
+		if !v.cwd.known() {
+			return trigger{"a cd, pushd or popd moves a command to a working directory the gate cannot tell", hintExpand}
+		}
+		if i := slices.IndexFunc(v.cwd.dirs, inRoot); i >= 0 {
+			d := v.cwd.dirs[i]
+			if samePath(d, s.cwd, s.fold) {
+				return trigger{"the working directory " + s.whereDir(d), hintCwd}
+			}
+			return trigger{"a cd moves a command into a directory that " + s.whereDir(d), hintNames}
 		}
 		_, search := searchers[v.name]
 		reader := readers[v.name] || search
 		for _, xw := range v.words {
 			abss, unknown := s.wordSpellings(v, xw)
 			if unknown && reader && !optionOnly(xw.text) {
-				return true
+				return trigger{v.name + " is given a word with an expansion the gate cannot resolve", hintExpand}
 			}
-			if slices.ContainsFunc(abss, touches) {
-				return true
+			if i := slices.IndexFunc(abss, touches); i >= 0 {
+				hint := hintNames
+				who := "a word of the command names a path that "
+				switch {
+				case search:
+					who, hint = v.name+" searches a path that ", hintSearch
+				case reader:
+					who = v.name + " is given a path that "
+				case v.name == "cd" || v.name == "pushd" || v.name == "chdir":
+					who = "a cd moves the shell into a directory that "
+				}
+				return trigger{who + s.whereAbs(abss[i]), hint}
 			}
 		}
-		paths, everywhere := w.searchReads(v)
-		if everywhere {
-			return true
+		sc := w.searchScope(v)
+		if sc.everywhere != "" {
+			return trigger{v.name + " is taken to read files anywhere: " + sc.everywhere, hintSearch}
 		}
-		for _, p := range paths {
-			for _, d := range v.cwd.dirs {
-				if s.touchesIn(d, p) {
-					return true
+		touched := func(ps []string) string {
+			for _, p := range ps {
+				for _, d := range v.cwd.dirs {
+					for _, a := range spellings(d, p) {
+						if s.touchesAbs(a) {
+							return s.whereAbs(a)
+						}
+					}
 				}
 			}
+			return ""
+		}
+		if where := touched(sc.operands); where != "" {
+			return trigger{v.name + " searches a path that " + where, hintSearch}
+		}
+		if where := touched([]string{"."}); sc.widen != "" && where != "" {
+			return trigger{v.name + " is taken to search its working directory recursively (" + sc.widen +
+				"), and the working directory " + where, hintSearch}
+		}
+		if where := touched(sc.reads); where != "" {
+			return trigger{v.name + " reads a file an option names, in a path that " + where, hintSearch}
 		}
 	}
-	return false
+	return trigger{}
+}
+
+// whereDir is whereAbs for a working directory inside a root, as given or
+// with its symlinks resolved.
+func (s *setup) whereDir(d string) string {
+	for _, a := range []string{d, resolvePath(d)} {
+		if r, ok := relTo(s.repo.Root, a, true); ok && s.underRoot(r) {
+			return s.whereRel(r)
+		}
+	}
+	return "is in a protected root"
 }
 
 // optionOnly reports whether a word is an option with no value in it.

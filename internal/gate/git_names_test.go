@@ -234,3 +234,34 @@ func TestShellGitOtherRepositories(t *testing.T) {
 		{"a nested repository's blame away", sh("git -C vendor/inner blame README.md"), ""},
 	})
 }
+
+// TestShellGitControlFiles: the policy, the baseline and Claude Code's
+// settings are readable, so git may print them as a Read may. Writing them
+// is still denied.
+func TestShellGitControlFiles(t *testing.T) {
+	root := newRepo(t, cleanFiles())
+	write(t, root, ".pbipx.toml", defaultPolicy(t)+"\n# A comment.\n")
+	gitIn(t, root, "commit", "--quiet", "--all", "--message", "Edit the policy")
+	run(t, root, []decideCase{
+		{"show a commit of the policy", sh("git show HEAD"), ""},
+		{"log -p of the policy", sh("git log -p -1"), ""},
+		{"show the policy's blob", sh("git show HEAD:.pbipx.toml"), ""},
+		{"grep the policy", sh("git grep -e student -- .pbipx.toml"), ""},
+	})
+
+	write(t, root, baselineFile, "version = 1\n")
+	write(t, root, ".claude/settings.json", "{}\n")
+	write(t, root, "tools/.claude/settings.local.json", "{}\n")
+	gitIn(t, root, "add", "--all")
+	gitIn(t, root, "commit", "--quiet", "--message", "Add the baseline and settings")
+	write(t, root, ".claude/settings.json", "{\"hooks\": {}}\n")
+	run(t, root, []decideCase{
+		{"show a commit of the baseline and settings", sh("git show HEAD"), ""},
+		{"diff of the settings", sh("git diff"), ""},
+		{"write into the settings", sh("git show HEAD:.claude/settings.json > .claude/settings.json"), gate.ReasonAgentSettings},
+		// The write rule is unchanged: a settings file named to a command
+		// not known to be read-only could be written by it.
+		{"settings named to git diff", sh("git diff -- .claude/settings.json"), gate.ReasonAgentSettings},
+		{"edit of the settings", gate.Event{Tool: gate.Write, Path: ".claude/settings.json"}, gate.ReasonAgentSettings},
+	})
+}
