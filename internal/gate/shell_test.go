@@ -545,7 +545,7 @@ func TestShellMessageNamesOnlyGitSubcommands(t *testing.T) {
 	}
 	for _, tc := range []struct{ cmd, want string }{
 		{"git log -p", "git log "},
-		{"git Doe-Jane-alias", "git prints"},
+		{"git Doe-Jane-alias", "git runs a shell alias"},
 	} {
 		d := gate.Decide(shIn(root, tc.cmd), gate.Options{})
 		check(t, d, gate.ReasonGitContent)

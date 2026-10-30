@@ -719,7 +719,12 @@ Decisions by tool. Every tool not listed is allowed.
 
      In pbipx the message names the subcommand only when it is one of
      git's own; any other word, an alias's name included, is printed as
-     `git`.
+     `git`. It then says what makes the content unsafe: the first file
+     the name-only run would print content from and the protected root
+     it is in, the root a pathspec reaches (named from the policy, never
+     the pathspec as typed), or what makes it unprovable (a `-c` key, an
+     alias, a `:/` search, an object name, a glob or magic pathspec,
+     `--pathspec-from-file`, `--stdin`, a timeout ...).
 
      **Divergence (a read after a tree change).** In pbipx, once a command
      in the line changes the working tree with content the gate has not
@@ -974,6 +979,39 @@ Every path a deny message prints, from the event, the command or the
 tree, is printed segment by segment as a finding prints a name: a segment
 with a personal-data shape or a control character is `{?}`. The command
 line is never printed.
+
+**Divergence (what triggered a refusal).** The predecessor's messages
+said only that a call was denied and why in general ("a shell command
+over a protected root could reach ..."). A refusal people cannot act on
+gets the hook disabled (principle 6), so in pbipx every deny message
+states its trigger concretely, in structure only, and ends with one short
+hint of what to do instead:
+
+- a tree scan says why the call reaches the protected tree: the working
+  directory is in a root, a `cd` moves a command into one, a word names
+  a path that is in or holds one, the line names a root, a word has an
+  expansion the gate cannot resolve, the working directory cannot be
+  told, a line is built at run time or nested too deep, `find`, `fd` or
+  `xargs` read under a root, or a program the gate cannot read
+  (PowerShell, `ssh`) runs a command;
+- a search taken to be recursive says why: the option, printed from the
+  gate's own table of option names (`--depth`, `-r`, `-d recurse`,
+  `--glob`, `-NUM` ...), never echoed from the command; "an option the
+  gate does not know", which is not printed; "no file operands"; a file
+  operand that is a pattern; a configuration file (`.ugrep`) or variable
+  (`GREP_OPTIONS`); or an option that reads files the command does not
+  name;
+- `git-content` names the subcommand (git's own only) and the file or
+  root, or the reason the content cannot be placed (rule 2);
+- a read after a tree change names the command that changes the tree.
+
+Programs are named only when they are in the gate's tables (a reader, a
+search, `git`'s own subcommands); a root is named from the policy. The
+hints are fixed sentences: for a finding in a report's selection, "Clear
+the selection in Power BI Desktop and save, or ask a person to run `pbipx
+scan` at a terminal."; for a search, "Name the files to search
+explicitly, or exclude the protected folders."; for git, "Limit the paths
+(`-- src`) or use --stat."
 
 Gate reason classes: `finding`, `unvettable`, `scan-error`,
 `local-state`, `agent-settings` (pbipx only), `git-content`, `policy-error`,

@@ -17,9 +17,11 @@ import (
 // repository a directory belongs to, and which files a diff, log or grep
 // would print content from. Each is one git command, run with an argv
 // (never a shell), standard input empty and standard error discarded,
-// within a time limit. Its output is read here and never put in a message:
-// a type name, a setting or a file's path decides, and nothing else leaves
-// this file.
+// within a time limit. Its output is read here and never put in a message,
+// with one exception: a file's path that a name-only run printed and the
+// gate refused is named in the denial, segment by segment as displayPath
+// prints it. That path is the tree's, not the command's; a type name or a
+// setting decides, and nothing else leaves this file.
 
 const (
 	// gitCallTimeout bounds one git command the gate runs.
@@ -227,6 +229,11 @@ func (g *gitSession) commonDir(root string) (string, error) {
 var (
 	errNamed    = errors.New("a path git names is not allowed")
 	errUnparsed = errors.New("git's output cannot be parsed")
+	// errGitTimeout is a name-only run that did not finish in time;
+	// errGitFailed one that exited with anything but 0 or 1, or did not
+	// run.
+	errGitTimeout = errors.New("git did not finish in time")
+	errGitFailed  = errors.New("git failed")
 )
 
 // nameRun is a git command run in a form that prints only file names: a
@@ -244,14 +251,15 @@ type nameRun struct {
 }
 
 // names runs r in dir and calls judge on each path it prints. It returns
-// false when judge rejects one, when git fails or times out, or when the
-// output does not parse: --name-status -z prints a status (a letter and a
+// an error when judge rejects one (errNamed), when git times out
+// (errGitTimeout) or fails (errGitFailed), or when the output does not
+// parse (errUnparsed): --name-status -z prints a status (a letter and a
 // score, or one letter per parent of a merge) and then one path, or two for
 // a rename or copy, or one per parent and the result's for a combined
 // diff with --combined-all-paths; grep -l -z prints names. A path holding
 // a control character is not parsed: git prints none with -z, and a
 // stray color escape or line break would hide a path inside another.
-func (g *gitSession) names(dir string, r nameRun, judge func(string) bool) bool {
+func (g *gitSession) names(dir string, r nameRun, judge func(string) bool) error {
 	exit, err := g.run(dir, r.argv, func(br *bufio.Reader) error {
 		want := 0 // paths still to read for the current status; 0 reads a status
 		for {
@@ -286,7 +294,15 @@ func (g *gitSession) names(dir string, r nameRun, judge func(string) bool) bool 
 			}
 		}
 	})
-	return err == nil && (exit == 0 || exit == 1)
+	switch {
+	case errors.Is(err, errNamed), errors.Is(err, errUnparsed):
+		return err
+	case errors.Is(err, errGitBudget), errors.Is(err, context.DeadlineExceeded):
+		return errGitTimeout
+	case err != nil || (exit != 0 && exit != 1):
+		return errGitFailed
+	}
+	return nil
 }
 
 // printable reports whether a name git printed is not empty and holds no

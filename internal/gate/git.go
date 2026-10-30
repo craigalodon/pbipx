@@ -191,8 +191,10 @@ type gitInvocation struct {
 	elsewhere bool
 	// unsafe is true when a global option can make git run a command, or
 	// print what these rules cannot see: -c or --config-env with a key
-	// not known to be harmless, --exec-path=.
-	unsafe bool
+	// not known to be harmless, --exec-path=. unsafeWhy says which came
+	// first, in fixed words.
+	unsafe    bool
+	unsafeWhy string
 	// oddSpecs is true when a global option changes how every pathspec
 	// matches (--literal-pathspecs, --glob-pathspecs, --icase-pathspecs).
 	oddSpecs bool
@@ -213,6 +215,13 @@ type gitInvocation struct {
 func parseGit(words []string, cwd string) (inv gitInvocation, ok bool) {
 	inv.dir = cwd
 	return inv.parse(words)
+}
+
+// setUnsafe marks inv unsafe, for the reason why, when bad is true.
+func (inv *gitInvocation) setUnsafe(bad bool, why string) {
+	if bad && !inv.unsafe {
+		inv.unsafe, inv.unsafeWhy = true, why
+	}
 }
 
 // parse reads words, global options then a subcommand, on top of what inv
@@ -238,7 +247,7 @@ func (inv gitInvocation) parse(words []string) (gitInvocation, bool) {
 		case name == "--git-dir" || name == "--work-tree":
 			inv.elsewhere = true
 		case w == "-c":
-			inv.unsafe = inv.unsafe || !safeConfig(next)
+			inv.setUnsafe(!safeConfig(next), "runs with -c setting a key that can run a command or change what git prints")
 		case name == "--config-env":
 			kv := next
 			if hasValue {
@@ -246,9 +255,9 @@ func (inv gitInvocation) parse(words []string) (gitInvocation, bool) {
 			}
 			// The value comes from the environment: only its key is known.
 			key, _, _ := strings.Cut(kv, "=")
-			inv.unsafe = inv.unsafe || !safeConfig(key+"=\x00")
+			inv.setUnsafe(!safeConfig(key+"=\x00"), "runs with --config-env setting a key that can run a command or change what git prints")
 		case name == "--exec-path" && hasValue:
-			inv.unsafe = true
+			inv.setUnsafe(true, "runs with --exec-path, which points git at other programs")
 		case w == "--literal-pathspecs" || w == "--glob-pathspecs" || w == "--icase-pathspecs":
 			inv.oddSpecs = true
 		}
@@ -432,19 +441,29 @@ type pathspec struct {
 	exclude bool
 	// unprovable is true when what it matches cannot be told from the
 	// text: a glob, case folding, attributes, or a path outside the
-	// repository's tree.
+	// repository's tree; why says which, in fixed words.
 	unprovable bool
+	why        string
 }
 
-// unprovable is the answer for content whose source cannot be placed.
-func unprovable() []pathspec { return []pathspec{{unprovable: true}} }
+// unprovable is the answer for content whose source cannot be placed, for
+// the reason why.
+func unprovable(why string) []pathspec { return []pathspec{{unprovable: true, why: why}} }
+
+// Reasons a pathspec cannot be placed that recur. Each reads after "is
+// given".
+const (
+	whyFromFile = "--pathspec-from-file, which reads pathspecs the gate cannot see"
+	whyOutside  = "a path outside the work tree"
+)
 
 // gitCheck is what judging a git command needs: whether it prints content,
 // and how to tell where the content comes from.
 type gitCheck struct {
 	content bool
-	// deny is content that cannot be placed.
+	// deny is content that cannot be placed, for the reason why.
 	deny bool
+	why  string
 	// bySpecs: specs must provably avoid every root (specsAvoid). Nil
 	// specs are the whole tree.
 	bySpecs bool
@@ -454,36 +473,56 @@ type gitCheck struct {
 	runs []nameRun
 }
 
-func noContent() gitCheck               { return gitCheck{} }
-func unplaceable() gitCheck             { return gitCheck{content: true, deny: true} }
+func noContent() gitCheck { return gitCheck{} }
+
+// unplaceable is content that cannot be placed; why says what makes it so,
+// in fixed words that follow the subcommand ("git show" + why).
+func unplaceable(why string) gitCheck   { return gitCheck{content: true, deny: true, why: why} }
 func bySpecs(specs []pathspec) gitCheck { return gitCheck{content: true, bySpecs: true, specs: specs} }
 func byRuns(runs ...nameRun) gitCheck   { return gitCheck{content: true, runs: runs} }
-func contentIf(c bool, specs []pathspec) gitCheck {
+func contentIf(c bool, why string) gitCheck {
 	if !c {
 		return noContent()
 	}
-	return bySpecs(specs)
+	return unplaceable(why)
+}
+
+// gitDenial is why rule 2 denies a git command: the subcommand (printed
+// only when it is one of git's own, gitLabel), what makes its content
+// unsafe or unprovable in fixed words and paths printed by displayPath,
+// and one short thing to do instead.
+type gitDenial struct {
+	sub, why, hint string
+}
+
+// message is the denial as a Decision's Message.
+func (g gitDenial) message() string {
+	return gitLabel(g.sub) + " " + g.why + "; git history cannot be vetted. " + g.hint
 }
 
 // gitContent decides rule 2 for one simple command: whether it is git
 // printing content that could come from a protected root. args is the
 // whole simple command, with any assignments and wrappers before git. It
-// returns the subcommand when the command is denied, and "" otherwise.
-func (s *setup) gitContent(args []string) string {
+// returns why the command is denied, and nil otherwise.
+func (s *setup) gitContent(args []string) *gitDenial {
 	name, rest := program(args)
 	if name != "git" {
-		return ""
+		return nil
 	}
 	inv, ok := parseGit(rest, s.cwd)
 	if !ok {
-		return ""
+		return nil
 	}
 	if unsafeEnv(args[:len(args)-len(rest)-1]) {
-		return inv.sub
+		return &gitDenial{inv.sub, "runs after an assignment (a GIT_ variable, a pager, an editor or LESSOPEN) " +
+			"that can change what it prints", "Drop the assignment before git."}
 	}
-	inv, ok = s.resolveAlias(inv)
-	if !ok || inv.unsafe {
-		return inv.sub
+	inv, why := s.resolveAlias(inv)
+	if why != "" {
+		return &gitDenial{inv.sub, why, "Run the git command the alias stands for, with the paths limited (`-- src`) or --stat."}
+	}
+	if inv.unsafe {
+		return &gitDenial{inv.sub, inv.unsafeWhy, "Drop that global option, or use --stat."}
 	}
 	s.locate(&inv)
 	switch inv.place {
@@ -491,27 +530,56 @@ func (s *setup) gitContent(args []string) string {
 		// The protected roots are this repository's: elsewhere only a path
 		// the command names can reach them (diff --no-index, grep
 		// --no-index).
-		if s.foreignReads(inv) {
-			return inv.sub
+		if where := s.foreignReads(inv); where != "" {
+			return &gitDenial{inv.sub, "runs outside this repository and names a path that " + where, hintGit}
 		}
-		return ""
+		return nil
 	}
 	c := s.gitSpecs(inv)
 	switch {
 	case !c.content:
-		return ""
-	case c.deny || inv.elsewhere || inv.place == gitUnknown:
-		return inv.sub
-	case c.bySpecs && (inv.oddSpecs || !s.specsAvoid(inv, c.specs)):
-		return inv.sub
-	}
-	for _, r := range c.runs {
-		ok := s.git().names(inv.dir, r, func(p string) bool { return !s.namedForbidden(inv, p, r) })
-		if !ok {
-			return inv.sub
+		return nil
+	case c.deny:
+		return &gitDenial{inv.sub, c.why, hintGit}
+	case inv.elsewhere:
+		return &gitDenial{inv.sub, "is pointed at another tree by --git-dir or --work-tree, which the gate cannot check",
+			"Drop --git-dir and --work-tree, or use --stat."}
+	case inv.place == gitUnknown:
+		return &gitDenial{inv.sub, "runs in a directory the gate cannot place in a work tree (one not made yet, or above the repository)",
+			"Run it from inside the repository, with the directory made first."}
+	case c.bySpecs && inv.oddSpecs:
+		return &gitDenial{inv.sub, "runs with --literal-pathspecs, --glob-pathspecs or --icase-pathspecs, " +
+			"which make every pathspec unprovable", "Drop that global option, or use --stat."}
+	case c.bySpecs:
+		if why := s.specsAvoid(inv, c.specs); why != "" {
+			return &gitDenial{inv.sub, why, hintGit}
 		}
 	}
-	return ""
+	for _, r := range c.runs {
+		forbidden := ""
+		judge := func(p string) bool {
+			rel, bad := s.namedForbidden(inv, p, r)
+			if bad {
+				forbidden = rel
+			}
+			return !bad
+		}
+		switch err := s.git().names(inv.dir, r, judge); {
+		case err == nil:
+		case errors.Is(err, errNamed) && forbidden != "":
+			return &gitDenial{inv.sub, "would print content from " + displayPath(forbidden) + ", which " +
+				s.whereRel(forbidden), hintGit}
+		case errors.Is(err, errNamed):
+			return &gitDenial{inv.sub, "would print content from a path above the repository, which holds every protected root", hintGit}
+		case errors.Is(err, errGitTimeout):
+			return &gitDenial{inv.sub, "could not be checked in time: git took too long to list the files it would print",
+				"Limit the revisions or the paths (`-- src`), or use --stat."}
+		default:
+			return &gitDenial{inv.sub, "could not be checked: git failed to list the files it would print, or its list could not be read",
+				hintGit}
+		}
+	}
+	return nil
 }
 
 // git is the decision's git session.
@@ -523,32 +591,38 @@ func (s *setup) git() *gitSession {
 }
 
 // resolveAlias returns the invocation git runs when inv's subcommand is an
-// alias: its expansion, split as git splits it, then inv's arguments. ok is
-// false when that cannot be told: a shell alias ("!"), an alias of an
-// alias, an expansion that does not split, git failing to answer, or a
-// name that is neither a built-in command nor an alias (an alias defined
-// earlier in the same command line, or a git-<name> program).
-func (s *setup) resolveAlias(inv gitInvocation) (gitInvocation, bool) {
+// alias: its expansion, split as git splits it, then inv's arguments. why
+// is not "" when that cannot be told, and says which, in fixed words: a
+// shell alias ("!"), an alias of an alias, an expansion that does not
+// split, git failing to answer, or a name that is neither a built-in
+// command nor an alias (an alias defined earlier in the same command line,
+// or a git-<name> program). The alias's name is never in why.
+func (s *setup) resolveAlias(inv gitInvocation) (gitInvocation, string) {
+	const unknown = "runs a subcommand that is neither one of git's own nor an alias the gate can expand " +
+		"(an alias defined in the same line, or a git-<name> program), whose output cannot be told"
 	if gitBuiltins[inv.sub] || inv.unsafe {
-		return inv, true
+		return inv, ""
 	}
 	if inv.elsewhere {
 		// The alias would come from another repository's configuration.
-		return inv, false
+		return inv, "runs an alias from the configuration of another tree (--git-dir or --work-tree), which the gate cannot read"
 	}
 	expansion, err := s.git().configValue(inv.dir, "alias."+inv.sub, "")
-	if err != nil || strings.HasPrefix(expansion, "!") {
-		return inv, false
+	switch {
+	case err != nil:
+		return inv, unknown
+	case strings.HasPrefix(expansion, "!"):
+		return inv, "runs a shell alias, which runs a command whose output cannot be told"
 	}
 	words, ok := splitAlias(expansion)
 	if !ok || len(words) == 0 {
-		return inv, false
+		return inv, "runs an alias whose expansion the gate cannot split"
 	}
 	next, ok := inv.parse(slices.Concat(words, inv.rest))
 	if !ok || !gitBuiltins[next.sub] {
-		return inv, false
+		return inv, "runs an alias of an alias, or of a subcommand that is not one of git's own, whose output cannot be told"
 	}
-	return next, true
+	return next, ""
 }
 
 // splitAlias splits an alias's expansion into words as git does
@@ -677,11 +751,11 @@ func samePath(a, b string, fold bool) bool {
 	return a == b
 }
 
-// foreignReads reports whether a git command run outside this repository
-// names a path in it that it could print: any word, or the value of a
-// --flag=value, that is a protected root, is inside or contains one under
-// any spelling (forbiddenRel).
-func (s *setup) foreignReads(inv gitInvocation) bool {
+// foreignReads says how a git command run outside this repository names a
+// path in it that it could print, "" when it names none: any word, or the
+// value of a --flag=value, that is a protected root, is inside or contains
+// one (whereAbs, which names the root and never the word).
+func (s *setup) foreignReads(inv gitInvocation) string {
 	for _, w := range inv.rest {
 		if w == "--" || w == "-" {
 			continue
@@ -696,16 +770,18 @@ func (s *setup) foreignReads(inv gitInvocation) bool {
 		if i := strings.IndexAny(w, "*?["); i >= 0 {
 			w = path.Dir(w[:i] + "x")
 		}
-		if s.touchesIn(inv.dir, w) {
-			return true
+		for _, a := range spellings(inv.dir, w) {
+			if s.touchesAbs(a) {
+				return s.whereAbs(a)
+			}
 		}
 		for _, r := range s.relsOf(spellings(inv.dir, w)) {
 			if s.forbiddenRel(r) {
-				return true
+				return s.whereRel(r)
 			}
 		}
 	}
-	return false
+	return ""
 }
 
 // forbiddenRel reports whether content from the repository-relative path
@@ -720,8 +796,10 @@ func (s *setup) forbiddenRel(rel string) bool { return s.touchesRel(rel) }
 // relative to the top of the work tree it runs in; grep prints it with a
 // revision as "REV:path", and grep --no-index and diff comparing files
 // outside the work tree relative to the directory they run in (r.dirRel).
-// Every reading is judged.
-func (s *setup) namedForbidden(inv gitInvocation, p string, r nameRun) bool {
+// Every reading is judged. When one is forbidden it returns that reading,
+// repository-relative ("" for a path above the repository): a file's path
+// from the tree, never a word of the command.
+func (s *setup) namedForbidden(inv gitInvocation, p string, r nameRun) (string, bool) {
 	cands := []string{p}
 	if r.grep {
 		for i := range len(p) {
@@ -737,34 +815,48 @@ func (s *setup) namedForbidden(inv gitInvocation, p string, r nameRun) bool {
 	}
 	for _, c := range cands {
 		if filepath.IsAbs(c) {
-			if s.absForbidden(c) {
-				return true
+			if rel, bad := s.absForbidden(c); bad {
+				return rel, true
 			}
 			continue
 		}
 		clean := path.Clean(c)
 		if clean == ".." || strings.HasPrefix(clean, "../") {
-			if inv.top == "" || s.absForbidden(filepath.Join(inv.top, filepath.FromSlash(c))) {
-				return true
+			if inv.top == "" {
+				return "", true
 			}
-		} else if s.forbiddenRel(path.Join(inv.prefix, clean)) {
-			return true
+			if rel, bad := s.absForbidden(filepath.Join(inv.top, filepath.FromSlash(c))); bad {
+				return rel, true
+			}
+		} else if rel := path.Join(inv.prefix, clean); s.forbiddenRel(rel) {
+			return rel, true
 		}
-		if r.dirRel && s.absForbidden(abs(inv.dir, c)) {
-			return true
+		if r.dirRel {
+			if rel, bad := s.absForbidden(abs(inv.dir, c)); bad {
+				return rel, true
+			}
 		}
 	}
-	return false
+	return "", false
 }
 
 // absForbidden is forbiddenRel for an absolute path, as spelled and with
 // symlinks resolved; a path outside the repository is allowed, and one
-// above it holds every root.
-func (s *setup) absForbidden(a string) bool {
-	if s.touchesAbs(a) || s.touchesAbs(resolve(a)) {
-		return true
+// above it holds every root. It returns the path, repository-relative, ""
+// for one above the repository.
+func (s *setup) absForbidden(a string) (string, bool) {
+	for _, sp := range []string{a, resolve(a)} {
+		if s.touchesAbs(sp) {
+			rel, _ := relTo(s.repo.Root, sp, true)
+			return rel, true
+		}
 	}
-	return slices.ContainsFunc(s.relsOf([]string{a, resolve(a)}), s.forbiddenRel)
+	for _, rel := range s.relsOf([]string{a, resolve(a)}) {
+		if s.forbiddenRel(rel) {
+			return rel, true
+		}
+	}
+	return "", false
 }
 
 // gitSpecs says whether inv prints content and, if it does, how to place
@@ -773,7 +865,7 @@ func (s *setup) gitSpecs(inv gitInvocation) gitCheck {
 	patch := hasFlag(inv.args, gitPatchFlags)
 	after := func() []pathspec {
 		if hasFlag(inv.args, []string{"--pathspec-from-file"}) {
-			return unprovable()
+			return unprovable(whyFromFile)
 		}
 		return s.parseSpecs(inv, inv.specs)
 	}
@@ -787,7 +879,7 @@ func (s *setup) gitSpecs(inv gitInvocation) gitCheck {
 		return s.diffCheck(inv)
 	case "diff-tree":
 		if hasFlag(inv.args, []string{"--stdin"}) {
-			return unplaceable()
+			return unplaceable("with --stdin reads revisions the gate cannot see")
 		}
 		if !patch {
 			return noContent()
@@ -822,7 +914,7 @@ func (s *setup) gitSpecs(inv gitInvocation) gitCheck {
 			return noContent()
 		}
 		if hasFlag(inv.args, []string{"--pathspec-from-file"}) {
-			return bySpecs(unprovable())
+			return bySpecs(unprovable(whyFromFile))
 		}
 		vals := map[string]bool{"--chmod": true}
 		return bySpecs(s.parseSpecs(inv, slices.Concat(positionalOf(inv.args, vals), inv.specs)))
@@ -831,7 +923,7 @@ func (s *setup) gitSpecs(inv gitInvocation) gitCheck {
 			return noContent()
 		}
 		if hasFlag(inv.args, []string{"--pathspec-from-file"}) {
-			return bySpecs(unprovable())
+			return bySpecs(unprovable(whyFromFile))
 		}
 		vals := map[string]bool{"-s": true, "--source": true, "--conflict": true}
 		return bySpecs(s.parseSpecs(inv, slices.Concat(positionalOf(inv.args, vals), inv.specs)))
@@ -853,30 +945,30 @@ func (s *setup) gitSpecs(inv gitInvocation) gitCheck {
 	case "rebase", "am":
 		if hasFlag(inv.args, []string{"--show-current-patch"}) ||
 			(inv.sub == "rebase" && hasShort(inv.args, 'x', "--exec", "sSXo")) {
-			return unplaceable()
+			return unplaceable("with --show-current-patch or --exec prints a patch, or runs a command, whose content cannot be placed")
 		}
 		return noContent()
 	case "request-pull":
-		return contentIf(hasShort(inv.args, 'p', "", ""), unprovable())
+		return contentIf(hasShort(inv.args, 'p', "", ""), "with -p prints a patch whose files cannot be placed")
 	case "bundle":
-		return contentIf(bundleToOutput(inv.args), unprovable())
+		return contentIf(bundleToOutput(inv.args), "writes a bundle to standard output or a device, printing objects whose files cannot be placed")
 	case "merge-tree":
 		// The trivial merge prints the merged content; --write-tree, the
 		// default for two commits, prints object names.
 		trivial := hasFlag(inv.args, []string{"--trivial-merge"}) ||
 			(!hasFlag(inv.args, []string{"--write-tree"}) && len(positional(inv.args)) >= 3)
-		return contentIf(trivial, unprovable())
+		return contentIf(trivial, "prints merged file content, whose files cannot be placed")
 	case "merge-file":
-		return contentIf(hasFlag(inv.args, []string{"--object-id"}), unprovable())
+		return contentIf(hasFlag(inv.args, []string{"--object-id"}), "with --object-id prints merged content of objects whose files cannot be placed")
 	case "submodule":
-		return contentIf(slices.Contains(positional(inv.args), "foreach"), unprovable())
+		return contentIf(slices.Contains(positional(inv.args), "foreach"), "runs a command in each submodule, whose output cannot be told")
 	case "bisect":
-		return contentIf(len(inv.args) > 0 && inv.args[0] == "run", unprovable())
+		return contentIf(len(inv.args) > 0 && inv.args[0] == "run", "runs a command whose output cannot be told")
 	case "cat-file":
 		return s.catFileSpecs(inv)
 	}
 	if gitUnplaceable[inv.sub] {
-		return unplaceable()
+		return unplaceable("prints objects whose files cannot be placed")
 	}
 	if gitAlwaysContent[inv.sub] {
 		return bySpecs(after())
@@ -926,8 +1018,8 @@ func (s *setup) diffCheck(inv gitInvocation) gitCheck {
 	noIndex := hasFlag(inv.args, []string{"--no-index"})
 	outside := noIndex || s.namesOutside(inv)
 	if outside {
-		if s.foreignReads(inv) || s.namesDir(inv) {
-			return unplaceable()
+		if s.foreignReads(inv) != "" || s.namesDir(inv) {
+			return unplaceable("compares files outside the index, and names a path in a protected root or a directory of the repository")
 		}
 		if noIndex {
 			return noContent()
@@ -1017,7 +1109,7 @@ func (s *setup) mergeRisk(inv gitInvocation, args []string) (remerge bool) {
 // name-only form; --stdin reads revisions the gate cannot see.
 func (s *setup) logCheck(inv gitInvocation, head, args []string) gitCheck {
 	if hasFlag(args, []string{"-L", "--stdin"}) || s.mergeRisk(inv, args) {
-		return unplaceable()
+		return unplaceable("with -L, --stdin or a remerge diff prints content that has no name-only form, so it cannot be placed")
 	}
 	extra := []string{"--format="}
 	if hasFlag(args, mergeFlags) {
@@ -1051,7 +1143,7 @@ func (s *setup) reflogCheck(inv gitInvocation) gitCheck {
 // named by searching commit messages, cannot be placed.
 func (s *setup) showCheck(inv gitInvocation, patch bool) gitCheck {
 	if hasFlag(inv.args, gitRefSets) || s.mergeRisk(inv, inv.args) {
-		return unplaceable()
+		return unplaceable("is given a ref set (--all, --branches and the like) or a remerge diff, whose content cannot be placed")
 	}
 	diff := !hasFlag(inv.args, gitSummaryFlags) || patch
 	var blobs []string
@@ -1081,7 +1173,7 @@ func (s *setup) showCheck(inv gitInvocation, patch bool) gitCheck {
 		case revCommit:
 			commit = true
 		default:
-			return unplaceable()
+			return unplaceable("is given a revision that is not a commit (a blob, a tree, a search of commit messages, or a name that does not resolve), whose content cannot be placed")
 		}
 	}
 	if revs <= 0 {
@@ -1267,7 +1359,7 @@ func (s *setup) grepCheck(inv gitInvocation) gitCheck {
 				"--no-quiet", "--no-null", "--no-full-name":
 				negated = true
 			case "--open-files-in-pager":
-				return unplaceable()
+				return unplaceable("with -O opens the files it matches in a pager")
 			}
 			if grepLongValues[name] && !hasValue {
 				i++
@@ -1277,12 +1369,12 @@ func (s *setup) grepCheck(inv gitInvocation) gitCheck {
 				c := a[j]
 				switch {
 				case c == 'O':
-					return unplaceable()
+					return unplaceable("with -O opens the files it matches in a pager")
 				case strings.IndexByte("lLcq", c) >= 0:
 					names = true
 				case strings.IndexByte("ABCefm", c) >= 0:
 					if c == 'f' && (a[j+1:] == "-" || (j == len(a)-1 && i+1 < len(inv.args) && inv.args[i+1] == "-")) {
-						return unplaceable()
+						return unplaceable("with -f - reads patterns from standard input, which the gate cannot see")
 					}
 					if j == len(a)-1 {
 						i++
@@ -1294,7 +1386,7 @@ func (s *setup) grepCheck(inv gitInvocation) gitCheck {
 	}
 	switch {
 	case negated:
-		return unplaceable()
+		return unplaceable("negates -l, -c or -q, so it may print the lines it matches")
 	case names:
 		return noContent()
 	}
@@ -1358,13 +1450,13 @@ func (s *setup) verboseCheck(inv gitInvocation, v int, both bool) gitCheck {
 // those after "--".
 func (s *setup) treeishSpecs(inv gitInvocation) []pathspec {
 	if hasFlag(inv.args, []string{"--pathspec-from-file"}) {
-		return unprovable()
+		return unprovable(whyFromFile)
 	}
 	vals := map[string]bool{"-b": true, "-B": true, "--orphan": true, "--conflict": true}
 	pos := positionalOf(inv.args, vals)
 	if len(pos) > 0 && s.git().objectType(inv.dir, pos[0]+"^{tree}") == "tree" {
 		if !inv.dashdash && s.isPath(inv, pos[0]) {
-			return unprovable()
+			return unprovable("a first argument that names both a tree-ish and a file")
 		}
 		pos = pos[1:]
 	}
@@ -1423,18 +1515,18 @@ func (s *setup) catFileSpecs(inv gitInvocation) gitCheck {
 			continue
 		}
 		if strings.Contains(a, ":/") || strings.Contains(a, "^{/") {
-			return unplaceable()
+			return unplaceable("is given a search of commit messages (:/ or ^{/), whose content cannot be placed")
 		}
 		p, ok := revPath(a)
 		if !ok {
 			// An object name: what it holds cannot be told.
-			return unplaceable()
+			return unplaceable("is given an object name, whose content cannot be placed")
 		}
 		blobs = append(blobs, p)
 	}
 	if len(blobs) == 0 {
 		// --batch reads object names from standard input.
-		return unplaceable()
+		return unplaceable("with --batch reads object names from standard input, which the gate cannot see")
 	}
 	return bySpecs(s.blobSpecs(inv, blobs))
 }
@@ -1479,7 +1571,7 @@ func (s *setup) blobSpecs(inv gitInvocation, paths []string) []pathspec {
 		}
 		clean := path.Clean(p)
 		if clean == ".." || strings.HasPrefix(clean, "../") || path.IsAbs(clean) {
-			out = append(out, pathspec{unprovable: true})
+			out = append(out, pathspec{unprovable: true, why: whyOutside})
 			continue
 		}
 		out = append(out, pathspec{rel: path.Join(inv.prefix, clean)})
@@ -1510,7 +1602,7 @@ func (s *setup) parseSpecs(inv gitInvocation, specs []string) []pathspec {
 		case strings.HasPrefix(p, ":("):
 			end := strings.Index(p, ")")
 			if end < 0 {
-				out = append(out, pathspec{unprovable: true})
+				out = append(out, pathspec{unprovable: true, why: "a pathspec whose magic is not closed"})
 				continue
 			}
 			for m := range strings.SplitSeq(p[2:end], ",") {
@@ -1543,13 +1635,13 @@ func (s *setup) parseSpecs(inv gitInvocation, specs []string) []pathspec {
 			p = p[i:]
 		}
 		if odd || (!literal && hasGlob(p)) {
-			out = append(out, pathspec{exclude: exclude, unprovable: true})
+			out = append(out, pathspec{exclude: exclude, unprovable: true, why: "a pathspec with a glob, or magic such as icase or attr, that only git can expand"})
 			continue
 		}
 		a := abs(inv.dir, p)
 		if top {
 			if inv.top == "" {
-				out = append(out, pathspec{exclude: exclude, unprovable: true})
+				out = append(out, pathspec{exclude: exclude, unprovable: true, why: "a pathspec from the top of a work tree the gate cannot find"})
 				continue
 			}
 			a = filepath.Join(inv.top, filepath.FromSlash(p))
@@ -1563,33 +1655,34 @@ func (s *setup) parseSpecs(inv gitInvocation, specs []string) []pathspec {
 // the work tree inv runs in, then to this repository's root.
 func (s *setup) place(inv gitInvocation, a string, exclude bool) pathspec {
 	if inv.top == "" {
-		return pathspec{exclude: exclude, unprovable: true}
+		return pathspec{exclude: exclude, unprovable: true, why: "a path the gate cannot place in a work tree"}
 	}
 	r, ok := relTo(inv.top, a, s.fold)
 	if !ok {
 		r, ok = relTo(inv.top, resolve(a), s.fold)
 	}
 	if !ok {
-		return pathspec{exclude: exclude, unprovable: true}
+		return pathspec{exclude: exclude, unprovable: true, why: whyOutside}
 	}
 	return pathspec{rel: path.Join(inv.prefix, path.Clean(r)), exclude: exclude}
 }
 
-// specsAvoid is avoidsRootsIn for inv's pathspecs and the protected roots.
-// In a repository nested in this one's work tree the roots apply relative
-// to it as well (frames): the specs are judged again from its top, against
-// its roots.
-func (s *setup) specsAvoid(inv gitInvocation, specs []pathspec) bool {
-	if !avoidsRootsIn(s.policy.ProtectedRoots(), specs) {
-		return false
+// specsAvoid is rootsReached for inv's pathspecs and the protected roots:
+// "" when the specs provably avoid every root, and otherwise why not. In a
+// repository nested in this one's work tree the roots apply relative to it
+// as well (frames): the specs are judged again from its top, against its
+// roots.
+func (s *setup) specsAvoid(inv gitInvocation, specs []pathspec) string {
+	if why := rootsReached(s.policy.ProtectedRoots(), "", specs); why != "" {
+		return why
 	}
 	if inv.prefix == "" {
-		return true
+		return ""
 	}
 	fs := s.frames(inv.prefix)
 	f := fs[len(fs)-1]
 	if f.sub != "." {
-		return true
+		return ""
 	}
 	inner := make([]pathspec, 0, len(specs))
 	for _, sp := range specs {
@@ -1602,21 +1695,25 @@ func (s *setup) specsAvoid(inv gitInvocation, specs []pathspec) bool {
 		}
 		inner = append(inner, sp)
 	}
-	return avoidsRootsIn(f.roots(), inner)
+	return rootsReached(f.roots(), inv.prefix, inner)
 }
 
-// avoidsRootsIn reports whether pathspecs provably keep a git command away
-// from every one of roots: each root is excluded, or no positive pathspec
-// touches it. No positive pathspec means the whole tree. An exclusion
-// counts only when it can be placed and covers the whole root.
-func avoidsRootsIn(roots []string, specs []pathspec) bool {
+// rootsReached says why pathspecs do not provably keep a git command away
+// from every one of roots, "" when they do: each root is excluded, or no
+// positive pathspec touches it. No positive pathspec means the whole tree.
+// An exclusion counts only when it can be placed and covers the whole
+// root. prefix is where the roots are, for the message: "" for this
+// repository, a nested work tree's path for its roots. A pathspec's own
+// text is never in the reason.
+func rootsReached(roots []string, prefix string, specs []pathspec) string {
 	var positives []pathspec
 	for _, sp := range specs {
 		if !sp.exclude {
 			positives = append(positives, sp)
 		}
 	}
-	if len(positives) == 0 {
+	whole := len(positives) == 0
+	if whole {
 		positives = []pathspec{{rel: "."}}
 	}
 	for _, root := range roots {
@@ -1629,13 +1726,21 @@ func avoidsRootsIn(roots []string, specs []pathspec) bool {
 		if excluded {
 			continue
 		}
+		shown := displayPath(path.Join(prefix, root))
 		for _, sp := range positives {
-			if sp.unprovable || touchesRoot(sp.rel, root) {
-				return false
+			switch {
+			case sp.unprovable && sp.why != "":
+				return "is given " + sp.why + ", so it may print content from the protected root " + shown
+			case sp.unprovable:
+				return "is given a pathspec the gate cannot place, so it may print content from the protected root " + shown
+			case whole:
+				return "has no pathspec that keeps it out of the protected root " + shown
+			case touchesRoot(sp.rel, root):
+				return "is given a path that reaches the protected root " + shown
 			}
 		}
 	}
-	return true
+	return ""
 }
 
 // touchesRoot reports whether the repository-relative path rel is root, is

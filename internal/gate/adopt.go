@@ -333,7 +333,7 @@ func probeShell(cwd, home, line string) (*walker, []spot, bool) {
 	w := &walker{s: ps, cache: newSpellCache(), probe: true}
 	st := cwdState{dirs: []string{cwd}}
 	w.commands(line, splitCommands(line), &st, 0)
-	unknown := w.reach || w.tooMany
+	unknown := w.reach.set() || w.tooMany
 	var spots []spot
 	for _, p := range w.probed {
 		spots = append(spots, spot{path: p, container: true})
@@ -377,7 +377,7 @@ func probeShell(cwd, home, line string) (*walker, []spot, bool) {
 func (w *walker) probeIn(st cwdState, p string) {
 	if !st.known() {
 		if !fullPath(p) {
-			w.reach = true
+			w.setReach("a relative path from an unknown working directory", "")
 			return
 		}
 		w.probed = append(w.probed, spellings(string(filepath.Separator), p)...)
