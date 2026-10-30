@@ -11,17 +11,12 @@ import (
 
 	"github.com/craigalodon/pbipx/internal/finding"
 	"github.com/craigalodon/pbipx/internal/policy"
-	"github.com/craigalodon/pbipx/internal/scan"
 )
 
 // content is one file's bytes, read once, as a scan.Reader.
 type content []byte
 
 func (c content) Read(string) ([]byte, error) { return c, nil }
-
-func (s *setup) scanOptions() scan.Options {
-	return scan.Options{Policy: s.policy, Baseline: s.baseline, Now: s.now}
-}
 
 // read decides a Read of p (behavior.md, "The gate", Read).
 func (s *setup) read(p string) Decision {
@@ -46,18 +41,28 @@ func (s *setup) read(p string) Decision {
 	if statErr == nil && info.IsDir() {
 		return allow()
 	}
+	// Each spelling is judged as the repository sees it and as every
+	// nested work tree it is in sees it, under each policy there.
 	var scanned []string
 	for _, rel := range s.rels(p) {
-		class, _ := s.policy.Classify(rel)
-		switch class {
-		case policy.LocalState:
-			return deny(ReasonLocalState, "%s is Power BI Desktop local state, which is never read", displayPath(rel))
-		case policy.Unvettable:
-			return deny(ReasonUnvettable, "%s is under a protected root and no file class covers it, so it cannot be vetted%s",
-				displayPath(rel), hint(rel))
-		case policy.Scanned:
-			scanned = append(scanned, rel)
-		default: // outside, or allowed unscanned
+		for _, f := range s.frames(rel) {
+			for _, pol := range f.policies {
+				for _, sub := range s.subSpellings(pol, f.sub) {
+					class, _ := pol.Classify(sub)
+					switch class {
+					case policy.LocalState:
+						return deny(ReasonLocalState, "%s is Power BI Desktop local state, which is never read", displayPath(rel))
+					case policy.Unvettable:
+						return deny(ReasonUnvettable, "%s is under a protected root and no file class covers it, so it cannot be vetted%s",
+							displayPath(rel), hint(rel))
+					case policy.Scanned:
+						if !slices.Contains(scanned, rel) {
+							scanned = append(scanned, rel)
+						}
+					default: // outside, or allowed unscanned
+					}
+				}
+			}
 		}
 	}
 	if len(scanned) == 0 {
@@ -76,8 +81,7 @@ func (s *setup) read(p string) Decision {
 		return deny(ReasonScanError, "%s cannot be read, so it was not vetted", displayPath(scanned[0]))
 	}
 	for _, rel := range scanned {
-		res := scan.Run([]string{rel}, content(data), s.scanOptions())
-		if d := verdict(res, "reading "); d != nil {
+		if d := verdict(s.scanFrames([]string{rel}, content(data)), "reading "); d != nil {
 			return *d
 		}
 	}
@@ -104,17 +108,16 @@ func (s *setup) search(p string) Decision {
 	return s.tree("a search over a protected root")
 }
 
-// tree scans every file on disk under the protected roots, local state
-// skipped and symlinks not followed, for a call described by what: any
-// block or error denies.
+// tree scans every file on disk under the protected roots, and under each
+// nested work tree's roots, local state skipped and symlinks not followed,
+// for a call described by what: any block or error denies.
 func (s *setup) tree(what string) Decision {
-	set, err := s.repo.Under(s.policy.ProtectedRoots())
+	set, err := s.repo.Under(s.treeDirs())
 	if err != nil {
 		return deny(ReasonScanError, "%s: the protected roots could not be listed, so they were not vetted", what)
 	}
 	defer func() { _ = set.Close() }()
-	res := scan.Run(set.Paths, set, s.scanOptions())
-	if d := verdict(res, what+" could reach "); d != nil {
+	if d := verdict(s.scanFrames(set.Paths, set), what+" could reach "); d != nil {
 		return *d
 	}
 	return allow()

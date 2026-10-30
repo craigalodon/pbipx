@@ -852,7 +852,7 @@ func (s *setup) gitRule(v view) string {
 func (s *setup) namesLocalState(v view, xw xword) (string, bool) {
 	abss, _ := s.wordSpellings(v, xw)
 	for _, rel := range s.relsOf(abss) {
-		if class, _ := s.policy.Classify(rel); class == policy.LocalState || s.policy.LocalStateDir(rel) {
+		if class, _ := s.policy.Classify(rel); class == policy.LocalState || s.policy.LocalStateDir(rel) || s.nestedLocalState(rel) {
 			return rel, true
 		}
 	}

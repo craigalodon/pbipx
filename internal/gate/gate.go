@@ -113,6 +113,9 @@ type setup struct {
 	// (foldCase); home is the gate's own home directory, "" when unknown.
 	fold bool
 	home string
+	// nest is what is known of nested work trees (nested.go), found on
+	// first use.
+	nest *nestCache
 }
 
 // Decide decides one tool call. It never panics: a panic below it is a deny

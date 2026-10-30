@@ -668,6 +668,42 @@ Decisions by tool. Every tool not listed is allowed.
   The message says which of these the path is, and does not name it. Every
   other write is allowed: the gate does not otherwise judge writes.
 
+**Nested work trees (pbipx).** A directory inside the repository that is
+itself a git work tree, because it holds a `.git` directory or file, is a
+nested work tree: a linked work tree (Claude Code adds one under
+`.claude/worktrees/<name>` for an isolated subagent), a submodule or a
+clone. It holds a copy of the protected roots, so wherever the gate asks
+whether a path is under, is, or contains a protected root, and wherever it
+classifies a file, the path is also judged relative to each nested work
+tree it is in, under the outer policy's roots and classes as written, and
+under the nested work tree's own `.pbipx.toml` when it has one that loads.
+The strictest decision wins: a nested policy can add roots, never remove
+the outer ones, and one that fails to load is ignored. So:
+
+- a Read of `.claude/worktrees/wt/pbip/.../visual.json` is scanned (or
+  denied as local state or unvettable) as `pbip/.../visual.json` is;
+- a path that is a nested work tree, or contains one (`.claude`,
+  `.claude/worktrees`), touches a protected root for Grep and for rules 3
+  and 4 of Bash, and so does a working directory inside a nested work
+  tree's root;
+- a tree scan walks every nested work tree's roots as well as the
+  repository's own, wherever it was triggered, as it walks every root
+  whichever one was touched. A leak in any work tree inside the repository
+  denies a tree scan from the main one.
+
+Nested work trees are found by walking the directories in question on
+disk, without following symlinks and skipping `.git` directories; a
+directory the gate cannot read is skipped, since the agent, running as the
+same user, cannot read it either.
+
+**Known limitation.** A copy of a protected root that is not inside a
+nested work tree is not recognised: a vendored project, a backup folder
+(`backup/pbip/...`), an unzipped export, or a directory named like a PBIP
+item (`*.Report`, `*.SemanticModel`) outside the roots. Such a copy is
+judged only by its own path under the policy, which usually puts it outside
+every root. Keep copies out of the repository, or list them as protected
+roots.
+
 A deny writes the Claude Code decision JSON (`permissionDecision: deny` and a
 reason) to stdout, writes the reason to stderr, and exits 2. An allow writes
 nothing and exits 0. The reason names the file, the column and the reasons,
@@ -916,6 +952,13 @@ behavior (2026-10-29).
   every root. It also denies writing into a `.claude` directory and running
   `pbipx policy approve` with `agent-settings`. The corpus cases for it are
   marked `known = "predecessor"`. (Decided 2026-10-29.)
+- **Divergence (nested work trees):** the predecessor judges a path only
+  against the protected roots as written from the repository root, so a
+  copy of a root in a linked work tree under `.claude/worktrees/`, in a
+  submodule or in a nested clone can be read and searched from the main
+  repository. pbipx applies the roots relative to each nested work tree as
+  well (see "The gate (Claude Code)", nested work trees). The corpus cases
+  for it are marked `known = "predecessor"`. (Decided 2026-10-30.)
 - **Divergence (case and paths):** on macOS and Windows, whose file systems
   fold case, pbipx compares paths and root names without regard to case
   everywhere the gate compares them (roots, local state, Claude Code
