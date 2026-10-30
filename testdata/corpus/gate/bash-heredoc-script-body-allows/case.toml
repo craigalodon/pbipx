@@ -1,0 +1,7 @@
+description = "a script written from a quoted here-document is data, not commands: the git diff in its body does not run. Plants no value"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = []
+known       = "predecessor"

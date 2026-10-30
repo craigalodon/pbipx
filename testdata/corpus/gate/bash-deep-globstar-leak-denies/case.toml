@@ -1,0 +1,7 @@
+description = "a glob of many ** segments from the repository root decides in time and scans the protected tree"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
+known       = "predecessor"
