@@ -1,0 +1,7 @@
+description = "git show HEAD with a path outside every root after the revision, without --, prints only that path: allowed while the root holds a leak"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = ["Doe, Jane"]
+known       = "predecessor"
