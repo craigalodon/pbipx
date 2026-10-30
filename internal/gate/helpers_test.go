@@ -77,3 +77,8 @@ func write(t *testing.T, root, name, content string) {
 		t.Fatal(err)
 	}
 }
+
+// shellPath is an absolute path as a test writes it into a shell command:
+// with forward slashes, which Git Bash on Windows reads as the same path.
+// A backslash there is an escape, so C:\x would be the word C:x.
+func shellPath(p string) string { return filepath.ToSlash(p) }

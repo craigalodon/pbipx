@@ -125,14 +125,14 @@ func TestShellReadsOfControlFiles(t *testing.T) {
 	sh := func(cmd string) gate.Event { return gate.Event{Tool: gate.Shell, Command: cmd} }
 	run(t, root, []decideCase{
 		{"cat of the home settings", sh("cat ~/.claude/settings.json"), ""},
-		{"jq of CLAUDE_CONFIG_DIR settings", sh("jq .hooks " + filepath.Join(c.claude, "settings.json")), ""},
-		{"cat of an approval record", sh("cat " + record), ""},
-		{"ls of the store", sh("ls -la " + filepath.Join(c.store, "approved")), ""},
+		{"jq of CLAUDE_CONFIG_DIR settings", sh("jq .hooks " + shellPath(filepath.Join(c.claude, "settings.json"))), ""},
+		{"cat of an approval record", sh("cat " + shellPath(record)), ""},
+		{"ls of the store", sh("ls -la " + shellPath(filepath.Join(c.store, "approved"))), ""},
 		{"grep of the home local settings", sh("grep -n hooks ~/.claude/settings.local.json"), ""},
 
 		{"sed -i of the home settings", sh("sed -i s/a/b/ ~/.claude/settings.json"), gate.ReasonAgentSettings},
-		{"a redirect into a record", sh("cat x > " + record), gate.ReasonAgentSettings},
-		{"awk of a record", sh("awk 1 " + record), gate.ReasonAgentSettings},
-		{"rm of a record", sh("rm " + record), gate.ReasonAgentSettings},
+		{"a redirect into a record", sh("cat x > " + shellPath(record)), gate.ReasonAgentSettings},
+		{"awk of a record", sh("awk 1 " + shellPath(record)), gate.ReasonAgentSettings},
+		{"rm of a record", sh("rm " + shellPath(record)), gate.ReasonAgentSettings},
 	})
 }

@@ -206,18 +206,18 @@ func TestShellGitOtherRepositories(t *testing.T) {
 	wt := filepath.Join(t.TempDir(), "wt")
 	gitIn(t, root, "worktree", "add", "--quiet", wt)
 	run(t, root, []decideCase{
-		{"another repository", sh("git -C " + other + " log -p"), ""},
-		{"another repository's blob", sh("git -C " + other + " show HEAD:" + leakVisual), ""},
-		{"another repository, diffing a file here", sh("git -C " + other + " diff --no-index README.md " + filepath.Join(root, reportJSON)), git},
-		{"outside any repository, grepping here", sh("git -C " + plain + " grep --no-index -e x " + filepath.Join(root, "pbip")), git},
-		{"outside any repository", sh("git -C " + plain + " grep --no-index -e x ."), ""},
-		{"a directory not yet made", sh("git -C " + filepath.Join(plain, "later") + " log -p"), git},
-		{"a directory above the repository", sh("git -C " + filepath.Dir(root) + " grep --no-index -e x"), git},
-		{"a linked work tree shares history", sh("git -C " + wt + " log -p"), git},
-		{"a linked work tree, a path away", sh("git -C " + wt + " log -p -- notes"), ""},
-		{"a linked work tree's blob", sh("git -C " + wt + " show HEAD:" + reportJSON), git},
-		{"a linked work tree's blame", sh("git -C " + wt + " blame " + reportJSON), git},
-		{"a linked work tree's blame away", sh("git -C " + wt + " blame README.md"), ""},
+		{"another repository", sh("git -C " + shellPath(other) + " log -p"), ""},
+		{"another repository's blob", sh("git -C " + shellPath(other) + " show HEAD:" + leakVisual), ""},
+		{"another repository, diffing a file here", sh("git -C " + shellPath(other) + " diff --no-index README.md " + shellPath(filepath.Join(root, reportJSON))), git},
+		{"outside any repository, grepping here", sh("git -C " + shellPath(plain) + " grep --no-index -e x " + shellPath(filepath.Join(root, "pbip"))), git},
+		{"outside any repository", sh("git -C " + shellPath(plain) + " grep --no-index -e x ."), ""},
+		{"a directory not yet made", sh("git -C " + shellPath(filepath.Join(plain, "later")) + " log -p"), git},
+		{"a directory above the repository", sh("git -C " + shellPath(filepath.Dir(root)) + " grep --no-index -e x"), git},
+		{"a linked work tree shares history", sh("git -C " + shellPath(wt) + " log -p"), git},
+		{"a linked work tree, a path away", sh("git -C " + shellPath(wt) + " log -p -- notes"), ""},
+		{"a linked work tree's blob", sh("git -C " + shellPath(wt) + " show HEAD:" + reportJSON), git},
+		{"a linked work tree's blame", sh("git -C " + shellPath(wt) + " blame " + reportJSON), git},
+		{"a linked work tree's blame away", sh("git -C " + shellPath(wt) + " blame README.md"), ""},
 	})
 
 	// A repository nested in the work tree: the roots apply relative to it.
