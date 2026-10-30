@@ -47,6 +47,8 @@ func eventFrom(stdin []byte) (gate.Event, bool) {
 		ev.Tool, ev.Path = gate.Search, he.ToolInput.Path
 	case "Bash":
 		ev.Tool, ev.Command = gate.Shell, he.ToolInput.Command
+	case "PowerShell":
+		ev.Tool, ev.Command = gate.PowerShell, he.ToolInput.Command
 	case "Write", "Edit", "MultiEdit":
 		ev.Tool, ev.Path = gate.Write, he.ToolInput.FilePath
 	case "NotebookEdit":
