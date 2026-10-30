@@ -641,6 +641,31 @@ Decisions by tool. Every tool not listed is allowed.
   - runs `pbipx policy approve` (`policy`, then `approve`, by any path to
     the tool, through a pipe, or under `script`, `expect` or `unbuffer`,
     which give it a terminal): approval is a person's step (ADR-0006).
+
+  In pbipx, naming a settings file in the repository, or a path in the
+  approval store or a user-level or managed settings file, denies only when
+  the command could write it: reading one is allowed (`cat
+  .claude/settings.json`, `jq .hooks ~/.claude/settings.json`, `cat` of an
+  approval record). A word could be written when it is a redirection's
+  target (input redirections are not told apart, so `cat <
+  .claude/settings.json` denies), an option (`--output=FILE`, `-oFILE`:
+  only an operand of a reading program counts as read), an assignment or a
+  wrapper's own argument, or when the command is not one that only reads.
+  The commands that only read are `cat`, `head`, `tail`, `more`, `wc`,
+  `diff`, `cmp`, `stat`, `ls`, `grep`, `egrep`, `fgrep`, and, with these
+  exceptions, `less` (not with `-o`, `-O`, `--log-file` or a `+command`),
+  `rg` (not with `--pre`), `jq` (not with `-i` or `--in-place`), `bat` (not
+  with `--pager`), `file` (not with `-C`) and `sed` (not with `-i`,
+  `--in-place`, `-f` or `--file`, and only when every script is made of
+  commands that print, delete, quit or substitute: `p`, `d`, `q`, `s///`
+  with flags among `gpiImM` and digits, `y///`, `=` and the like, after line
+  or `/regex/` addresses; `w`, `e`, `r`, `a`, `i`, `c` and `s///w` or
+  `s///e` are refused). Each runs with no environment assignment before it
+  and under no wrapper but `command`, `builtin`, `nohup`, `nice`, `stdbuf`,
+  `ionice`, `setsid`, `timeout` and `xargs`, and with every argument
+  known. `awk` is not among them: its program can write the file it reads
+  (`print > FILENAME`), and the gate does not read awk. Every other command
+  that names such a file, `cp` and `mv` included, denies.
 - **Write**, **Edit** and **MultiEdit** of `file_path`, and **NotebookEdit**
   of `notebook_path` (in pbipx, a leading `~` expanded from the gate's home
   directory, as for Read and Grep): denied with `agent-settings` when the
@@ -938,7 +963,9 @@ behavior (2026-10-29).
   in the repository with `agent-settings`, and `pbipx scan` reports a
   committed one that sets `disableAllHooks`, or whose `env` sets a variable
   that can defeat the hook, with `hooks-disabled`, because such a file
-  turns off the gate's user-level hook. (Decided 2026-10-29.)
+  turns off the gate's user-level hook. (Decided 2026-10-29.) A shell
+  command that only reads such a file is allowed; one that could write it
+  denies (see "The gate (Claude Code)", Bash). (Decided 2026-10-30.)
 - **Divergence (reading a command line):** the predecessor finds roots in a
   Bash command only as literal whole words of the line, and a command's
   program only as its first word. A command that reaches a root without

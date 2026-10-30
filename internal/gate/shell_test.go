@@ -260,7 +260,7 @@ func TestShellAgentSettingsDirectory(t *testing.T) {
 		{"a .claude directory copied in", sh("cp -r " + filepath.Join(outside, ".claude") + " ."), gate.ReasonAgentSettings},
 		{"dd into .claude", sh("dd if=x.json of=.claude/"), gate.ReasonAgentSettings},
 		{"in another case", sh("cp x.json .CLAUDE/"), gate.ReasonAgentSettings},
-		{"settings by **", sh("cat **/settings.local.json"), gate.ReasonAgentSettings},
+		{"settings by **", sh("sed -i s/a/b/ **/settings.local.json"), gate.ReasonAgentSettings},
 
 		{"cp into a subdirectory of .claude", sh("cp x.md .claude/commands/"), ""},
 		{"cp out of .claude", sh("cp .claude/commands/x.md " + outside), ""},

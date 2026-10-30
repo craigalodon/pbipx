@@ -659,6 +659,9 @@ func matchStar(pats, segs []string) bool {
 // command's text.
 func (s *setup) viewNamesAgentSettings(v view) bool {
 	for _, xw := range v.words {
+		if !mayWrite(v, xw) {
+			continue
+		}
 		abss, _ := s.wordSpellings(v, xw)
 		for _, rel := range s.relsOf(abss) {
 			if scan.IsAgentSettings(rel) {
@@ -675,6 +678,9 @@ func (s *setup) viewNamesAgentSettings(v view) bool {
 // the path is, in words.
 func (s *setup) reachesControl(v view, ctl controls) (string, bool) {
 	for _, xw := range v.words {
+		if !mayWrite(v, xw) {
+			continue
+		}
 		abss, _ := s.wordSpellings(v, xw)
 		if what, ok := ctl.target(abss); ok {
 			return what, true

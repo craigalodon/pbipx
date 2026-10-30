@@ -1,0 +1,7 @@
+description = "sed -i on .claude/settings.json writes it in place, so it denies though sed without -i only reads. It plants no value"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []
+known       = "predecessor"
