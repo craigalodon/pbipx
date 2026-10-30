@@ -448,10 +448,12 @@ repositories a call is the gate's to judge
   made there (that repository's policy, approval, baseline and roots),
   with the event's working directory as it is. The paths it touches are:
   the working directory; a Read's or a Write's `file_path`; a Grep's
-  `path` (default: the working directory); and for Bash, every working
-  directory a command runs in, every word placed against it as the shell
-  rule places words (globs, `--flag=value`, `cd` and all), the paths a
-  recursive search covers, and those `find`, `fd` and `xargs` read under.
+  `path` (default: the working directory); an LSP call's paths; for Bash,
+  every working directory a command runs in, every word placed against it
+  as the shell rule places words (globs, `--flag=value`, `cd` and all), the
+  paths a recursive search covers, and those `find`, `fd` and `xargs` read
+  under; and for PowerShell (pbipx only), the working directory and
+  everything below it, and every word that looks like a path (below).
   Each path, as given and with its symlinks resolved, counts for the
   innermost adopted work tree that holds it: of the directories above it
   that hold a `.git` entry (walking up), and the indexed work trees it is
@@ -471,7 +473,8 @@ repositories a call is the gate's to judge
   exception holds everywhere: a call that changes what controls the gate
   (a Write into the approval store or to a user-level or managed Claude
   Code settings file, a Bash command naming one or writing into a
-  user-level settings directory, or one running `pbipx policy approve`) is
+  user-level settings directory, a PowerShell command naming one or such a
+  directory, or one running `pbipx policy approve`) is
   denied with `agent-settings`, since from any directory it would switch
   the gate off, or forge an approval, for every adopted repository.
 - An adopted repository that git cannot open as a work tree (its `.git`
@@ -554,7 +557,24 @@ digest of the same bytes against the approval, so a policy swapped between
 two reads cannot be enforced while a different one is checked. `policy
 approve` likewise records the digest of the bytes it loaded.
 
-Decisions by tool. Every tool not listed is allowed.
+Decisions by tool. Every tool not listed is allowed. `pbipx init`
+registers the hook for exactly the gated tools, as a matcher of exact
+names: `Read|Grep|Bash|PowerShell|LSP|Write|Edit|MultiEdit|NotebookEdit`.
+
+| Tool | Gated by | Judged as |
+|---|---|---|
+| Read | `file_path` | Read, below |
+| Grep | `path` (default: the working directory); `glob`, `output_mode` and the rest narrow nothing the gate judges | Grep, below |
+| Bash | `command` | Bash, below |
+| PowerShell (pbipx only) | `command`, required | the protected tree, below |
+| LSP (pbipx only) | every string field named like a path | Read of each path, or the protected tree, below |
+| Write, Edit, MultiEdit | `file_path` | Write, below |
+| NotebookEdit | `notebook_path`, else `file_path`; one is required | Write, below |
+| Glob | not gated | prints names only |
+| any other | not gated | allowed |
+
+A PowerShell call with no `command` string, or a NotebookEdit with no
+path, is denied with `event-error`: the call cannot be judged.
 
 - **Read** of `file_path` (in pbipx, a leading `~` expanded from the gate's
   home directory, and the file judged where the operating system opens it,
@@ -902,15 +922,55 @@ Decisions by tool. Every tool not listed is allowed.
   known. `awk` is not among them: its program can write the file it reads
   (`print > FILENAME`), and the gate does not read awk. Every other command
   that names such a file, `cp` and `mv` included, denies.
+- **PowerShell** `command` (pbipx only; Claude Code's PowerShell tool, which
+  is separate from Bash and on by default on Windows for some accounts).
+  The gate has no parser for PowerShell, so a call is judged as if it
+  touched every protected root of each adopted repository it reaches. It
+  reaches the repositories its working directory is in or above, and
+  those of every word that looks like a path. The line is split into
+  words as far as the gate reads it: `'...'` and `"..."` (and the
+  typographic quotes) group, a backtick escapes the next character, and
+  whitespace and `; | & ( ) { } , < > =` separate; `-Name:value` also
+  yields `value`. A word looks like a path when it holds `/` or `\`, is
+  `~`, or names an entry of the working directory; `\` is also read as
+  `/` where the system does not take it as a separator, and a leading `~`
+  is the gate's home directory. A path-like word holding `$` cannot be
+  placed, so it touches every indexed work tree. In each such repository:
+  - any word, under any spelling, that is a Claude Code settings file of
+    the repository or a `.claude` directory in it denies with
+    `agent-settings`; so does any word naming a file outside it that
+    controls the gate (as for Bash, but reading counts too: a PowerShell
+    read cannot be told from a write), and the words `policy approve` in
+    sequence. These deny from every working directory, adopted or not;
+  - any word naming local state denies with `local-state`;
+  - otherwise the protected tree is scanned, as for Grep: a block or an
+    error anywhere there denies, a clean tree allows.
+
+  A line of more than 20,000 words is denied with `internal-error`. A
+  PowerShell call that builds a path at run time (`Join-Path`, a variable
+  set from a computation) reaches only what its words show; this is the
+  same limit as for Bash (threat model).
+- **LSP** (pbipx only; Claude Code's code intelligence tool). Its input is
+  not documented, so the adapter takes every string, at any depth of
+  `tool_input`, under a key whose name holds `path`, `file` or `uri` (case
+  ignored) as a path, a `file://` URI decoded to its path (a host other
+  than `localhost` kept as a UNC prefix). Such a key holding a number or a
+  boolean, or a `file://` URI that does not parse, is an `event-error`.
+  Each path is judged as a Read, or as a Grep when it is a directory; any
+  deny wins. A call that names no path is taken to touch the working
+  directory's whole project, and scans the protected tree as for Grep.
+  An LSP answer about a named file can quote other files (references,
+  definitions); those are not judged one by one.
 - **Write**, **Edit** and **MultiEdit** of `file_path`, and **NotebookEdit**
-  of `notebook_path` (in pbipx, a leading `~` expanded from the gate's home
-  directory, as for Read and Grep): denied with `agent-settings` when the
-  path, under any spelling (relative to the working directory, absolute, symlinks
-  resolved), is a Claude Code settings file inside the repository:
-  `.claude/settings.json` or `.claude/settings.local.json` in the
-  repository root or any directory below it, names compared without regard
-  to case. Such a file can set `disableAllHooks`, which turns off the gate's
-  own user-level hook (threat model, layer 5).
+  of `notebook_path`, or `file_path` when it has none (in pbipx, a leading
+  `~` expanded from the gate's home directory, as for Read and Grep):
+  denied with `agent-settings` when the path, under any spelling (relative
+  to the working directory, absolute, symlinks resolved), is a Claude Code
+  settings file inside the repository: `.claude/settings.json` or
+  `.claude/settings.local.json` in the repository root or any directory
+  below it, names compared without regard to case. Such a file can set
+  `disableAllHooks`, which turns off the gate's own user-level hook
+  (threat model, layer 5).
 
   A write outside the repository is denied with `agent-settings` too when,
   under any spelling (and with the symlinks of the deepest existing
@@ -981,6 +1041,10 @@ Gate reason classes: `finding`, `unvettable`, `scan-error`,
 `internal-error`.
 
 Glob is not gated: it prints file names, and names are schema (principle 1).
+It is left out of the hook's matcher.
+
+Some routes to file content no PreToolUse hook sees: a file a person
+`@`-mentions in a prompt, and tools from MCP servers. See the threat model.
 
 `pbipx gate --agent claude-code` (the default and only agent) exits only 0
 or 2. A usage error of its own flags, a help request and a panic each deny
@@ -1009,11 +1073,14 @@ writes it:
 Code treats a hook that times out as a non-blocking error and lets the call
 proceed, so a search or shell call that scans a large protected tree must
 not reach Claude Code's default timeout. A hook this binary registered in
-an earlier command form is recognised by the binary's path and rewritten in
-place.
+an earlier command form, or under an earlier, narrower matcher, is
+recognised by the binary's path and rewritten in place, its matcher
+widened to the current one. A tool the matcher does not name never reaches
+the gate, so after upgrading pbipx, re-run `pbipx init`.
 
 For the same reason the adapter denies, with `internal-error` and a fixed
-message, an event whose command line or path is longer than 1 MiB: the
+message, an event whose command line or path is longer than 1 MiB, or an
+LSP event naming more than 64 paths or 1 MiB of them: the
 gate's work grows with the command's length. Below that, reading a command
 line is linear in its length, and the glob budget above bounds the file
 system work. A line holding more than 20,000 simple commands, nested lines

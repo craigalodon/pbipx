@@ -92,7 +92,8 @@ Pre-alpha: releases are for trying it out, not for relying on it.
    `.pbipx.toml` or `.gitignore` that is a symbolic link.
 
    After upgrading pbipx, run `pbipx init` again: it updates the registered
-   hook in place (a new version may gate more tools) and removes duplicates.
+   hook in place, widening its matcher when a new version gates more tools
+   (this one adds PowerShell and LSP), and removes duplicates.
    A hook left by a pbipx binary at another path is reported, and replaced
    with `--force`.
 3. Review the policy, above all its column lists: they are a generic start.
