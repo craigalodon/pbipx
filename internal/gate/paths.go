@@ -100,7 +100,7 @@ func resolvePath(p string) string {
 			return filepath.Join(append([]string{next}, todo...)...)
 		}
 		if info.Mode()&os.ModeSymlink == 0 {
-			resolved = next
+			resolved = longName(next, seg)
 			continue
 		}
 		links++
@@ -116,6 +116,23 @@ func resolvePath(p string) string {
 		todo = append(segments(target), todo...)
 	}
 	return resolved
+}
+
+// longName is next, an existing component seg that is not a symlink,
+// under its long name. On Windows a component can be spelled by its 8.3
+// short name (RUNNER~1 for runneradmin), which names the same directory as
+// the long name but is not equal to it, while the repository's root and
+// the paths git prints are spelled long; a short name always has a "~".
+// filepath.EvalSymlinks gives the long name there, since every component
+// before next is resolved already. Elsewhere next is returned as it is.
+func longName(next, seg string) string {
+	if runtime.GOOS != "windows" || !strings.Contains(seg, "~") {
+		return next
+	}
+	if long, err := filepath.EvalSymlinks(next); err == nil {
+		return long
+	}
+	return next
 }
 
 // resolve is a with its symlinks resolved (resolvePath).
