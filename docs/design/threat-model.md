@@ -45,7 +45,15 @@ should set up:
    pull-request checklist is the control there.
 3. **The gate** as an agent pre-tool hook: it denies reads of files with
    findings or that cannot be vetted, and denies searches and shell commands
-   over a protected root while anything there is unclean.
+   over a protected root while anything there is unclean. It is scoped to
+   the repositories that adopted pbipx: a repository becomes adopted when a
+   person runs `pbipx init` or approves its policy (a record in the
+   approval store, outside the repository), or when it has a
+   `.pbipx.toml`. Elsewhere the gate allows, except a call that reaches
+   into an adopted repository, which it judges against that repository
+   from any working directory. Once adopted, a repository stays adopted:
+   deleting or breaking its policy denies every call there
+   ([ADR-0006](../adr/0006-policy-integrity.md), amendment on adoption).
 4. **The gate binary outside the repository**, installed at a pinned
    version. When the gate runs code from the working tree, an agent edit to
    that code changes the gate on its next call. A binary on the user's `PATH`
@@ -65,7 +73,10 @@ should set up:
    `SHELLOPTS`), or does not parse, as an error (`hooks-disabled`). The gate
    also denies an agent's write to the user-level settings
    (`settings*.json` in `$CLAUDE_CONFIG_DIR` or `~/.claude`) and to the
-   managed settings directory. None of this stops a person from editing the
+   managed settings directory, from every working directory, adopted
+   repository or not: the user-level hook runs in every session on the
+   machine, and removing it from anywhere would switch the gate off for
+   every adopted repository. None of this stops a person from editing the
    file by hand, or an agent from building the path at run time. The hook
    command itself fails closed under a shell with errexit on, and is
    registered with a timeout long enough that a slow scan never reaches
