@@ -3,6 +3,6 @@
   "cwd": "{root}/pbip/Example.Report",
   "tool_name": "Bash",
   "tool_input": {
-    "command": "ls"
+    "command": "wc -c definition/report.json"
   }
 }

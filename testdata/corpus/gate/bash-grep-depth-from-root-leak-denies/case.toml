@@ -1,0 +1,7 @@
+description = "grep can be ugrep, which recurses on --depth: a search with no file operand reads under ., which holds the root, so the tree is scanned and the leak denies"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
+known       = "predecessor"

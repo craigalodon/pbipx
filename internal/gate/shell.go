@@ -1799,8 +1799,9 @@ var readers = map[string]bool{
 // directory that cannot be told; a line names one as a whole word; a word
 // of a command, placed against its working directory, is one, is inside
 // one, or contains one; a reading command has a word that cannot be
-// placed; a recursive search covers a path that touches one; or find,
-// xargs or a nested line reach one (walker.reach).
+// placed; a search reads under a path that touches one; or find, xargs
+// or a nested line reach one (walker.reach). A command that only lists
+// names (lister) reaches nothing.
 func (w *walker) reaches() bool {
 	s := w.s
 	if w.reach {
@@ -1808,18 +1809,22 @@ func (w *walker) reaches() bool {
 	}
 	for _, line := range w.lines {
 		for _, root := range s.policy.ProtectedRoots() {
-			if namesWord(line, root) {
+			if namesRootOutsideListers(line, root) {
 				return true
 			}
 		}
 	}
 	for _, v := range w.views {
+		if v.cwd.known() && lister(v.name, v.rest) {
+			continue
+		}
 		inRoot := func(d string) bool { return w.cache.memo("inroot", d, s.dirInRoot) }
 		touches := func(a string) bool { return w.cache.memo("touches", a, s.touchesAbs) }
 		if !v.cwd.known() || slices.ContainsFunc(v.cwd.dirs, inRoot) {
 			return true
 		}
-		reader := readers[v.name] || searchers[v.name].always || searchers[v.name].recursive != ""
+		_, search := searchers[v.name]
+		reader := readers[v.name] || search
 		for _, xw := range v.words {
 			abss, unknown := s.wordSpellings(v, xw)
 			if unknown && reader && !optionOnly(xw.text) {
@@ -1829,12 +1834,14 @@ func (w *walker) reaches() bool {
 				return true
 			}
 		}
-		if paths, ok := searchPaths(v.argv); ok {
-			for _, p := range paths {
-				for _, d := range v.cwd.dirs {
-					if s.touchesIn(d, p) {
-						return true
-					}
+		paths, everywhere := w.searchReads(v)
+		if everywhere {
+			return true
+		}
+		for _, p := range paths {
+			for _, d := range v.cwd.dirs {
+				if s.touchesIn(d, p) {
+					return true
 				}
 			}
 		}
@@ -1876,142 +1883,4 @@ func namesWord(line, name string) bool {
 
 func wordByte(b byte) bool {
 	return b == '_' || b == '-' || b == '.' || '0' <= b && b <= '9' || 'a' <= b && b <= 'z' || 'A' <= b && b <= 'Z' || b >= 0x80
-}
-
-// searcher describes a recursive search tool's options.
-type searcher struct {
-	always    bool   // recursive without a flag
-	recursive string // short flags that make it recursive
-	withValue string // short options that take a value
-	pattern   string // short options whose value is the pattern
-	noPattern string // short options after which no pattern is given
-	// The same, for long options (without the leading "--").
-	longRecursive, longWithValue, longPattern, longNoPattern []string
-}
-
-var grepSearcher = searcher{
-	recursive: "rR", withValue: "efmABCdD", pattern: "ef",
-	longRecursive: []string{"recursive", "dereference-recursive"},
-	longWithValue: []string{
-		"regexp", "file", "max-count", "after-context", "before-context", "context",
-		"directories", "devices", "include", "exclude", "exclude-dir", "exclude-from",
-		"label", "binary-files", "group-separator",
-	},
-	longPattern: []string{"regexp", "file"},
-}
-
-// searchers are the recursive searches of rule 4, by command name.
-var searchers = map[string]searcher{
-	"grep":  grepSearcher,
-	"egrep": grepSearcher,
-	"fgrep": grepSearcher,
-	"rg":    rgSearcher,
-	"ag": {
-		always: true, withValue: "ABCGgmpW", pattern: "g",
-		longWithValue: []string{
-			"ignore", "ignore-dir", "file-search-regex", "max-count", "after", "before",
-			"context", "depth", "pager", "path-to-ignore", "workers", "width",
-		},
-	},
-	"ack": {
-		always: true, withValue: "ABCm", noPattern: "f",
-		longWithValue: []string{
-			"type", "ignore-dir", "noignore-dir", "ignore-file", "match", "max-count",
-			"output", "pager", "type-set", "type-add", "type-del",
-		},
-		longPattern: []string{"match"},
-	},
-	// ripgrep's rga, ugrep (and ug), sift and pt: recursive by default, or
-	// when given no file, so taken as always recursive.
-	"rga":   rgSearcher,
-	"ugrep": ugrepSearcher,
-	"ug":    ugrepSearcher,
-	"sift": {
-		always: true, withValue: "efABCmx", pattern: "ef",
-		longWithValue: []string{"regexp", "file", "context", "after-context", "before-context", "exclude-dirs", "ext", "files"},
-		longPattern:   []string{"regexp", "file"},
-	},
-	"pt": {
-		always: true, withValue: "eGgABC", pattern: "e",
-		longWithValue: []string{"file-search-regexp", "ignore", "after", "before", "context", "depth"},
-	},
-}
-
-var rgSearcher = searcher{
-	always: true, withValue: "efgjmrtTABCEM", pattern: "ef",
-	longWithValue: []string{
-		"regexp", "file", "glob", "iglob", "type", "type-not", "type-add", "type-clear",
-		"threads", "max-count", "replace", "after-context", "before-context", "context",
-		"encoding", "max-columns", "max-depth", "max-filesize", "path-separator", "pre",
-		"pre-glob", "colors", "sort", "sortr", "field-match-separator",
-		"field-context-separator", "dfa-size-limit", "regex-size-limit", "engine",
-		"ignore-file", "context-separator", "hostname-bin", "hyperlink-format", "generate",
-	},
-	longPattern:   []string{"regexp", "file"},
-	longNoPattern: []string{"files", "type-list"},
-}
-
-// ugrepSearcher is ugrep's options, grep's and its own.
-var ugrepSearcher = searcher{
-	always: true, withValue: "efmABCdDNOMgtKJ", pattern: "ef",
-	longWithValue: append(slices.Clone(grepSearcher.longWithValue), "file-type", "glob", "iglob", "max-depth", "jobs", "fuzzy"),
-	longPattern:   []string{"regexp", "file"},
-}
-
-// searchPaths returns the paths a recursive search covers: the positional
-// arguments after the pattern (unless an option gave it), "." when there
-// are none. ok is false when the command is not a recursive search.
-func searchPaths(args []string) (paths []string, ok bool) {
-	name, rest := program(args)
-	sr, known := searchers[name]
-	if !known {
-		return nil, false
-	}
-	recursive, patternGiven := sr.always, false
-	var pos []string
-	for i := 0; i < len(rest); i++ {
-		w := rest[i]
-		switch {
-		case w == "--":
-			pos = append(pos, rest[i+1:]...)
-			i = len(rest)
-		case strings.HasPrefix(w, "--"):
-			opt, value, hasValue := strings.Cut(w[2:], "=")
-			if slices.Contains(sr.longWithValue, opt) && !hasValue && i+1 < len(rest) {
-				i++
-				value = rest[i]
-			}
-			recursive = recursive || slices.Contains(sr.longRecursive, opt) || (opt == "directories" && value == "recurse")
-			patternGiven = patternGiven || slices.Contains(sr.longPattern, opt) || slices.Contains(sr.longNoPattern, opt)
-		case strings.HasPrefix(w, "-") && len(w) > 1:
-			for j := 1; j < len(w); j++ {
-				c := w[j]
-				recursive = recursive || strings.IndexByte(sr.recursive, c) >= 0
-				patternGiven = patternGiven || strings.IndexByte(sr.noPattern, c) >= 0
-				if strings.IndexByte(sr.withValue, c) < 0 {
-					continue
-				}
-				value := w[j+1:]
-				if value == "" && i+1 < len(rest) {
-					i++
-					value = rest[i]
-				}
-				patternGiven = patternGiven || strings.IndexByte(sr.pattern, c) >= 0
-				recursive = recursive || (c == 'd' && value == "recurse")
-				break
-			}
-		default:
-			pos = append(pos, w)
-		}
-	}
-	if !recursive {
-		return nil, false
-	}
-	if !patternGiven && len(pos) > 0 {
-		pos = pos[1:]
-	}
-	if len(pos) == 0 {
-		pos = []string{"."}
-	}
-	return pos, true
 }

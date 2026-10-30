@@ -317,13 +317,13 @@ func TestShell(t *testing.T) {
 		{"missing local state", sh("cat pbip/Z.Report/.pbi/localSettings.json"), gate.ReasonLocalState, gate.ReasonLocalState},
 
 		// Rule 3: the tree scan.
-		{"cwd inside a root", shIn("pbip/A.Report", "ls"), "", gate.ReasonFinding},
+		{"cwd inside a root", shIn("pbip/A.Report", "wc -c report.json"), "", gate.ReasonFinding},
 		{"names the root", sh("cat " + reportJSON), "", gate.ReasonFinding},
-		{"names the root by absolute path", sh("ls /x/../" + reportJSON), "", gate.ReasonFinding},
+		{"names the root by absolute path", sh("wc -c /x/../" + reportJSON), "", gate.ReasonFinding},
 		{"names the root in quotes", sh(`wc -c "pbip"`), "", gate.ReasonFinding},
 		{"unbalanced quotes still name the root", sh("cat 'pbip/A.Report"), "", gate.ReasonFinding},
 		{"a longer word is not the root", sh("ls pbipx-notes pbip.bak my-pbip"), "", ""},
-		{"a glob matching the root", sh("ls p*"), "", gate.ReasonFinding},
+		{"a glob matching the root", sh("wc -c p*"), "", gate.ReasonFinding},
 		{"a quoted glob is not expanded", sh("ls 'p*'"), "", ""},
 		{"away from the roots", sh("ls sql"), "", ""},
 

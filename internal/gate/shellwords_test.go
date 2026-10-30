@@ -91,46 +91,6 @@ func TestProgram(t *testing.T) {
 	}
 }
 
-func TestSearchPaths(t *testing.T) {
-	for _, tc := range []struct {
-		line string
-		want []string // nil: not a recursive search
-	}{
-		{"grep x .", nil},
-		{"grep -r x", []string{"."}},
-		{"grep -rn x a b", []string{"a", "b"}},
-		{"grep -nr -A 3 x a", []string{"a"}},
-		{"grep -A3 -r x a", []string{"a"}},
-		{"grep -r -e x a", []string{"a"}},
-		{"grep -re x a", []string{"a"}},
-		{"grep -r --regexp x a", []string{"a"}},
-		{"grep -r --regexp=x a", []string{"a"}},
-		{"grep -r -f patterns.txt", []string{"."}},
-		{"grep --include '*.md' -r x a", []string{"a"}},
-		{"grep --directories=recurse x a", []string{"a"}},
-		{"grep -r -- -x a", []string{"a"}},
-		{"fgrep -R x", []string{"."}},
-		{"rg x", []string{"."}},
-		{"rg -r y x a", []string{"a"}},
-		{"rg -g '*.md' -t md x a", []string{"a"}},
-		{"rg --files a", []string{"a"}},
-		{"rg --files", []string{"."}},
-		{"rg -uuu x", []string{"."}},
-		{"ag -G md x a", []string{"a"}},
-		{"ack -f a", []string{"a"}},
-		{"ack --match x a", []string{"a"}},
-		{"cat x", nil},
-	} {
-		got, ok := searchPaths(splitCommands(tc.line)[0].args())
-		if !ok {
-			got = nil
-		}
-		if !slices.Equal(got, tc.want) || ok != (tc.want != nil) {
-			t.Errorf("searchPaths(%q) = %q %v, want %q", tc.line, got, ok, tc.want)
-		}
-	}
-}
-
 func TestNamesWord(t *testing.T) {
 	for _, tc := range []struct {
 		line, name string

@@ -1,4 +1,4 @@
-description = "Any command with its working directory inside a root scans the protected tree"
+description = "Any command but a name-only listing, with its working directory inside a root, scans the protected tree"
 command     = "gate"
 args        = []
 policy      = "default"
