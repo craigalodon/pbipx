@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -70,7 +71,7 @@ func TestShellWorkingDirectory(t *testing.T) {
 		{"popd", sh("pushd sql && popd && ls"), "", gate.ReasonFinding},
 		{"cd in a subshell carries forward", sh("(cd sql) && rg x"), "", ""},
 		{"the directory before a cd", sh("rg x; cd sql"), "", gate.ReasonFinding},
-		{"cd to an absolute path outside", sh("cd " + home + " && rg x"), "", ""},
+		{"cd to an absolute path outside", sh("cd " + bashPath(home) + " && rg x"), "", ""},
 	})
 
 	root := nestedRepo(t)
@@ -81,6 +82,7 @@ func TestShellWorkingDirectory(t *testing.T) {
 	})
 
 	t.Setenv("HOME", "")
+	t.Setenv("USERPROFILE", "") // the home directory on Windows when HOME is unset
 	runBoth(t, []both{{"cd home, home unknown", sh("cd && ls"), "", gate.ReasonFinding}})
 }
 
@@ -189,8 +191,10 @@ func TestShellFoldCase(t *testing.T) {
 		restore := gate.SetFoldCase(fold)
 		// Without folding, the other case is not local state; the root
 		// named in it still scans the (leaky) tree.
+		// On Windows, resolving a path spells each existing component as it
+		// is on disk, so the other case is local state either way.
 		want, shellWant := "", gate.ReasonFinding
-		if fold {
+		if fold || runtime.GOOS == "windows" {
 			want, shellWant = gate.ReasonLocalState, gate.ReasonLocalState
 		}
 		run(t, root, []decideCase{
@@ -259,14 +263,14 @@ func TestShellAgentSettingsDirectory(t *testing.T) {
 		{"install into .claude", sh("install -m 644 x.json .claude/"), gate.ReasonAgentSettings},
 		{"rsync into .claude", sh("rsync -a conf/ .claude/"), gate.ReasonAgentSettings},
 		{"cp from inside .claude to .", sh("cd .claude && cp ../x.json ."), gate.ReasonAgentSettings},
-		{"a .claude directory copied in", sh("cp -r " + filepath.Join(outside, ".claude") + " ."), gate.ReasonAgentSettings},
+		{"a .claude directory copied in", sh("cp -r " + bashPath(filepath.Join(outside, ".claude")) + " ."), gate.ReasonAgentSettings},
 		{"dd into .claude", sh("dd if=x.json of=.claude/"), gate.ReasonAgentSettings},
 		{"in another case", sh("cp x.json .CLAUDE/"), gate.ReasonAgentSettings},
 		{"settings by **", sh("sed -i s/a/b/ **/settings.local.json"), gate.ReasonAgentSettings},
 
 		{"cp into a subdirectory of .claude", sh("cp x.md .claude/commands/"), ""},
-		{"cp out of .claude", sh("cp .claude/commands/x.md " + outside), ""},
-		{"cp into .claude outside the repository", sh("cp x.json " + filepath.Join(outside, ".claude")), ""},
+		{"cp out of .claude", sh("cp .claude/commands/x.md " + bashPath(outside)), ""},
+		{"cp into .claude outside the repository", sh("cp x.json " + bashPath(filepath.Join(outside, ".claude"))), ""},
 		{"list .claude", sh("ls .claude"), ""},
 		{"cd into .claude, then list", sh("cd .claude && ls"), ""},
 	})
@@ -359,15 +363,15 @@ func TestShellControlFiles(t *testing.T) {
 	root := newRepo(t, cleanFiles())
 	record := filepath.Join(c.store, "approved", strings.Repeat("0", 64))
 	run(t, root, []decideCase{
-		{"redirect into the store", sh("echo x > " + record), gate.ReasonAgentSettings},
-		{"cp into the store", sh("cp x " + filepath.Join(c.store, "approved") + "/"), gate.ReasonAgentSettings},
-		{"remove the store", sh("rm -rf " + c.store), gate.ReasonAgentSettings},
-		{"the store through PBIPX_CONFIG_DIR's value after cd", sh("cd " + c.store + " && echo x > approved/y"), gate.ReasonAgentSettings},
-		{"redirect into CLAUDE_CONFIG_DIR settings", sh("echo {} > " + filepath.Join(c.claude, "settings.json")), gate.ReasonAgentSettings},
+		{"redirect into the store", sh("echo x > " + bashPath(record)), gate.ReasonAgentSettings},
+		{"cp into the store", sh("cp x " + bashPath(filepath.Join(c.store, "approved")) + "/"), gate.ReasonAgentSettings},
+		{"remove the store", sh("rm -rf " + bashPath(c.store)), gate.ReasonAgentSettings},
+		{"the store through PBIPX_CONFIG_DIR's value after cd", sh("cd " + bashPath(c.store) + " && echo x > approved/y"), gate.ReasonAgentSettings},
+		{"redirect into CLAUDE_CONFIG_DIR settings", sh("echo {} > " + bashPath(filepath.Join(c.claude, "settings.json"))), gate.ReasonAgentSettings},
 		{"tee into home settings", sh("echo {} | tee ~/.claude/settings.local.json"), gate.ReasonAgentSettings},
 		{"mv into home settings by $HOME", sh("mv x.json $HOME/.claude/settings.json"), gate.ReasonAgentSettings},
 		{"cp into the home Claude directory", sh("cp settings.json ~/.claude/"), gate.ReasonAgentSettings},
-		{"cp into CLAUDE_CONFIG_DIR", sh("cp x.json " + c.claude), gate.ReasonAgentSettings},
+		{"cp into CLAUDE_CONFIG_DIR", sh("cp x.json " + bashPath(c.claude)), gate.ReasonAgentSettings},
 		{"cd home, then redirect", sh("cd && cd .claude && echo {} > settings.json"), gate.ReasonAgentSettings},
 
 		{"another file in the Claude directory", sh("cat ~/.claude/keybindings.json"), ""},

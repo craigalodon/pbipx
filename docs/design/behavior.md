@@ -1321,6 +1321,22 @@ behavior (2026-10-29).
   expand a leading `~`. Symlinks are resolved component by component before
   a `..` after them, so `notes/lnk/../x` with `notes/lnk` linking into a root
   is judged where the operating system opens it. (Decided 2026-10-29.)
+- **Windows paths:** Claude Code on Windows gives events Windows paths and
+  runs Bash tool commands in Git Bash, so the shell rule's POSIX reading
+  applies (a backslash outside quotes is an escape) and a path may be
+  written `C:\x` (quoted), `C:/x`, `/c/x` or `\x`. pbipx reads each as the
+  same place: Git Bash's `/c/x` is `C:\x`, and is also judged as `\c\x` on
+  the working directory's drive, where a file tool opens it; `\x` and `/x`
+  are rooted on the working directory's drive, and with that directory
+  unknown are not placed (the tree is scanned); a drive-relative `D:x` is
+  against the working directory when it is on `D:`, else against `D:\`.
+  Resolving a path spells each existing component by its long name, so a
+  short (8.3) name such as `RUNNER~1` compares equal to the long one git and
+  the repository root use, and follows a junction as a link. `~` and `$HOME`
+  are `%HOME%` when it is set (in any of those forms), as Git Bash and
+  Claude Code read it, and `%USERPROFILE%` otherwise. Paths git prints (the
+  work tree's top, its git directory) are resolved the same way before they
+  are compared. (Decided 2026-10-30.)
 
 ### Baseline
 

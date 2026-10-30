@@ -39,6 +39,12 @@ func tempRoot(t *testing.T) string {
 	return t.TempDir()
 }
 
+// bashPath is the absolute path p as a command line writes it for Git Bash,
+// which runs Claude Code's shell commands on Windows: with forward slashes
+// ("C:/x"), since a backslash outside quotes is an escape. Elsewhere it is
+// p.
+func bashPath(p string) string { return filepath.ToSlash(p) }
+
 // defaultPolicy is the corpus's default policy.
 func defaultPolicy(t *testing.T) string {
 	t.Helper()

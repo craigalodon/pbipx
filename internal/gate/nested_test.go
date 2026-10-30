@@ -61,10 +61,10 @@ func TestNestedWorkTrees(t *testing.T) {
 		{"grep away from every work tree", gate.Event{Tool: gate.Search, Path: "notes"}, ""},
 
 		{"grep -rn over .claude/worktrees", gate.Event{Tool: gate.Shell, Command: "grep -rn Jane .claude/worktrees"}, gate.ReasonFinding},
-		{"cd into the work tree, then cat", gate.Event{Tool: gate.Shell, Command: "cd " + worktree + " && cat " + leakVisual}, gate.ReasonFinding},
+		{"cd into the work tree, then cat", gate.Event{Tool: gate.Shell, Command: "cd " + bashPath(worktree) + " && cat " + leakVisual}, gate.ReasonFinding},
 		{"cat from inside the work tree", gate.Event{Tool: gate.Shell, Command: "cat " + leakVisual, Cwd: worktree}, gate.ReasonFinding},
-		{"cat of local state in the work tree", gate.Event{Tool: gate.Shell, Command: "cat " + wt(localState)}, gate.ReasonLocalState},
-		{"cat outside its roots", gate.Event{Tool: gate.Shell, Command: "cat " + wt("README.md")}, ""},
+		{"cat of local state in the work tree", gate.Event{Tool: gate.Shell, Command: "cat " + bashPath(wt(localState))}, gate.ReasonLocalState},
+		{"cat outside its roots", gate.Event{Tool: gate.Shell, Command: "cat " + bashPath(wt("README.md"))}, ""},
 		{"ls of a directory without work trees", gate.Event{Tool: gate.Shell, Command: "ls notes"}, ""},
 		// A tree scan covers every nested work tree's roots, as it covers
 		// every protected root whichever one was touched.
