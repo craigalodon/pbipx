@@ -56,6 +56,27 @@ func TestInitUpgradesTheHook(t *testing.T) {
 	}
 }
 
+// TestInitWidensTheMatcher re-runs init over the previous release's
+// registration, which did not name PowerShell or LSP.
+func TestInitWidensTheMatcher(t *testing.T) {
+	e := newInitRepo(t, "pbip/Example.Report/definition.pbir")
+	ours := claudecode.HookCommand(e.exe, runtime.GOOS)
+	writeFile(t, e.config, "settings.json", settingsWith(t, "Read|Grep|Bash|Write|Edit|MultiEdit|NotebookEdit", ours))
+
+	o := runIn(t, "", "init")
+	if o.code != 0 || !strings.Contains(o.stdout, "Updated the gate's hook") {
+		t.Fatalf("exit = %d, stdout:\n%s", o.code, o.stdout)
+	}
+	want := []string{"Bash audit-tool", setupHookLine(e.exe)}
+	got := registeredHooks(t, e.settings)
+	if !slices.Equal(got, want) {
+		t.Errorf("hooks = %q, want %q", got, want)
+	}
+	if len(got) == 2 && (!strings.Contains(got[1], "|PowerShell|") || !strings.Contains(got[1], "|LSP|")) {
+		t.Errorf("the matcher was not widened: %q", got[1])
+	}
+}
+
 func TestInitAnotherBinary(t *testing.T) {
 	e := newInitRepo(t, "pbip/Example.Report/definition.pbir")
 	theirs := claudecode.HookCommand(filepath.Join(filepath.Dir(e.exe), "old", "pbipx"), runtime.GOOS)

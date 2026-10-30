@@ -15,8 +15,12 @@ import (
 	"time"
 )
 
-// HookMatcher is the tools the gate's PreToolUse hook is registered for.
-const HookMatcher = "Read|Grep|Bash|Write|Edit|MultiEdit|NotebookEdit"
+// HookMatcher is the tools the gate's PreToolUse hook is registered for:
+// every built-in tool that can read file content, and the writing tools.
+// It holds only letters and "|", so Claude Code reads it as a list of
+// exact tool names. Glob is left out: it prints names only. MergeHook
+// widens an earlier pbipx entry's matcher to this one in place.
+const HookMatcher = "Read|Grep|Bash|PowerShell|LSP|Write|Edit|MultiEdit|NotebookEdit"
 
 // gateArgs is in every pbipx gate hook command (claudecode.HookCommand), and
 // identifies one that runs another binary.
