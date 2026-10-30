@@ -533,11 +533,11 @@ Decisions by tool. Every tool not listed is allowed.
     on `PATH`, beside `CLAUDE_CODE_GIT_BASH_PATH`, or in the Git for
     Windows installation git runs from; argv only, two seconds, at most
     64 runs a decision process); the directory before a glob, quote or
-    brace is placed, never the glob. A word that cannot be
-    placed is unknown: a reading command with one, or a `cd` to one,
-    touches every protected root, and git given one is denied with
-    `git-content`. `C:/x`, `C:\x` and `//server/share/x` are Windows
-    paths already. `HOME` in Git Bash form (`/c/Users/me`) is read the
+    brace is placed, never the glob. A word that cannot be placed is
+    unknown: a reading command with one, or a `cd` to one, touches every
+    protected root, and git given one is judged as given any argument
+    that cannot be told (rule 2). `C:/x`, `C:\x` and `//server/share/x`
+    are Windows paths already. `HOME` in Git Bash form (`/c/Users/me`) is read the
     same way, and a Read, Grep or Write path (or the event's working
     directory) spelled `/c/...` is judged both as written and on its
     drive. The path then goes through the same resolution as any other:
@@ -646,6 +646,13 @@ Decisions by tool. Every tool not listed is allowed.
        `cat`, empty or a boolean, and an editor set to `true`;
        `--literal-pathspecs`, `--glob-pathspecs` and `--icase-pathspecs`
        make every pathspec unprovable;
+     - an argument that cannot be told (`$X`, `"$X"`, `${X}ip`, `$(...)`,
+       a Windows path that cannot be placed) could be any pathspec,
+       revision, option or directory (`-C $D`): a subcommand that prints
+       content is then denied without asking git anything with the word
+       unexpanded, and one that does not (`log --oneline $REV`, `status`,
+       `add`, `branch`, `fetch`) is allowed. A subcommand that cannot be
+       told (`git $SUB`) is denied;
      - environment assignments before git: any `GIT_` variable but the
        author and committer identities, tracing and a few others, a
        `GIT_PAGER` or `PAGER` other than `cat`, an editor other than `true`

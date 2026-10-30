@@ -249,3 +249,35 @@ func TestShellGitThroughLinkedDirectory(t *testing.T) {
 		{"diff of everything", sh("git diff"), gate.ReasonGitContent},
 	})
 }
+
+// TestShellGitUnknownWords: an argument git is given that cannot be told
+// could be any pathspec, revision, option or directory. A subcommand that
+// prints content is then denied without asking git; one that never does is
+// allowed.
+func TestShellGitUnknownWords(t *testing.T) {
+	root := newRepo(t, cleanFiles())
+	write(t, root, warnVisual, slicer("student", "full_name", "Doe, Jane"))
+	sh := func(cmd string) gate.Event { return gate.Event{Tool: gate.Shell, Command: cmd} }
+	git := gate.ReasonGitContent
+	run(t, root, []decideCase{
+		{"diff of a variable", sh("git diff -- $X"), git},
+		{"diff of a quoted variable", sh(`git diff -- "$X"`), git},
+		{"diff of a built name", sh("X=pb; git diff -- ${X}ip"), git},
+		{"diff of a substitution", sh("git diff -- $(echo notes)"), git},
+		{"diff in an unknown directory", sh("git -C $D diff"), git},
+		{"show of a variable", sh("git show $REV"), git},
+		{"log -p of a variable", sh("git log -p $REV"), git},
+		{"grep under a variable", sh("git grep -e x -- $X"), git},
+		{"blame of a variable", sh("git blame $F"), git},
+		{"cat-file of a variable", sh("git cat-file -p $OBJ"), git},
+		{"stash show -p of a variable", sh("git stash show -p $S"), git},
+		{"unknown subcommand", sh("git $SUB"), git},
+		{"log --oneline of a variable", sh("git log --oneline $REV"), ""},
+		{"diff --stat of a variable", sh("git diff --stat -- $X"), ""},
+		{"status of a variable", sh("git status --short -- $X"), ""},
+		{"status in an unknown directory", sh("git -C $D status"), ""},
+		{"add of a variable", sh("git add -- $X"), ""},
+		{"branch of a variable", sh("git branch $B"), ""},
+		{"fetch of a variable", sh("git fetch $REMOTE"), ""},
+	})
+}

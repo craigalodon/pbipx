@@ -102,7 +102,7 @@ func TestHostWord(t *testing.T) {
 	}
 	xw = xword{text: "/etc/x", pattern: "/etc/x", known: true}
 	hostWord(&xw)
-	if xw.known || !xw.unplaced || xw.text != "/etc/x" {
-		t.Errorf("an unplaceable word is %q, known %v, unplaced %v", xw.text, xw.known, xw.unplaced)
+	if xw.known || xw.text != "/etc/x" {
+		t.Errorf("an unplaceable word is %q, known %v", xw.text, xw.known)
 	}
 }

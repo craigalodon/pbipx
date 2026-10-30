@@ -57,6 +57,7 @@ func TestShellGitBashPaths(t *testing.T) {
 		// Off the drives, with no cygpath: the word could be anything.
 		{"unplaceable read", sh("cat /etc/x"), gate.ReasonFinding},
 		{"unplaceable git pathspec", sh("git diff -- /etc/x"), gate.ReasonGitContent},
+		{"unplaceable path to git status", sh("git status --short -- /etc/x"), ""},
 		{"unplaceable cd", sh("cd /etc && cat x"), gate.ReasonFinding},
 	})
 }

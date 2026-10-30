@@ -380,9 +380,6 @@ type xword struct {
 	redirect bool
 	// input and here are word's: a redirection that reads, a here-string.
 	input, here bool
-	// unplaced is true for an absolute MSYS2 path that cannot be placed
-	// (msysPath); known is false then too.
-	unplaced bool
 }
 
 // view is one simple command as the rules see it.
@@ -397,12 +394,9 @@ type view struct {
 	name      string
 	rest      []string
 	restKnown []bool
-	// restUnplaced is true when one of rest is an absolute MSYS2 path
-	// that cannot be placed (xword.unplaced).
-	restUnplaced bool
-	under        []string
-	cwd          cwdState
-	pipeIn       bool
+	under     []string
+	cwd       cwdState
+	pipeIn    bool
 	// cache holds the decision's expanded words and its glob budget.
 	cache *spellCache
 }
@@ -656,21 +650,19 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 func (s *setup) viewOf(c simple, st cwdState) view {
 	v := view{cwd: st.clone(), pipeIn: c.pipeIn}
 	var args []string
-	var known, unplaced []bool
+	var known []bool
 	for _, wd := range c.words {
 		xw := s.expandWord(wd, v.cwd)
 		v.words = append(v.words, xw)
 		if !xw.redirect {
 			args = append(args, xw.text)
 			known = append(known, xw.known)
-			unplaced = append(unplaced, xw.unplaced)
 		}
 	}
 	v.argv = stripKeywords(args)
 	v.argvKnown = known[len(known)-len(v.argv):]
 	v.name, v.rest, v.under = command(v.argv)
 	v.restKnown = v.argvKnown[len(v.argvKnown)-len(v.rest):]
-	v.restUnplaced = slices.Contains(unplaced[len(unplaced)-len(v.rest):], true)
 	return v
 }
 
@@ -1186,12 +1178,12 @@ func (s *setup) expandWord(w word, st cwdState) xword {
 
 // hostWord rewrites xw's text and pattern as the host names the path, when
 // xw is an absolute MSYS2 path (msysPath). One that cannot be placed is
-// left as written, unknown and unplaced.
+// left as written and unknown.
 func hostWord(xw *xword) {
 	n, repl, changed, ok := msysPrefix(xw.text)
 	switch {
 	case !ok:
-		xw.known, xw.unplaced = false, true
+		xw.known = false
 		return
 	case !changed:
 		return
@@ -1202,7 +1194,7 @@ func hostWord(xw *xword) {
 		xw.pattern = repl + filepath.FromSlash(xw.pattern[n:])
 	} else {
 		// An escaped glob character before the rewritten part.
-		xw.known, xw.unplaced = false, true
+		xw.known = false
 	}
 }
 
@@ -1758,12 +1750,18 @@ func policyApprove(args []string) bool {
 
 // gitRule decides rule 2 for v, from each spelling of its working
 // directory; from an unknown one, as if from each protected root, where
-// every relative pathspec touches the root.
+// every relative pathspec touches the root. An argument that cannot be
+// told (an expansion, a path that cannot be placed) could be any
+// pathspec, revision, option or directory: a subcommand that prints
+// content is then unprovable (gitContent).
 func (s *setup) gitRule(v view) string {
-	if v.name == "git" && v.restUnplaced {
-		// A path git is given that cannot be placed could be any
-		// pathspec, -C directory or file.
-		return "git"
+	var unknown []string
+	if v.name == "git" {
+		for i, k := range v.restKnown {
+			if !k {
+				unknown = append(unknown, v.rest[i])
+			}
+		}
 	}
 	dirs := v.cwd.dirs
 	if !v.cwd.known() {
@@ -1775,7 +1773,7 @@ func (s *setup) gitRule(v view) string {
 	for _, d := range dirs {
 		in := *s
 		in.cwd = d
-		if sub := in.gitContent(v.argv); sub != "" {
+		if sub := in.gitContent(v.argv, unknown); sub != "" {
 			return sub
 		}
 	}

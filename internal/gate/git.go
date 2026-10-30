@@ -200,6 +200,9 @@ type gitInvocation struct {
 	// oddSpecs is true when a global option changes how every pathspec
 	// matches (--literal-pathspecs, --glob-pathspecs, --icase-pathspecs).
 	oddSpecs bool
+	// unknown is true when an argument cannot be told (gitContent): no
+	// query that could find the command prints nothing is made with it.
+	unknown bool
 
 	// place is where dir is (locate). For gitHere, top is the root of the
 	// work tree git runs in ("" inside a git directory), and prefix is
@@ -473,7 +476,9 @@ func contentIf(c bool, specs []pathspec) gitCheck {
 // printing content that could come from a protected root. args is the
 // whole simple command, with any assignments and wrappers before git. It
 // returns the subcommand when the command is denied, and "" otherwise.
-func (s *setup) gitContent(args []string) string {
+// unknown are git's arguments that cannot be told: with any, a subcommand
+// that prints content is denied, as one whose pathspecs are unprovable.
+func (s *setup) gitContent(args, unknown []string) string {
 	name, rest := program(args)
 	if name != "git" {
 		return ""
@@ -485,17 +490,22 @@ func (s *setup) gitContent(args []string) string {
 	if unsafeEnv(args[:len(args)-len(rest)-1]) {
 		return inv.sub
 	}
+	if slices.Contains(unknown, inv.sub) {
+		// The subcommand itself cannot be told.
+		return "git"
+	}
 	inv, ok = s.resolveAlias(inv)
 	if !ok || inv.unsafe {
 		return inv.sub
 	}
+	inv.unknown = len(unknown) > 0
 	s.locate(&inv)
 	switch inv.place {
 	case gitForeign, gitNongit:
 		// The protected roots are this repository's: elsewhere only a path
 		// the command names can reach them (diff --no-index, grep
-		// --no-index).
-		if s.foreignReads(inv) {
+		// --no-index), and an argument that cannot be told could name one.
+		if s.foreignReads(inv) || (len(unknown) > 0 && s.gitSpecs(inv).content) {
 			return inv.sub
 		}
 		return ""
@@ -504,7 +514,8 @@ func (s *setup) gitContent(args []string) string {
 	switch {
 	case !c.content:
 		return ""
-	case c.deny || inv.elsewhere || inv.place == gitUnknown:
+	case c.deny || inv.elsewhere || inv.place == gitUnknown || len(unknown) > 0:
+		// Never the name-only query with a word left unexpanded.
 		return inv.sub
 	case c.bySpecs && (inv.oddSpecs || !s.specsAvoid(inv, c.specs)):
 		return inv.sub
@@ -1240,7 +1251,7 @@ func (s *setup) stashCheck(inv gitInvocation) gitCheck {
 // answer, more than one word, or a repository the gate cannot ask about
 // leaves the decision to the name-only run, which fails closed.
 func (s *setup) stashAbsent(inv gitInvocation, args []string) bool {
-	if inv.elsewhere || inv.place != gitHere {
+	if inv.elsewhere || inv.unknown || inv.place != gitHere {
 		return false
 	}
 	var words []string
