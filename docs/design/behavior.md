@@ -1136,6 +1136,15 @@ behavior (2026-10-29).
   - `status -v` (the staged diff) and `-vv` (and the unstaged one), and
     `commit --dry-run -v` (both): `git diff --cached` and `git diff` in
     name-only form.
+  - `stash show` takes no pathspec: every word not starting with `-`,
+    before or after `--`, names the stash (a number `n` is
+    `refs/stash@{n}`, none is `refs/stash@{0}`). With at most one such
+    word, the gate first asks `git rev-parse --verify --quiet
+    --end-of-options <stash>`; exit 1 with no output means the stash does
+    not exist, `stash show` fails before printing anything, and the
+    command is allowed. Any other answer goes to the name-only run. git
+    2.56 made a failing `stash` exit 128 rather than 1, so the absent
+    stash is not left to the exit code of the name-only run.
 
   Each git command runs with an argv, the global options given (but `-C`,
   which becomes its directory), `GIT_PAGER=cat`, `GIT_EXTERNAL_DIFF`

@@ -215,7 +215,11 @@ func TestShellGitStashShowPatch(t *testing.T) {
 	run(t, root, []decideCase{
 		{"stash show", sh("git stash show"), gate.ReasonGitContent},
 		{"stash show --stat", sh("git stash show --stat"), ""},
-		{"stash show -p limited away", sh("git stash show -p -- notes"), ""},
+		// stash show takes no pathspec: a word after "--" names the stash.
+		{"stash show -p names a stash that does not exist", sh("git stash show -p -- notes"), ""},
+		{"stash show -p of a root names no stash", sh("git stash show -p -- pbip"), ""},
+		{"stash show -p of stash 0 after --", sh("git stash show -p -- 0"), gate.ReasonGitContent},
+		{"stash show -p of a stash past the last", sh("git stash show -p 3"), gate.ReasonGitContent},
 		{"stash list", sh("git stash list"), ""},
 	})
 }

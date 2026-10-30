@@ -1193,6 +1193,9 @@ func (s *setup) stashCheck(inv gitInvocation) gitCheck {
 				return noContent()
 			}
 		}
+		if s.stashAbsent(inv, args) {
+			return noContent()
+		}
 		return byRuns(s.diffRun(inv, []string{"stash", "show"}, nil, args, []string{"-u"}))
 	case "list":
 		if !hasFlag(args, gitPatchFlags) {
@@ -1206,6 +1209,38 @@ func (s *setup) stashCheck(inv gitInvocation) gitCheck {
 		return bySpecs(s.parseSpecs(inv, inv.specs))
 	}
 	return noContent()
+}
+
+// stashAbsent reports whether git stash show (args are its words after
+// "show", before any "--") names a stash that does not exist: it then
+// fails before it prints anything. stash show takes no pathspec: every
+// word not starting with "-", before or after "--", names the stash, a
+// number n meaning refs/stash@{n}, and with none it shows refs/stash@{0}.
+// The stash is absent only when git rev-parse --verify --quiet exits 1
+// with no output, git's answer that the name resolves to nothing. Any other
+// answer, more than one word, or a repository the gate cannot ask about
+// leaves the decision to the name-only run, which fails closed.
+func (s *setup) stashAbsent(inv gitInvocation, args []string) bool {
+	if inv.elsewhere || inv.place != gitHere {
+		return false
+	}
+	var words []string
+	for _, w := range slices.Concat(args, inv.specs) {
+		if !strings.HasPrefix(w, "-") {
+			words = append(words, w)
+		}
+	}
+	rev := "refs/stash@{0}"
+	switch {
+	case len(words) > 1:
+		return false
+	case len(words) == 1 && strings.Trim(words[0], "0123456789") == "":
+		rev = "refs/stash@{" + words[0] + "}"
+	case len(words) == 1:
+		rev = words[0]
+	}
+	out, exit, err := s.git().output(inv.dir, "rev-parse", "--verify", "--quiet", "--end-of-options", rev)
+	return err == nil && exit == 1 && out == ""
 }
 
 // grepLongValues are git grep's long options that take the next word.
