@@ -220,8 +220,11 @@ func (s *setup) diskCase(rel string) string {
 
 // rootCase is rel with a leading protected root, matched without regard to
 // case, spelled as the policy writes it.
-func (s *setup) rootCase(rel string) string {
-	for _, root := range s.policy.ProtectedRoots() {
+func (s *setup) rootCase(rel string) string { return rootCaseIn(s.policy.ProtectedRoots(), rel) }
+
+// rootCaseIn is rootCase for the roots given.
+func rootCaseIn(roots []string, rel string) string {
+	for _, root := range roots {
 		if strings.EqualFold(rel, root) {
 			return root
 		}
@@ -240,13 +243,16 @@ func hasPrefixFold(path, prefix string) bool {
 }
 
 // underRoot reports whether the repository-relative path rel is a
-// protected root or inside one. Names are compared without regard to case
-// on every file system: what it decides is only whether the protected tree
-// is scanned, and a scan of the real roots costs nothing in safety.
+// protected root or inside one, the roots of a nested work tree it is in
+// included (frames). Names are compared without regard to case on every
+// file system: what it decides is only whether the protected tree is
+// scanned, and a scan of the real roots costs nothing in safety.
 func (s *setup) underRoot(rel string) bool {
-	for _, root := range s.policy.ProtectedRoots() {
-		if hasPrefixFold(rel, root) {
-			return true
+	for _, f := range s.frames(rel) {
+		for _, root := range f.roots() {
+			if hasPrefixFold(f.sub, root) {
+				return true
+			}
 		}
 	}
 	return false
@@ -254,17 +260,23 @@ func (s *setup) underRoot(rel string) bool {
 
 // touchesRel reports whether the repository-relative path rel is a
 // protected root, is inside one, or contains one, compared as underRoot
-// compares.
+// compares, the roots of a nested work tree it is in included; or whether
+// it is or contains a nested work tree, whose roots it then contains.
 func (s *setup) touchesRel(rel string) bool {
 	if rel == "." || s.underRoot(rel) {
 		return true
 	}
-	for _, root := range s.policy.ProtectedRoots() {
-		if hasPrefixFold(root, rel) {
+	for _, f := range s.frames(rel) {
+		if f.sub == "." {
 			return true
 		}
+		for _, root := range f.roots() {
+			if hasPrefixFold(root, f.sub) {
+				return true
+			}
+		}
 	}
-	return false
+	return len(s.nestedBelow(rel)) > 0
 }
 
 // touchesAbs reports whether one absolute spelling is a protected root, is

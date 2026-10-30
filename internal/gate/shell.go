@@ -21,6 +21,12 @@ const toolName = "pbipx"
 // touching every protected root.
 const maxDepth = 4
 
+// maxCommands bounds the simple commands one line holds, nested lines
+// included. No command line an agent writes comes near it; one past it is
+// denied rather than judged in part, so the hook stays inside its time
+// limit.
+const maxCommands = 20000
+
 // shell decides a shell command line (behavior.md, "The gate", Bash, and
 // the local-state divergence in Clarifications). The line is never quoted
 // in a message: it can carry anything.
@@ -29,6 +35,9 @@ func (s *setup) shell(line string) Decision {
 	w := &walker{s: s, cache: newSpellCache()}
 	st := cwdState{dirs: []string{s.cwd}}
 	w.commands(line, top, &st, 0)
+	if w.tooMany {
+		return deny(ReasonInternalError, "the command line holds more than %d commands, too many to judge", maxCommands)
+	}
 
 	// Before anything else: changing Claude Code's settings in the
 	// repository, or approving the policy. Even the tool alone could
@@ -359,6 +368,8 @@ type walker struct {
 	// after it reads.
 	changed         string
 	readAfterChange bool
+	// tooMany is set when the line holds more than maxCommands commands.
+	tooMany bool
 }
 
 // commands reads the simple commands cmds of line, nested depth deep, from
@@ -372,6 +383,10 @@ func (w *walker) commands(line string, cmds []simple, st *cwdState, depth int) {
 	var lister *view // a find or fd whose output this pipeline carries
 	var prev *simple // the command before, in this pipeline
 	for i, c := range cmds {
+		if len(w.views) >= maxCommands {
+			w.tooMany = true
+			return
+		}
 		if !c.pipeIn {
 			prev = nil
 		}
@@ -1407,7 +1422,11 @@ func (s *setup) viewNamesAgentSettings(v view) bool {
 	settings := func(a string) bool {
 		return slices.ContainsFunc(s.relsOf([]string{a}), scan.IsAgentSettings)
 	}
-	for _, xw := range v.words {
+	writable := mayWriteAll(v)
+	for i, xw := range v.words {
+		if !writable[i] {
+			continue
+		}
 		abss, _ := s.wordSpellings(v, xw)
 		for _, a := range abss {
 			if c.memo("settings", a, settings) {
@@ -1416,6 +1435,34 @@ func (s *setup) viewNamesAgentSettings(v view) bool {
 		}
 	}
 	return false
+}
+
+// mayWriteAll is mayWrite for each word of v, in order, in time linear in
+// their number: a command line can hold a great many words.
+func mayWriteAll(v view) []bool {
+	out := make([]bool, len(v.words))
+	ro := readOnly(v)
+	nargs := 0
+	for _, w := range v.words {
+		if !w.redirect {
+			nargs++
+		}
+	}
+	lead := nargs - len(v.rest)
+	leading := map[xword]bool{}
+	k := 0
+	for _, w := range v.words {
+		if !w.redirect {
+			if k < lead {
+				leading[w] = true
+			}
+			k++
+		}
+	}
+	for i, w := range v.words {
+		out[i] = w.redirect || strings.HasPrefix(w.text, "-") || !ro || lead < 0 || leading[w]
+	}
+	return out
 }
 
 // reachesControl reports whether v names a path outside the repository
@@ -1427,7 +1474,11 @@ func (s *setup) reachesControl(v view, ctl controls) (string, bool) {
 	if c == nil {
 		c = newSpellCache()
 	}
-	for _, xw := range v.words {
+	writable := mayWriteAll(v)
+	for i, xw := range v.words {
+		if !writable[i] {
+			continue
+		}
 		abss, _ := s.wordSpellings(v, xw)
 		for _, a := range abss {
 			if what := c.control(a, false, ctl); what != "" {
@@ -1639,7 +1690,7 @@ func (s *setup) namesLocalState(v view, xw xword) (string, bool) {
 		}
 		hit := ""
 		for _, rel := range s.relsOf([]string{a}) {
-			if class, _ := s.policy.Classify(rel); class == policy.LocalState || s.policy.LocalStateDir(rel) {
+			if class, _ := s.policy.Classify(rel); class == policy.LocalState || s.policy.LocalStateDir(rel) || s.nestedLocalState(rel) {
 				hit = rel
 				break
 			}

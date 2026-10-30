@@ -1,0 +1,6 @@
+description = "cat of .claude/settings.json only reads it: a command that names a Claude Code settings file is denied only when it could write it. It plants no value"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = []

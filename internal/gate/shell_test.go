@@ -262,7 +262,7 @@ func TestShellAgentSettingsDirectory(t *testing.T) {
 		{"a .claude directory copied in", sh("cp -r " + filepath.Join(outside, ".claude") + " ."), gate.ReasonAgentSettings},
 		{"dd into .claude", sh("dd if=x.json of=.claude/"), gate.ReasonAgentSettings},
 		{"in another case", sh("cp x.json .CLAUDE/"), gate.ReasonAgentSettings},
-		{"settings by **", sh("cat **/settings.local.json"), gate.ReasonAgentSettings},
+		{"settings by **", sh("sed -i s/a/b/ **/settings.local.json"), gate.ReasonAgentSettings},
 
 		{"cp into a subdirectory of .claude", sh("cp x.md .claude/commands/"), ""},
 		{"cp out of .claude", sh("cp .claude/commands/x.md " + outside), ""},
@@ -551,10 +551,16 @@ func TestShellBounded(t *testing.T) {
 				cmd = cmd[:1<<20]
 			}
 			start := time.Now()
-			gate.Decide(shIn(root, cmd), gate.Options{})
+			d := gate.Decide(shIn(root, cmd), gate.Options{})
 			if el := time.Since(start); el > slowdown*2*time.Second {
 				t.Errorf("took %v", el)
 			}
+			if name == "many commands" {
+				check(t, d, gate.ReasonInternalError)
+			}
 		})
 	}
+	// Up to the limit, every command is judged.
+	ok := strings.Repeat("ls notes;", 19000) + "git diff"
+	check(t, gate.Decide(shIn(root, ok), gate.Options{}), gate.ReasonGitContent)
 }

@@ -22,7 +22,9 @@ already a reviewed diff.
   exact bytes, outside the repository:
   `${PBIPX_CONFIG_DIR:-<user config dir>/pbipx}/approved/<key>`, where the
   key identifies the repository by its absolute root path. The file holds
-  the digest and the date; it never holds policy content.
+  the digest and the date; it never holds policy content. (Amended
+  2026-10-30, below: the key is the clone's git directory, and the record
+  holds a set of digests.)
 - Approval is a person's act. It is refused, with a usage error, when stdin
   or stdout is not an interactive terminal, or when `CI`, `PRE_COMMIT` or
   `PBIPX_NO_REVEAL` is set, so a hook or an agent's shell cannot approve. It
@@ -65,7 +67,8 @@ exit 3. So is a repository's committed Claude Code settings file whose
 `hooks-disabled`.
 
 An approval is per machine and per clone path. A second clone, or a move,
-needs its own approval.
+needs its own approval. (Amended 2026-10-30, below: per clone, shared by
+its work trees.)
 
 A person can approve a weakened policy without reading it. The control makes
 the change visible and deliberate; review is still the person's job.
@@ -83,3 +86,36 @@ should not have to learn.
 **The policy outside the repository.** The policy is repository
 configuration, reviewed with the code it governs (ADR-0004). Moving it out
 loses that review.
+
+## Amendment (2026-10-30): one record per clone, holding a set of digests
+
+Keying the record by the work tree's path denied every new work tree of an
+approved clone until a person approved it at a terminal. Claude Code adds
+one under `.claude/worktrees/<name>` for each isolated subagent, so the
+gate over-blocked exactly where it is used most, and a control that gets in
+the way gets turned off.
+
+- **The key** is now the clone's shared git directory, as
+  `git rev-parse --git-common-dir` names it, made absolute and with symlinks
+  resolved, then hashed as before. Every work tree of one clone, linked
+  ones included, shares one record. A second clone, or a move of the git
+  directory, still needs its own approval.
+- **The record holds a set of digests**, at most the 16 most recently
+  approved (`version = 2`, `digests = [...]`, oldest first, and the time of
+  the last approval). `policy approve` adds the policy's digest, or moves
+  it to the end when it is already there, and drops the oldest past 16. A
+  policy is approved when its digest is in the set, so work trees on
+  branches with different policies can each be approved once.
+- **Migration.** A `version = 1` record, keyed by a work tree's path, is
+  still read for that work tree, and its digest counts as approved. The
+  next approval there merges it into the clone's record and removes it.
+- A store inside the git directory, or inside the main work tree when the
+  gate runs in a linked one (`.claude/worktrees` lies inside it), is
+  refused like a store inside the repository.
+
+The cost is that an approval no longer lapses when a newer policy is
+approved: a policy approved once stays approved until 15 newer ones push it
+out, so checking out an older, weaker policy that was approved before
+enforces it without a new prompt. Each such policy was a person's
+deliberate approval, and a branch can only bring back a policy that was
+approved for this clone, never a new one.

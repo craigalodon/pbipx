@@ -13,6 +13,7 @@ import (
 
 	"github.com/craigalodon/pbipx/internal/approval"
 	"github.com/craigalodon/pbipx/internal/finding"
+	"github.com/craigalodon/pbipx/internal/gate"
 	"github.com/craigalodon/pbipx/internal/policy"
 )
 
@@ -37,7 +38,9 @@ func newPolicyCmd() *cobra.Command {
 The gate denies every call while .pbipx.toml has no approval on this machine,
 or has changed since it was approved. An approval is the SHA-256 digest of
 the file's bytes, stored outside the repository in
-${PBIPX_CONFIG_DIR:-<user config dir>/pbipx}/approved/.`,
+${PBIPX_CONFIG_DIR:-<user config dir>/pbipx}/approved/. Every work tree of
+one clone shares its approvals, and the last 16 approved policies stay
+approved.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			fmt.Fprint(cmd.ErrOrStderr(), cmd.UsageString())
@@ -95,42 +98,54 @@ func runPolicyApprove(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	store, err := openStore(cmd, repo.Root)
+	store, id, err := openStore(cmd, repo.Root)
 	if err != nil {
 		return err
 	}
 	digest := approval.Digest(data)
-	status, err := store.Check(repo.Root, digest)
+	status, err := store.Check(id, digest)
 	if err != nil {
 		return operational(cmd, "the approval record cannot be read")
 	}
 	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "policy  %s\ndigest  %s\nstatus  %s\n\n", policy.FileName, digest, status)
-	fmt.Fprintf(out, "Type %q to approve this policy for the gate in this repository on this machine: ", approveWord)
+	fmt.Fprintf(out, "Type %q to approve this policy for the gate in every work tree of this clone on this machine: ", approveWord)
 	line, _ := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
 	if strings.TrimSpace(line) != approveWord {
 		fmt.Fprintln(out)
 		return usageError{"the policy was not approved"}
 	}
-	if err := store.Approve(repo.Root, digest, now()); err != nil {
+	if err := store.Approve(id, digest, now()); err != nil {
 		return operational(cmd, "the approval cannot be written")
 	}
 	fmt.Fprintf(out, "pbipx: %s approved\n", policy.FileName)
 	return nil
 }
 
-// openStore is the approval store for the repository at root, or the
-// operational failure that refuses it: not found, or inside the repository,
-// where an agent could write an approval.
-func openStore(cmd *cobra.Command, root string) (*approval.Store, error) {
+// openStore is the approval store for the repository at root, and what its
+// approval is recorded for (the clone), or the operational failure that
+// refuses them: not found, git cannot name the clone, or the store is
+// inside the repository or the clone, where an agent could write an
+// approval.
+func openStore(cmd *cobra.Command, root string) (*approval.Store, approval.Repository, error) {
 	store, err := approval.OpenFor(root)
+	inRepo := func() error {
+		return operational(cmd, "the approval store is inside the repository, where an agent could write an approval: set "+approval.EnvConfigDir+" to a directory outside it")
+	}
 	switch {
 	case errors.Is(err, approval.ErrInRepository):
-		return nil, operational(cmd, "the approval store is inside the repository, where an agent could write an approval: set "+approval.EnvConfigDir+" to a directory outside it")
+		return nil, approval.Repository{}, inRepo()
 	case err != nil:
-		return nil, operational(cmd, "the approval store cannot be found: set "+approval.EnvConfigDir+" to an absolute path")
+		return nil, approval.Repository{}, operational(cmd, "the approval store cannot be found: set "+approval.EnvConfigDir+" to an absolute path")
 	}
-	return store, nil
+	id, err := gate.Identify(root)
+	if err != nil {
+		return nil, approval.Repository{}, operational(cmd, "git could not say which clone the repository belongs to")
+	}
+	if store.InClone(id) {
+		return nil, approval.Repository{}, inRepo()
+	}
+	return store, id, nil
 }
 
 func newPolicyStatusCmd() *cobra.Command {
@@ -147,11 +162,11 @@ otherwise.`,
 			if err != nil {
 				return err
 			}
-			store, err := openStore(cmd, repo.Root)
+			store, id, err := openStore(cmd, repo.Root)
 			if err != nil {
 				return err
 			}
-			status, err := store.Status(repo.Root, filepath.Join(repo.Root, policy.FileName))
+			status, err := store.Status(id, filepath.Join(repo.Root, policy.FileName))
 			if err != nil {
 				return operational(cmd, "the approval record cannot be read")
 			}

@@ -380,6 +380,22 @@ func TestShellString(t *testing.T) {
 	}
 }
 
+func TestMayWriteAll(t *testing.T) {
+	s := &setup{}
+	for _, line := range []string{
+		"cat a b > c", "ls ls", "nice -n 5 cat x", "cp a b", "timeout 5 grep -r x .", "sed -i s/a/b/ f",
+		"cat", "> x", "env A=1 cat a", "less +s x",
+	} {
+		v := s.viewOf(splitCommands(line)[0], cwdState{dirs: []string{"/"}})
+		all := mayWriteAll(v)
+		for i, xw := range v.words {
+			if all[i] != mayWrite(v, xw) {
+				t.Errorf("%q word %d: mayWriteAll = %v, mayWrite = %v", line, i, all[i], !all[i])
+			}
+		}
+	}
+}
+
 func TestMatchStar(t *testing.T) {
 	for _, tc := range []struct {
 		pat, path string
