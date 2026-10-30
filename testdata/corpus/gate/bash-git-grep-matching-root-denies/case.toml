@@ -1,0 +1,6 @@
+description = "git grep whose pattern matches a file under a root prints its lines"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]

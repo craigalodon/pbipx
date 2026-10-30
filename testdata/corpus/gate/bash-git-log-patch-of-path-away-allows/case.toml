@@ -1,0 +1,7 @@
+description = "git log -p of a file outside every root, named without --, prints only that file: the gate runs the log in name-only form and it names no file under a root, while the root holds a leak"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = ["Doe, Jane"]
+known       = "predecessor"

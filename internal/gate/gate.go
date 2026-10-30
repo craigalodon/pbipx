@@ -113,6 +113,8 @@ type setup struct {
 	// (foldCase); home is the gate's own home directory, "" when unknown.
 	fold bool
 	home string
+	// gitq is the decision's git session (gitquery.go).
+	gitq *gitSession
 	// nest is what is known of nested work trees (nested.go), found on
 	// first use.
 	nest *nestCache
@@ -200,7 +202,7 @@ func load(ev Event, opts Options) (*setup, *Decision) {
 	if err != nil {
 		home = ""
 	}
-	return &setup{repo: repo, policy: p, baseline: b, cwd: ev.Cwd, now: now, fold: foldCase, home: home}, nil
+	return &setup{repo: repo, policy: p, baseline: b, cwd: ev.Cwd, now: now, fold: foldCase, home: home, gitq: newGitSession()}, nil
 }
 
 // describe is a policy or baseline error as structure: the file's name, a

@@ -1,0 +1,8 @@
+description = "An alias defined earlier in the same command line is not set when the gate looks it up: an unknown subcommand denies. The log it runs would print the leak from history; the working tree is clean"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
+deleted     = ["pbip/Example.Report/definition/pages/0000/visuals/0001/visual.json"]
+known       = "predecessor"
