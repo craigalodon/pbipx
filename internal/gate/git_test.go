@@ -3,6 +3,7 @@ package gate_test
 import (
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -58,7 +59,7 @@ func TestShellGitHistory(t *testing.T) {
 	git := gate.ReasonGitContent
 	run(t, root, []decideCase{
 		// The working tree is clean: naming the root alone allows.
-		{"cat of the clean tree", sh("ls " + filepath.Dir(leakVisual)), ""},
+		{"cat of the clean tree", sh("ls " + path.Dir(leakVisual)), ""},
 
 		// blame takes the file before or after the revision.
 		{"blame file then revision", sh("git blame " + leakVisual + " HEAD~1"), git},
@@ -221,5 +222,30 @@ func TestShellGitStashShowPatch(t *testing.T) {
 		{"stash show -p of stash 0 after --", sh("git stash show -p -- 0"), gate.ReasonGitContent},
 		{"stash show -p of a stash past the last", sh("git stash show -p 3"), gate.ReasonGitContent},
 		{"stash list", sh("git stash list"), ""},
+	})
+}
+
+// TestShellGitThroughLinkedDirectory runs git with the working directory
+// spelled through a symlink, as a temporary directory under /var is on
+// macOS: git prints the top of the work tree resolved, and a path inside
+// it must still be placed there.
+func TestShellGitThroughLinkedDirectory(t *testing.T) {
+	root := newRepo(t, cleanFiles())
+	write(t, root, reportJSON, `{"layoutOptimization": "Fit"}`)
+	write(t, root, cleanNote, "Still nothing personal.\n")
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(root, link); err != nil {
+		t.Skip("symlinks are not available")
+	}
+	sh := func(cmd string) gate.Event { return gate.Event{Tool: gate.Shell, Command: cmd} }
+	shIn := func(dir, cmd string) gate.Event { return gate.Event{Tool: gate.Shell, Command: cmd, Cwd: dir} }
+	run(t, link, []decideCase{
+		{"diff of notes", sh("git diff notes"), ""},
+		{"diff -- notes", sh("git diff -- notes"), ""},
+		{"diff excluding the root", sh("git diff -- . ':!pbip'"), ""},
+		{"diff from inside a root, limited away", shIn("pbip/A.Report", "git diff -- ../../notes"), ""},
+		{"blame away", sh("git blame README.md"), ""},
+		{"diff of the root", sh("git diff -- pbip"), gate.ReasonGitContent},
+		{"diff of everything", sh("git diff"), gate.ReasonGitContent},
 	})
 }

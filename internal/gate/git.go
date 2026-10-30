@@ -943,7 +943,11 @@ func (s *setup) diffCheck(inv gitInvocation) gitCheck {
 }
 
 // namesOutside reports whether a word of inv, taken as a path, is an
-// existing file or directory outside the work tree inv runs in.
+// existing file or directory outside the work tree inv runs in. git prints
+// the top of the work tree with its symlinks resolved (/private/var on
+// macOS, where the working directory may be spelled /var; long names on
+// Windows, where it may hold an 8.3 short name), so a spelling is inside
+// when it is, as spelled or resolved.
 func (s *setup) namesOutside(inv gitInvocation) bool {
 	for _, w := range inv.rest {
 		if w == "--" || strings.HasPrefix(w, "-") {
@@ -953,12 +957,22 @@ func (s *setup) namesOutside(inv gitInvocation) bool {
 			if _, err := os.Stat(a); err != nil {
 				continue
 			}
-			if _, in := relTo(inv.top, a, s.fold); inv.top == "" || !in {
+			if inv.top == "" || !s.inTop(inv, a) {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+// inTop reports whether the absolute path a, as spelled or with its
+// symlinks resolved, is inside the work tree inv runs in.
+func (s *setup) inTop(inv gitInvocation, a string) bool {
+	if _, in := relTo(inv.top, a, s.fold); in {
+		return true
+	}
+	_, in := relTo(inv.top, resolve(a), s.fold)
+	return in
 }
 
 // namesDir reports whether a word of inv, taken as a path, is a directory
