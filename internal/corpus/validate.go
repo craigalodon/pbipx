@@ -162,9 +162,12 @@ func (v *validator) checkPolicy() {
 	treePolicy := v.inTree(policyFile)
 	switch {
 	case s.Policy == policyInTree:
-		// A case may leave the policy out to show that a missing one fails.
+		// A case may leave the policy out to show that a missing one fails,
+		// and a gate case with no approval to run in a repository that has
+		// not adopted pbipx.
 		missingOK := v.cs.Expected != nil && v.cs.Expected.Failure == "policy-error"
-		if !treePolicy && !missingOK {
+		notAdopted := s.Command == commandGate && !s.Approves()
+		if !treePolicy && !missingOK && !notAdopted {
 			v.addf(caseFile, "policy is %q but tree/%s does not exist", policyInTree, policyFile)
 		}
 	case !kebab.MatchString(s.Policy):

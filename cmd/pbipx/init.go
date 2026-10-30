@@ -40,7 +40,11 @@ func newInitCmd() *cobra.Command {
 1. Find the directories that hold PBIP folders (*.Report, *.SemanticModel) and
    .pbip files, and write a commented starting policy, .pbipx.toml, that
    protects them. An existing policy is kept unless --force is given. Only
-   directory and file names are read, never a file's content.
+   directory and file names are read, never a file's content. Then record the
+   repository as set up for pbipx in the approval store
+   (${PBIPX_CONFIG_DIR:-<user config dir>/pbipx}), outside it: the gate acts
+   only for such a repository, and from then on denies every call there until
+   the policy is approved, and whenever it is missing or does not load.
 2. Register the gate as Claude Code's PreToolUse hook for Read, Grep, Bash and
    the file-writing tools, in the user-level settings
    ($CLAUDE_CONFIG_DIR/settings.json, or ~/.claude/settings.json), outside the
@@ -123,6 +127,13 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 		}
 	}
 
+	// The record that adopts the repository (ADR-0006, amended
+	// 2026-10-30) is written to the approval store, outside it.
+	store, id, err := openStore(cmd, repo.Root)
+	if err != nil {
+		return err
+	}
+
 	layout, err := setup.Detect(repo.Root)
 	if err != nil {
 		return operational(cmd, "the repository's directories cannot be listed")
@@ -169,6 +180,9 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 		}
 		fmt.Fprintf(out, "%s %s.\n", verb, policy.FileName)
 		describeLayout(out, layout)
+	}
+	if err := adopt(cmd, store, id, f.dryRun); err != nil {
+		return err
 	}
 
 	// 2. The hook.
@@ -234,6 +248,27 @@ func runInit(cmd *cobra.Command, f *initFlags) error {
 	}
 
 	nextSteps(out, missing, gitignored)
+	return nil
+}
+
+// adopt records the repository as adopted in the approval store, so the
+// gate acts for it from now on, before its policy is approved and even if
+// the policy is deleted. A record that cannot be read is left alone: the
+// gate already treats the clone as adopted, and an approval replaces it.
+func adopt(cmd *cobra.Command, store *approval.Store, id approval.Repository, dryRun bool) error {
+	out := cmd.OutOrStdout()
+	if dryRun {
+		fmt.Fprintln(out, "Would record this repository as set up for pbipx on this machine, so the gate acts for it.")
+		return nil
+	}
+	switch err := store.Adopt(id); {
+	case errors.Is(err, approval.ErrBadRecord):
+		fmt.Fprintln(out, "Warning: this clone's approval record cannot be read; the gate denies every call here until 'pbipx policy approve' replaces it.")
+	case err != nil:
+		return operational(cmd, "the record that sets up the repository for the gate cannot be written")
+	default:
+		fmt.Fprintln(out, "Recorded this repository as set up for pbipx on this machine: the gate acts for it from now on.")
+	}
 	return nil
 }
 

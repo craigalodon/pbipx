@@ -428,12 +428,75 @@ numbers and reason classes (principle 2).
 
 ## The gate (Claude Code)
 
+**Divergence (adoption).** The predecessor ran from a repository's own
+hook settings, so it saw only calls made in that repository. pbipx
+registers the gate in the user's settings, where it runs for every session
+on the machine, in every directory. So, first in order, pbipx decides which
+repositories a call is the gate's to judge
+([ADR-0006](../adr/0006-policy-integrity.md), amendment of 2026-10-30):
+
+- A git repository has **adopted** pbipx when its work tree has a
+  `.pbipx.toml` (any file of that name, loadable or not); or its clone
+  (keyed by `git rev-parse --git-common-dir`, as approvals are) has a
+  record in the approval store, written by `pbipx init` or
+  `pbipx policy approve`; or its work tree is in the store's index of
+  adopted work trees. A record that cannot be read counts. The record and
+  the index live outside the repository, so once pbipx is set up there,
+  deleting or breaking `.pbipx.toml` cannot switch the gate off: the call
+  is denied with `policy-error`.
+- A call is judged against **each adopted repository it touches**, as if
+  made there (that repository's policy, approval, baseline and roots),
+  with the event's working directory as it is. The paths it touches are:
+  the working directory; a Read's or a Write's `file_path`; a Grep's
+  `path` (default: the working directory); and for Bash, every working
+  directory a command runs in, every word placed against it as the shell
+  rule places words (globs, `--flag=value`, `cd` and all), the paths a
+  recursive search covers, and those `find`, `fd` and `xargs` read under.
+  Each path, as given and with its symlinks resolved, counts for the
+  innermost adopted work tree that holds it: of the directories above it
+  that hold a `.git` entry (walking up), and the indexed work trees it is
+  inside. So an adopted work tree nested in another, such as a linked work
+  tree under `.claude/worktrees/`, is judged alone, as before adoption;
+  and a repository that has not adopted pbipx, nested in one that has,
+  leaves its paths to the one around it. An indexed work tree below a
+  Grep's path or a Bash word counts too, since those can reach under it;
+  the working directory alone does not reach below itself. When the call
+  touches something that cannot be placed (the shell rule's "touches
+  every root": a working directory that cannot be told, a reading
+  command's word that cannot be placed, a line nested too deeply or built
+  at run time), every indexed work tree counts. The repositories that hold
+  the working directory are judged first, innermost first; any deny wins.
+- A call that touches **no adopted repository** is allowed: in a
+  repository that has not adopted pbipx, and outside every repository. One
+  exception holds everywhere: a call that changes what controls the gate
+  (a Write into the approval store or to a user-level or managed Claude
+  Code settings file, a Bash command naming one or writing into a
+  user-level settings directory, or one running `pbipx policy approve`) is
+  denied with `agent-settings`, since from any directory it would switch
+  the gate off, or forge an approval, for every adopted repository.
+- An adopted repository that git cannot open as a work tree (its `.git`
+  removed, say, while its work tree stays indexed), or a working directory
+  inside one that git cannot place (inside the git directory, or gone),
+  denies with `not-a-repository`. An index that cannot be read denies
+  every call with `internal-error`. With no store to be found, a
+  repository is adopted by its `.pbipx.toml` alone.
+
+The index is the work trees each record was written from (`roots` in the
+record; see the record format below). `pbipx init` writes a record with no
+digest, so the gate acts for the repository from then on, before its
+policy is approved. An indexed work tree that no longer exists is skipped;
+one that is now a different repository with no record and no policy is
+still adopted while it is indexed, so removing a work tree from the gate's
+reach is a person's edit of the store.
+
 The event is JSON on stdin. Every failure denies:
 
 - the event does not parse, or is not an object;
-- the working directory is not in a git repository;
-- the policy fails to load. It is loaded before anything is classified, so a
-  broken policy denies every call, not only calls near a protected root;
+- in an adopted repository, the working directory is not in a work tree
+  (adoption, above);
+- the policy of an adopted repository the call touches fails to load. It
+  is loaded before anything is classified, so a broken policy denies every
+  call there, not only calls near a protected root;
 - any other error.
 
 **Divergence (policy integrity).** In pbipx, the first check after the
@@ -463,13 +526,19 @@ the hex SHA-256 of the absolute, cleaned, symlink-resolved path of the
 clone's shared git directory (`git rev-parse --git-common-dir`), so every
 work tree of one clone, Claude Code's `.claude/worktrees/<name>` included,
 shares one record, and a second clone needs its own approval (ADR-0006,
-amendment of 2026-10-30). The record is TOML holding `version = 2`,
+amendment of 2026-10-30). The record is TOML holding `version = 3`,
 `digests` (the approved `"sha256:<hex>"` digests, oldest first, at most
-16) and `approved` (the UTC time of the last approval), written atomically
+16; none in a record `pbipx init` wrote before any approval), `roots` (the
+absolute, clean work-tree paths the record was written from, oldest first,
+at most 64: the index of adopted work trees) and `approved` (the UTC time
+of the last approval, absent before one), written atomically
 (a temporary file renamed into place) with mode 0600 in directories created
 0700. `policy approve` adds the policy's digest, or moves it to the end,
-and drops the oldest past 16; a policy is approved when its digest is in
-the set. A `version = 1` record (one `digest`, keyed by the work tree's
+and drops the oldest past 16; it and `init` add the work tree to `roots`.
+A policy is approved when its digest is in the set. A `version = 2`
+record (digests, no `roots`) is still read; it adopts its clone and adds
+no work tree to the index until the next approval rewrites it. A
+`version = 1` record (one `digest`, keyed by the work tree's
 path) is still read for that work tree, and the next approval there merges
 it into the clone's record and removes it. A relative `PBIPX_CONFIG_DIR` is
 refused: resolved against the working directory, it could point into the
@@ -1060,7 +1129,9 @@ behavior (2026-10-29).
 - The repository and the policy are checked before the tool is looked at,
   so `not-a-repository` and `policy-error` deny every tool. In pbipx so does
   `policy-unapproved`, checked right after the policy loads (see "The gate
-  (Claude Code)", divergence on policy integrity).
+  (Claude Code)", divergence on policy integrity). In pbipx these deny every
+  tool in, or reaching into, an adopted repository only (divergence on
+  adoption).
 - When a scan finds both a block and an error, the gate reports `finding`.
   (A scan's exit code reports the error: 3.)
 - A shell command that reads local state (`cat .pbi/localSettings.json`) is

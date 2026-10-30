@@ -1,0 +1,7 @@
+description = "A git repository with no .pbipx.toml and no approval record has not adopted pbipx, so the gate does not act there: a Read of a file that would be a leak under a policy allows"
+command     = "gate"
+args        = []
+policy      = "tree"
+approved    = false
+exit        = 0
+sentinels   = ["Doe, Jane"]

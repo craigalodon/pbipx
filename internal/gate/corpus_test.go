@@ -89,7 +89,7 @@ func TestCorpusGateCases(t *testing.T) {
 				return
 			}
 			store := &approval.Store{Dir: config}
-			d := gate.Decide(ev, gate.Options{CheckPolicy: gate.RequireApproval(store)})
+			d := gate.Decide(ev, gate.Options{CheckPolicy: gate.RequireApproval(store), Adoption: &gate.Adoption{Store: store}})
 			decision := "deny"
 			if d.Allow {
 				decision = "allow"

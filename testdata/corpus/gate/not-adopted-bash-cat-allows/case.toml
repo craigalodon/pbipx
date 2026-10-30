@@ -1,0 +1,7 @@
+description = "In a git repository that has not adopted pbipx, a shell command reading a file that would be a leak under a policy allows"
+command     = "gate"
+args        = []
+policy      = "tree"
+approved    = false
+exit        = 0
+sentinels   = ["Doe, Jane"]

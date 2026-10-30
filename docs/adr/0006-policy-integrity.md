@@ -33,6 +33,8 @@ already a reviewed diff.
   missing an approval, or whose digest differs from the approved one,
   denies every gated call with the reason class `policy-unapproved`, as a
   policy that fails to load denies with `policy-error`.
+  (Amended 2026-10-30, second amendment below: in the repositories that
+  adopted pbipx.)
 - The digest covers the whole file. A comment or whitespace edit needs
   re-approval too; normalizing first would make the normalizer itself
   security-critical.
@@ -119,3 +121,51 @@ out, so checking out an older, weaker policy that was approved before
 enforces it without a new prompt. Each such policy was a person's
 deliberate approval, and a branch can only bring back a policy that was
 approved for this clone, never a new one.
+
+## Amendment (2026-10-30): adoption, and an index of adopted work trees
+
+`pbipx init` registers the gate in the user's Claude Code settings, so it
+runs in every session on the machine, in every directory. Judging every
+call as if a policy were due denied every call in every other repository
+(`policy-error`) and outside any repository (`not-a-repository`):
+installing pbipx blocked the machine. The gate now acts only for
+repositories that adopted pbipx, and stays closed in them.
+
+- **Adopted** means the work tree has a `.pbipx.toml`, or the clone has a
+  record in the store, or the work tree is in the store's index. The record
+  is the tamper-resistant signal: it lives outside the repository, so once
+  a person ran `pbipx init` or approved a policy, deleting or breaking the
+  policy denies with `policy-error` rather than switching the gate off.
+- **`pbipx init` records adoption** at once: a record with no digest, so
+  the gate denies with `policy-unapproved` between init and approval
+  instead of allowing.
+- **Reaching in from elsewhere.** A call is judged against every adopted
+  repository it touches, wherever it is made from: a Read of an absolute
+  path, a Grep of a directory above one, a `cat` of a path into one from
+  `/tmp`. Each path the call touches is placed in the git work tree that
+  holds it by walking up for `.git`.
+- **The index.** The record holds the work-tree paths it was written from
+  (`version = 3`, `roots = [...]`, at most 64, the most recent last), so
+  the gate can find adopted repositories without being told: a call that
+  touches something it cannot place (a word it cannot expand, a working
+  directory it cannot tell) is judged against every indexed one, and a
+  path below which an indexed work tree lies reaches it. A version 2
+  record is still read, and adds no path until it is next written.
+- **Paths are not policy content.** Until now the record held no path: its
+  key is a hash. The rule that a record never holds policy content stands;
+  it guards what an agent could learn from the store, and what could carry
+  a value. A work-tree path is neither, and it stays in the user's own
+  configuration directory, mode 0600.
+- **What controls the gate is guarded from anywhere.** A write into the
+  store or the user-level or managed Claude Code settings, and a run of
+  `pbipx policy approve`, are denied from every directory, adopted or not:
+  each switches the gate off, or forges an approval, for every adopted
+  repository on the machine.
+
+The cost: an index entry outlives the repository at its path. An entry
+whose directory is gone is skipped, but one whose directory is still there
+keeps the gate acting there until a person removes the record from the
+store. And a repository that has a committed `.pbipx.toml` is adopted on
+first clone, before anyone ran `init` or approved it, so the gate denies
+there until a person approves the policy: the same prompt as before, now
+asked only where pbipx is in use.

@@ -420,6 +420,12 @@ type walker struct {
 	// tooMany is set when the line holds more than maxCommands commands.
 	tooMany bool
 	ctl     *controls
+	// probe is set for a walk that judges nothing and only finds the
+	// paths the line touches (adopt.go), with a setup that has no
+	// repository; probed are the paths find, fd, xargs and parallel read
+	// under.
+	probe  bool
+	probed []string
 }
 
 // commands reads the simple commands cmds of line, nested depth deep, from
@@ -528,6 +534,10 @@ func docKnown(doc *heredoc) bool {
 // reachesIn sets reach when p, from the working directory st, touches a
 // protected root, or when st is unknown and p relative.
 func (w *walker) reachesIn(st cwdState, p string) {
+	if w.probe {
+		w.probeIn(st, p)
+		return
+	}
 	if !st.known() {
 		if !fullPath(p) || w.s.touchesIn("/", p) {
 			w.reach = true
@@ -550,11 +560,12 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 	w.views = append(w.views, v)
 
 	// Every command after one that changes the working tree is judged
-	// for reading; the first change is the one named.
-	if w.changed != "" && !w.readAfterChange && w.reads(v) {
+	// for reading; the first change is the one named. A probe judges
+	// nothing.
+	if !w.probe && w.changed != "" && !w.readAfterChange && w.reads(v) {
 		w.readAfterChange = true
 	}
-	if w.changed == "" {
+	if !w.probe && w.changed == "" {
 		w.changed = s.treeChange(v)
 	}
 
@@ -1263,6 +1274,11 @@ func (s *setup) spellWord(v view, xw xword, c *spellCache) (out []string, unknow
 			}
 			pat := rawJoin(d, xw.pattern)
 			matches, over := globMatches(pat, c)
+			if over && s.repo == nil {
+				// A probe (adopt.go): the glob could stand for anything.
+				unknown = true
+				break
+			}
 			if over {
 				out = append(out, s.repo.Root)
 				break

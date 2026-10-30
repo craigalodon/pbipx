@@ -221,6 +221,17 @@ An implementation with no approval check, such as the predecessor, has
 nothing to approve and ignores `approved`. The cases that expect
 `policy-unapproved` are marked `known = "predecessor"`.
 
+The gate acts only for a repository that has adopted pbipx (behavior.md,
+"The gate", adoption): one with a policy file, or one with an approval
+record. A `gate` case runs in a repository that has **not** adopted pbipx
+when it says `policy = "tree"` with no `tree/.pbipx.toml`, and
+`approved = false`: no policy is written and none is approved. A case shows
+a repository that stays adopted with its policy gone by approving the policy
+in `tree/.pbipx.toml` and listing `.pbipx.toml` in `deleted`: the runner
+approves it at the end of step 3, after the file left the working tree. A
+case's event may name a working directory outside the root, such as
+`{root}/..`, to show a call made from elsewhere that reaches into it.
+
 ## Baseline cases
 
 A baseline entry is keyed by a fingerprint, and the fingerprint hashes the
@@ -348,7 +359,8 @@ The validator adds rules this format implies:
   `.tmdl` file, inside an Enter data blob: the base64 argument of
   `Binary.FromText`, raw-deflated or plain.
 - `policy = "tree"` needs `tree/.pbipx.toml`, unless the expected failure is
-  `policy-error`.
+  `policy-error`, or the case is a `gate` case with `approved = false` (a
+  repository that has not adopted pbipx).
 - `[[baseline]]` and `[fingerprint]` describe a finding of `tree/` with a
   context and reasons from the vocabulary; `{fingerprint}` is in `args` if
   and only if `[fingerprint]` is set; `after/tree/` needs one of them, or

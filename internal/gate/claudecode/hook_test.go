@@ -283,6 +283,84 @@ func TestHookCommandDecides(t *testing.T) {
 	})
 }
 
+// TestHookCommandScopesToAdoptedRepositories runs the hook where Claude
+// Code runs it once pbipx is installed: in every session on the machine.
+// Outside the adopted repository a call allows, unless it reaches into it.
+func TestHookCommandScopesToAdoptedRepositories(t *testing.T) {
+	h := newHook(t)
+	bin := buildPbipx(t, t.TempDir())
+	command := claudecode.HookCommand(bin, runtime.GOOS)
+
+	// A repository with the same leaking files and no policy, and no
+	// record in the store: it has not adopted pbipx.
+	plain := t.TempDir()
+	for name, content := range fixture {
+		if name == ".pbipx.toml" {
+			continue
+		}
+		p := filepath.Join(plain, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git := exec.Command("git", "init", "-q", plain) //nolint:gosec // G204: the repository is the test's own temporary directory
+	git.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+os.DevNull)
+	if out, err := git.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	outside := t.TempDir()
+	visual := filepath.FromSlash("pbip/Example.Report/definition/pages/0000/visuals/0001/visual.json")
+
+	in := func(dir string) *hook {
+		at := *h
+		at.repo = dir
+		return &at
+	}
+	allowed := func(t *testing.T, r result) {
+		t.Helper()
+		if r.exit != claudecode.ExitAllow || r.stdout != "" || r.stderr != "" {
+			t.Errorf("exit = %d, %d bytes on stdout, %d on stderr; want an allow", r.exit, len(r.stdout), len(r.stderr))
+		}
+	}
+	t.Run("not adopted, read of a leak", func(t *testing.T) {
+		allowed(t, runHook(t, in(plain), command, toolEvent(t, plain, "Read", "file_path", filepath.Join(plain, visual))))
+	})
+	t.Run("not adopted, cat of a leak", func(t *testing.T) {
+		allowed(t, runHook(t, in(plain), command, toolEvent(t, plain, "Bash", "command", "cat "+visual)))
+	})
+	t.Run("outside every repository", func(t *testing.T) {
+		allowed(t, runHook(t, in(outside), command, toolEvent(t, outside, "Bash", "command", "ls")))
+	})
+	t.Run("adopted, read of a leak", func(t *testing.T) {
+		wantDeny(t, runHook(t, h, command, h.deny), "finding")
+	})
+	t.Run("not adopted, read into the adopted repository", func(t *testing.T) {
+		wantDeny(t, runHook(t, in(plain), command, toolEvent(t, plain, "Read", "file_path", filepath.Join(h.repo, visual))), "finding")
+	})
+	t.Run("outside, cat into the adopted repository", func(t *testing.T) {
+		wantDeny(t, runHook(t, in(outside), command, toolEvent(t, outside, "Bash", "command", "cat '"+filepath.Join(h.repo, visual)+"'")), "finding")
+	})
+}
+
+// toolEvent is a PreToolUse event of tool with one input, from cwd.
+func toolEvent(t *testing.T, cwd, tool, key, value string) []byte {
+	t.Helper()
+	data, err := json.Marshal(map[string]any{
+		"session_id":      "00000000-0000-0000-0000-000000000000",
+		"hook_event_name": "PreToolUse",
+		"cwd":             cwd,
+		"tool_name":       tool,
+		"tool_input":      map[string]string{key: value},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
 // TestHookCommandPathQuoting runs the binary from a path a shell would split
 // or expand, with an allow event: exit 0 proves the gate itself ran.
 func TestHookCommandPathQuoting(t *testing.T) {

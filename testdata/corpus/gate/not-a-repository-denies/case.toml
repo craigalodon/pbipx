@@ -1,7 +1,0 @@
-description = "Outside a git repository every call denies, even a Read of a clean file. Plants no value"
-command     = "gate"
-args        = []
-policy      = "default"
-exit        = 2
-sentinels   = []
-git         = false

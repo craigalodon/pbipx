@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/craigalodon/pbipx/internal/approval"
 	"github.com/craigalodon/pbipx/internal/corpus"
 	"github.com/craigalodon/pbipx/internal/finding"
 	"github.com/craigalodon/pbipx/internal/gate/claudecode"
@@ -23,6 +24,7 @@ type initEnv struct {
 	root     string // the repository
 	home     string
 	config   string // CLAUDE_CONFIG_DIR
+	store    string // PBIPX_CONFIG_DIR
 	exe      string // the binary init reports running as
 	settings string
 }
@@ -40,6 +42,7 @@ func newInitRepo(t *testing.T, files ...string) initEnv {
 		root:   filepath.Join(base, "repo"),
 		home:   filepath.Join(base, "home"),
 		config: filepath.Join(base, "claude-config"),
+		store:  filepath.Join(base, "pbipx-config"),
 		exe:    filepath.Join(base, "bin", "pbipx"),
 	}
 	e.settings = filepath.Join(e.config, "settings.json")
@@ -62,6 +65,7 @@ func newInitRepo(t *testing.T, files ...string) initEnv {
 	t.Setenv("HOME", e.home)
 	t.Setenv("USERPROFILE", e.home)
 	t.Setenv("CLAUDE_CONFIG_DIR", e.config)
+	t.Setenv(approval.EnvConfigDir, e.store)
 	e.useExe(t, e.exe)
 	t.Chdir(e.root)
 	return e
@@ -79,7 +83,10 @@ func (e initEnv) useExe(t *testing.T, path string) {
 func (e initEnv) written(t *testing.T) []string {
 	t.Helper()
 	var w []string
-	for _, p := range []string{filepath.Join(e.root, policy.FileName), filepath.Join(e.root, ".gitignore"), e.config, filepath.Join(e.home, ".claude")} {
+	for _, p := range []string{
+		filepath.Join(e.root, policy.FileName), filepath.Join(e.root, ".gitignore"), e.config, filepath.Join(e.home, ".claude"),
+		filepath.Join(e.store, "approved"),
+	} {
 		if _, err := os.Lstat(p); err == nil {
 			w = append(w, p)
 		}
@@ -262,7 +269,7 @@ func TestInitWritesNothing(t *testing.T) {
 		code     int
 		stdout   string
 		stderr   string
-		policyOK bool // the policy alone is written
+		policyOK bool // the policy and the record that adopts the repository alone are written
 	}{
 		{"binary inside the repository", []string{"init"}, func(e initEnv) string { return filepath.Join(e.root, "bin", "pbipx") }, finding.ExitUsage, "", "inside the repository", false},
 		{"binary is the repository root", []string{"init"}, func(e initEnv) string { return e.root }, finding.ExitUsage, "", "inside the repository", false},
@@ -288,8 +295,8 @@ func TestInitWritesNothing(t *testing.T) {
 			}
 			w := e.written(t)
 			if tt.policyOK {
-				if len(w) != 1 || filepath.Base(w[0]) != policy.FileName {
-					t.Errorf("written = %q, want the policy alone", w)
+				if len(w) != 2 || filepath.Base(w[0]) != policy.FileName || filepath.Base(w[1]) != "approved" {
+					t.Errorf("written = %q, want the policy and the record alone", w)
 				}
 				return
 			}
@@ -426,4 +433,59 @@ func TestInitRefusesSettingsLinkedIntoRepository(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(e.root, ".claude", "settings.json")); err == nil {
 		t.Errorf("settings were written into the repository")
 	}
+}
+
+// TestInitAdopts checks that init records the repository as adopted, so
+// the gate acts for it before the policy is approved, and goes on acting
+// when the policy is deleted.
+func TestInitAdopts(t *testing.T) {
+	e := newInitRepo(t, "pbip/Example.Report/definition.pbir")
+	if o := runIn(t, "", "init"); o.code != 0 || !strings.Contains(o.stdout, "Recorded this repository") {
+		t.Fatalf("exit = %d, stdout %q, stderr %q", o.code, o.stdout, o.stderr)
+	}
+	store, err := approval.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	roots, _, err := store.Roots()
+	if err != nil || len(roots) != 1 || roots[0] != e.root {
+		t.Errorf("Roots = %q, %v; want the repository", roots, err)
+	}
+	event := readEvent(t, e.root)
+	if o := runIn(t, event, "gate"); o.code != 2 || !strings.HasPrefix(o.stderr, "pbipx: policy-unapproved:") {
+		t.Errorf("gate after init: exit %d, stderr %q", o.code, o.stderr)
+	}
+	if err := os.Remove(filepath.Join(e.root, policy.FileName)); err != nil {
+		t.Fatal(err)
+	}
+	if o := runIn(t, event, "gate"); o.code != 2 || !strings.HasPrefix(o.stderr, "pbipx: policy-error:") {
+		t.Errorf("gate with the policy deleted: exit %d, stderr %q", o.code, o.stderr)
+	}
+}
+
+// TestInitDryRunDoesNotAdopt checks that a dry run records nothing, and
+// that the gate then leaves a repository with no policy alone.
+func TestInitDryRunDoesNotAdopt(t *testing.T) {
+	e := newInitRepo(t, "pbip/Example.Report/definition.pbir")
+	if o := runIn(t, "", "init", "--dry-run"); o.code != 0 || !strings.Contains(o.stdout, "Would record") {
+		t.Fatalf("exit = %d, stdout %q", o.code, o.stdout)
+	}
+	if o := runIn(t, readEvent(t, e.root), "gate"); o.code != 0 {
+		t.Errorf("gate in a repository init only dry-ran in: exit %d, stderr %q", o.code, o.stderr)
+	}
+}
+
+// readEvent is a Claude Code Read event of README.md in root.
+func readEvent(t *testing.T, root string) string {
+	t.Helper()
+	data, err := json.Marshal(map[string]any{
+		"hook_event_name": "PreToolUse",
+		"cwd":             root,
+		"tool_name":       "Read",
+		"tool_input":      map[string]string{"file_path": "README.md"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }

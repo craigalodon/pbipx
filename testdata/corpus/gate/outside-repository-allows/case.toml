@@ -1,0 +1,7 @@
+description = "Outside every git repository, and touching no repository set up for pbipx, a call is not the gate's to judge: a Read allows. A policy file outside a repository adopts nothing. Plants no value"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = []
+git         = false
