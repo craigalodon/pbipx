@@ -792,11 +792,51 @@ Decisions by tool. Every tool not listed is allowed.
      A root's name is compared without regard to case in these tests, on
      every platform: they only decide whether the real roots are scanned.
   4. A recursive search (`grep`, `egrep` and `fgrep` with `-r` or `-R`;
-     `rg`, `ag` and `ack` always; in pbipx also `rga`, `ugrep`, `ug`,
-     `sift` and `pt` always) over a path that touches a root scans the
+     `rg`, `ag` and `ack` always) over a path that touches a root scans the
      tree. Its paths are the positional arguments after the pattern (unless
      `-e` or `-f` gave it), default `.`, from the command's working
      directory.
+
+     In pbipx a search is taken to read **recursively** under its paths
+     unless it is provably confined to the files it names: recursion is
+     not told by a flag's shape. `grep` can be ugrep under another name,
+     and ugrep recurses on `-NUM`, `--depth`, `-d recurse`, `-g`,
+     `--include`, `--index` or a `.ugrep` file. The searches are `grep`,
+     `egrep`, `fgrep`, `rgrep`, `ugrep`, `ug`, `ugrep-indexer`, `rg`,
+     `rga`, `ripgrep-all`, `ag`, `ack`, `ack-grep`, `sift` and `pt`
+     (`git grep` is rule 2's). For each:
+     - its operands are the positional arguments after the pattern (all of
+       them for `ugrep-indexer`, which takes none), and each is read under,
+       recursively; a file operand is read alone, which comes to the same;
+     - it also reads under its working directory (`.`) when it has no
+       operand, when an option is not one the gate knows for that program,
+       when an operand holds a glob character, or when a configuration
+       could apply: a `.ugrep` file in the working directory or the home
+       directory for the grep family and ugrep (an unknown home counts as
+       one); `GREP_OPTIONS`; `RIPGREP_CONFIG_PATH` for `rg` and `rga`
+       unless `--no-config`; `.ackrc`, `ACKRC` or `ACK_OPTIONS` for `ack`
+       unless `--noenv`; `.sift.conf` and `.ptconfig.toml`. A variable
+       counts when it is set in the gate's environment or named anywhere in
+       the command line, and so does a line that sets `HOME`;
+     - `grep`, `egrep` and `fgrep` with no operand read their input, not
+       `.`, but only when every option is in the program's allowlist of
+       options that neither widen the files searched nor read another file
+       (`-i`, `-n`, `-c`, `-l`, `-L`, `-h`, `-H`, `-o`, `-q`, `-s`, `-v`,
+       `-w`, `-x`, `-E`, `-F`, `-G`, `-P`, `-e`, `-f`, `-m`, `-A`, `-B`,
+       `-C`, `--color` and their long forms) and no configuration applies;
+     - a file an option names for reading (`-f FILE`, `--file`,
+       `--exclude-from`, `--include-from`, `--ignore-file`,
+       `--path-to-ignore`) is read too, as `cat` would read it;
+     - an option that reads files the command line does not name or runs a
+       command on what it reads (ugrep's `--from`, `--config`, `--filter`
+       and `-Q`; `rg --pre`; ack's `--files-from`, `--ackrc` and `-x`, or
+       an abbreviation of one), or an argument that cannot be told, counts
+       as touching every root.
+
+     So `grep -rn TODO src`, `rg -n x src/main.go` and `cat f | grep x`
+     read what they name, and `grep --depth=99 x` from the repository's
+     top reads the protected tree. As everywhere, a scan that finds
+     nothing allows (principle 6).
   5. Otherwise allowed.
 
   Before rule 1, a command that names a Claude Code settings file in the
@@ -1141,6 +1181,12 @@ behavior (2026-10-29).
   names a local-state path or directory, with `local-state`. Tree scans
   still skip local state, so a recursive search that does not name it is
   decided as before. (Decided 2026-10-29.)
+- **Divergence (search default):** the predecessor tells a recursive
+  search by `-r` or `-R`, so `grep --depth=99 x` from the repository's top
+  is allowed where `grep` is ugrep, which then reads the protected tree.
+  pbipx takes every search to read recursively under its paths, default
+  `.`, unless it is confined to the files it names (Bash, rule 4).
+  (Decided 2026-10-30.)
 - **Divergence (agent settings):** the predecessor neither gates writes nor
   checks Claude Code's settings. pbipx denies an agent's write to, or shell
   command naming, `.claude/settings.json` or `.claude/settings.local.json`

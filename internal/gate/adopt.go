@@ -345,7 +345,8 @@ func probeShell(cwd, home, line string) (*walker, []spot, bool) {
 		for _, d := range v.cwd.dirs {
 			spots = append(spots, spot{path: d})
 		}
-		reader := readers[v.name] || searchers[v.name].always || searchers[v.name].recursive != ""
+		_, search := searchers[v.name]
+		reader := readers[v.name] || search
 		for _, xw := range v.words {
 			abss, unk := ps.wordSpellings(v, xw)
 			if unk && reader && !optionOnly(xw.text) {
@@ -355,12 +356,14 @@ func probeShell(cwd, home, line string) (*walker, []spot, bool) {
 				spots = append(spots, spot{path: a, container: true})
 			}
 		}
-		if paths, ok := searchPaths(v.argv); ok {
-			for _, p := range paths {
-				for _, d := range v.cwd.dirs {
-					for _, a := range spellings(d, p) {
-						spots = append(spots, spot{path: a, container: true})
-					}
+		paths, everywhere := w.searchReads(v)
+		if everywhere {
+			unknown = true
+		}
+		for _, p := range paths {
+			for _, d := range v.cwd.dirs {
+				for _, a := range spellings(d, p) {
+					spots = append(spots, spot{path: a, container: true})
 				}
 			}
 		}

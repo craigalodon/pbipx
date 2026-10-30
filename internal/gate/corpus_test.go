@@ -61,6 +61,7 @@ func eventFrom(stdin []byte) (gate.Event, bool) {
 // sentinel appears in the message.
 func TestCorpusGateCases(t *testing.T) {
 	isolateGit(t)
+	isolateSearch(t)
 	c, err := corpus.Open(corpusDir)
 	if err != nil {
 		t.Fatal(err)

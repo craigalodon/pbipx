@@ -1,0 +1,6 @@
+description = "a grep with only allowlisted options and an existing file operand outside the roots is confined to that file, and allows while the tree leaks"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = ["Doe, Jane"]
