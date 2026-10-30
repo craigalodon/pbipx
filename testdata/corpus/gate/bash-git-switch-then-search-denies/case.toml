@@ -1,0 +1,7 @@
+description = "a search after git switch in the same line would be judged against the tree before the switch, so it denies whatever the tree holds"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
+known       = "predecessor"

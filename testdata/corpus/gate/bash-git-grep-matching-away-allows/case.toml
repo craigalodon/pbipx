@@ -1,0 +1,7 @@
+description = "git grep whose pattern matches only a file outside every root prints lines from that file alone: allowed while the root holds a leak"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = ["Doe, Jane"]
+known       = "predecessor"

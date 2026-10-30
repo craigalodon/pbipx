@@ -105,6 +105,12 @@ func TestValidateRules(t *testing.T) {
 		{"staged path missing", staging, replace("case.toml", `"sql/staged.sql"`, `"sql/absent.sql"`), "staged[0] names no path in tree/"},
 		{"untracked path unclean", staging, replace("case.toml", `"sql/untracked.sql"`, `"sql/../untracked.sql"`), "untracked[0] is not a clean relative path"},
 		{"staged without git", staging, appendTo("case.toml", "git = false\n"), "git = false"},
+		{"deleted path missing", staging, appendTo("case.toml", "deleted = [\"sql/absent.sql\"]\n"), "deleted[0] names no path in tree/"},
+		{"deleted path also staged", staging, appendTo("case.toml", "deleted = [\"sql/staged.sql\"]\n"), "deleted[0] is already listed in staged"},
+		{"worktree without git", slicer, appendTo("case.toml", "git = false\nworktrees = [\"wt\"]\n"), "git = false"},
+		{"worktree path unclean", slicer, appendTo("case.toml", "worktrees = [\"../wt\"]\n"), "worktrees[0] is not a clean relative path"},
+		{"worktree over the tree", staging, appendTo("case.toml", "worktrees = [\"sql\"]\n"), "worktrees[0] names a path that tree/ already has"},
+		{"worktree twice", slicer, appendTo("case.toml", "worktrees = [\"wt\", \"wt\"]\n"), "worktrees[1] is listed twice"},
 		{"sentinel not planted", slicer, replace("case.toml", `["Doe, Jane"]`, `["Doe, Jane", "Roe, Richard"]`), "sentinels[1] appears nowhere"},
 		{"sentinel repeated", slicer, replace("case.toml", `["Doe, Jane"]`, `["Doe, Jane", "Doe, Jane"]`), "sentinels[1] repeats"},
 		{"sentinel in expected", slicer, replace("expected.json", `"student.full_name"`, `"Doe, Jane"`), "contains sentinels[0]"},
@@ -146,6 +152,12 @@ func TestValidateRules(t *testing.T) {
 		{"known is not predecessor", slicer, appendTo("case.toml", "known = \"successor\"\n"), "known is set"},
 		{"args set the format", slicer, replace("case.toml", `["--all"]`, `["--all", "--format=json"]`), "args[1] sets --format"},
 		{"bad env name", slicer, appendTo("case.toml", "env = { \"A B\" = \"1\" }\n"), "env has a key"},
+		{"env sets the config dir", slicer, appendTo("case.toml", "env = { PBIPX_CONFIG_DIR = \"/tmp\" }\n"), "which the runner owns"},
+		{"approved outside the gate", slicer, appendTo("case.toml", "approved = true\n"), "only a gate case's policy is approved"},
+		{"after in an unapproved gate case", gate, func(t *testing.T, dir string) {
+			appendTo("case.toml", "approved = false\n")(t, dir)
+			write("after/tree/README.md", "x\n")(t, dir)
+		}, "or a gate case whose policy is approved"},
 		{"stray file", slicer, write("notes.txt", "x\n"), `unexpected entry "notes.txt"`},
 		{"case name not kebab", slicer, rename("../Slicer_Case"), "not kebab case"},
 	}

@@ -1,0 +1,8 @@
+description = "git status -v prints the staged diff, which adds a file under a root holding a value; the command names no root"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
+staged      = ["pbip/Example.Report/definition/pages/0000/visuals/0001/visual.json"]
+known       = "predecessor"

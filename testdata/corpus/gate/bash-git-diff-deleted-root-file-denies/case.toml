@@ -1,0 +1,7 @@
+description = "git diff of a working tree that deletes a file under a root prints the deleted lines; the value is only in history"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
+deleted     = ["pbip/Example.Report/definition/pages/0000/visuals/0001/visual.json"]

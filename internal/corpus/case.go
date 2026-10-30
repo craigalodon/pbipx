@@ -54,17 +54,24 @@ var (
 
 // Spec is a case.toml.
 type Spec struct {
-	Description string            `toml:"description"`
-	Command     string            `toml:"command"`
-	Args        []string          `toml:"args"`
-	Policy      string            `toml:"policy"`
-	Exit        int               `toml:"exit"`
-	Sentinels   []string          `toml:"sentinels"`
-	Git         *bool             `toml:"git"`
-	Untracked   []string          `toml:"untracked"`
-	Staged      []string          `toml:"staged"`
-	Env         map[string]string `toml:"env"`
-	Known       string            `toml:"known"`
+	Description string   `toml:"description"`
+	Command     string   `toml:"command"`
+	Args        []string `toml:"args"`
+	Policy      string   `toml:"policy"`
+	Exit        int      `toml:"exit"`
+	Sentinels   []string `toml:"sentinels"`
+	Git         *bool    `toml:"git"`
+	Untracked   []string `toml:"untracked"`
+	Staged      []string `toml:"staged"`
+	Deleted     []string `toml:"deleted"`
+	// Worktrees are root-relative paths where linked work trees of the
+	// root's repository are added, at the commit, after deleted is applied.
+	Worktrees []string          `toml:"worktrees"`
+	Env       map[string]string `toml:"env"`
+	Known     string            `toml:"known"`
+	// Approved, for a gate case, is false to run without an approval of the
+	// policy; a gate case otherwise runs against an approved one.
+	Approved *bool `toml:"approved"`
 
 	// Baseline and Fingerprint describe findings the runner resolves to
 	// fingerprints (corpus.md, "Baseline cases").
@@ -117,6 +124,12 @@ func (s *Spec) HasResult() bool {
 // requiredKeys must appear in every case.toml.
 var requiredKeys = []string{"description", "command", "args", "policy", "exit", "sentinels"}
 
+// Approves reports whether the runner approves the case's policy before the
+// command runs: a gate case, unless approved = false.
+func (s *Spec) Approves() bool {
+	return s.Command == commandGate && (s.Approved == nil || *s.Approved)
+}
+
 // UsesGit reports whether the case's root is a git repository.
 func (s *Spec) UsesGit() bool { return s.Git == nil || *s.Git }
 
@@ -134,7 +147,7 @@ type Case struct {
 	Stdin    []byte
 	HasTree  bool
 	// HasAfter is set when the case has after/tree/, copied over the root
-	// once its findings are resolved.
+	// once its findings are resolved and its policy approved.
 	HasAfter bool
 
 	// expectedRaw is expected.json as read, for checks on its text.

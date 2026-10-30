@@ -1,0 +1,6 @@
+{
+  "env": {
+    "NOTE": "Doe, Jane",
+    "PBIPX_CONFIG_DIR": "/tmp/example-approvals"
+  }
+}

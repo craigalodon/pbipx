@@ -1,0 +1,7 @@
+description = "A value added to the policy's allow list after approval changes its digest, so the gate denies every call until it is approved again, and never prints the policy"
+command     = "gate"
+args        = []
+policy      = "tree"
+exit        = 2
+sentinels   = ["Example, Pat"]
+known       = "predecessor"

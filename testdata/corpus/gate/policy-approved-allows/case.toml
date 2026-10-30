@@ -1,0 +1,7 @@
+description = "With the policy approved, a Read outside the roots allows: the approval check passes and decides nothing else. Plants no value"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = []
+approved    = true

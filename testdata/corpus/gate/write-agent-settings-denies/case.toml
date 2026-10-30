@@ -1,0 +1,7 @@
+description = "a Write of .claude/settings.json at the repository root denies: a project setting can turn off the gate's hook"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
+known       = "predecessor"

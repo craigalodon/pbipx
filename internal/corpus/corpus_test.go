@@ -20,7 +20,7 @@ const corpusDir = "../../testdata/corpus"
 // here, in the change that makes it pass (docs/ROADMAP.md, phase 2). Until
 // then its cases are skipped by TestCorpus, but still validated by
 // TestCorpusValid.
-var enabledAreas = []string{"pbir", "text", "baseline", "policy", "tmdl", "sql", "yaml", "explain"}
+var enabledAreas = []string{"pbir", "text", "baseline", "policy", "tmdl", "sql", "yaml", "explain", "gate"}
 
 // areasEnv overrides enabledAreas for local work: a comma-separated list of
 // areas, or "all".
@@ -87,7 +87,7 @@ func TestCorpus(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			prepared, err := c.Prepare(cs, root, bin)
+			prepared, err := c.Prepare(cs, root, t.TempDir(), bin)
 			if err != nil {
 				t.Fatal(err)
 			}

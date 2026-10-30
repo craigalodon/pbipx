@@ -35,12 +35,18 @@ A runner, one per implementation, does this for each case:
 1. Copy `tree/` to a fresh temporary directory, the **root**. A case with
    no `tree/` starts from an empty root.
 2. Unless `policy = "tree"`, write `policies/<policy>.toml` to
-   `<root>/.pbipx.toml`.
+   `<root>/.pbipx.toml`. For a `gate` case, unless `approved = false`,
+   approve that policy for the root (see "Policy approval").
 3. Unless `git = false`, make the root a git repository and commit every
    file, except those listed in `untracked` (left untracked) and `staged`
    (added to the index, not committed). A file the tree's own `.gitignore`
    ignores is not committed. The commit uses a fixed synthetic author and
-   date.
+   date. Then delete the files listed in `deleted` from the root: they stay
+   in the commit, so git history holds what the working tree no longer
+   does. Then, for each path in `worktrees`, add a linked work tree of the
+   repository there, detached at the commit (`git worktree add --detach
+   <path> HEAD`), as Claude Code adds one under `.claude/worktrees/`: it
+   holds the committed files, deleted ones included.
 4. Replace `{root}` in `args` and `stdin` with the root's absolute path.
 5. Run the command in the root, with `CI`, `PRE_COMMIT` and
    `PBIPX_NO_REVEAL` unset and standard output not a terminal, unless `env`
@@ -71,8 +77,11 @@ sentinels = ["Doe, Jane"]
 git        = true                    # false: the root is not a git repository
 untracked  = []                      # paths left untracked
 staged     = []                      # paths staged but not committed
+deleted    = []                      # paths committed, then deleted
+worktrees  = []                      # linked work trees added at the commit
 env        = { CI = "true" }         # environment for the command
 known      = "predecessor"           # see "Known differences"
+approved   = false                   # gate only: run with no policy approval
 ```
 
 Every key except the optional ones is required, and an unknown key is an
@@ -186,6 +195,30 @@ by accident is a bug in one of them, and gets an issue.
 - A fixture holds only what its case needs. A report case needs the one
   visual or page file that carries the context, not a whole report.
 
+## Policy approval
+
+pbipx's gate denies every call unless the policy is the one a person
+approved ([ADR-0006](../adr/0006-policy-integrity.md)). So every `gate`
+case runs against an approved policy unless it says `approved = false`: the
+runner records the policy written to the root in step 2 as approved for
+that root, as the implementation's approval command would, but without its
+terminal prompt. pbipx keys an approval by the repository's git directory,
+so its runner records it at the end of step 3, once the root is a
+repository; the policy approved is still the one step 2 wrote. A root with
+no policy file, or with `git = false`, has nothing to approve. The key
+`approved` is valid only in a `gate` case.
+
+A `gate` case whose policy is approved may have an `after/tree/`, copied
+over the root after the policy is written and before the commit of step 3.
+That is
+how a case changes the policy after it was approved: `policy = "tree"`,
+with the approved policy in `tree/.pbipx.toml` and the edited one in
+`after/tree/.pbipx.toml`.
+
+An implementation with no approval check, such as the predecessor, has
+nothing to approve and ignores `approved`. The cases that expect
+`policy-unapproved` are marked `known = "predecessor"`.
+
 ## Baseline cases
 
 A baseline entry is keyed by a fingerprint, and the fingerprint hashes the
@@ -295,6 +328,12 @@ How it does each step, where this format leaves the choice open:
   `column` left out for a null column.
 - A sentinel counts as present in output as written, with each apostrophe
   doubled, or as the body of a JSON string that encodes either.
+- Every command a case runs, the baseline setup scan included, gets
+  `PBIPX_CONFIG_DIR` set to a fresh temporary directory of the case's own,
+  outside the root, so no case reads or writes the user's approvals. A case
+  does not set it in `env`. The approval of "Policy approval" is written
+  into that directory with internal/approval, the package
+  `pbipx policy approve` uses, dated 2100-01-01T00:00:00Z.
 
 The validator adds rules this format implies:
 
@@ -310,7 +349,10 @@ The validator adds rules this format implies:
   `policy-error`.
 - `[[baseline]]` and `[fingerprint]` describe a finding of `tree/` with a
   context and reasons from the vocabulary; `{fingerprint}` is in `args` if
-  and only if `[fingerprint]` is set; `after/tree/` needs one of them.
+  and only if `[fingerprint]` is set; `after/tree/` needs one of them, or
+  a `gate` case whose policy is approved.
+- `approved` is set only in a `gate` case, and `env` never sets
+  `PBIPX_CONFIG_DIR`.
 - Report JSON (a `.json` or `.pbir` file below a `*.Report` directory, in
   `tree/` or `after/tree/`) parses, unless the case expects an error for it.
 - Exit codes agree with the result: a failure or an error finding exits 3;

@@ -80,6 +80,12 @@ func (v *validator) run() {
 		if !envName.MatchString(k) {
 			v.addf(caseFile, "env has a key that is not an environment variable name")
 		}
+		if k == configDirEnv {
+			v.addf(caseFile, "env sets %s, which the runner owns", configDirEnv)
+		}
+	}
+	if s.Approved != nil && s.Command != commandGate {
+		v.addf(caseFile, "approved is set, but only a gate case's policy is approved")
 	}
 	if s.Command != commandGate && s.HasResult() {
 		for i, a := range s.Args {
@@ -199,8 +205,8 @@ func (v *validator) checkBaseline() {
 	case !uses && s.Fingerprint != nil:
 		v.addf(caseFile, "[fingerprint] is set, but no argument uses %s", fingerprintPlaceholder)
 	}
-	if v.cs.HasAfter && !s.NeedsResolve() {
-		v.addf(afterDir, "is applied only in a case with [[baseline]] or [fingerprint]")
+	if v.cs.HasAfter && !s.NeedsResolve() && !s.Approves() {
+		v.addf(afterDir, "is applied only in a case with [[baseline]] or [fingerprint], or a gate case whose policy is approved")
 	}
 }
 
@@ -239,14 +245,24 @@ func (v *validator) checkRef(r FindingRef, what string) {
 
 func (v *validator) checkGit() {
 	s := &v.cs.Spec
-	if !s.UsesGit() && (len(s.Untracked) > 0 || len(s.Staged) > 0) {
-		v.addf(caseFile, "untracked or staged is set but git = false")
+	if !s.UsesGit() && (len(s.Untracked) > 0 || len(s.Staged) > 0 || len(s.Deleted) > 0 || len(s.Worktrees) > 0) {
+		v.addf(caseFile, "untracked, staged, deleted or worktrees is set but git = false")
+	}
+	for i, p := range s.Worktrees {
+		switch {
+		case !validRelPath(p):
+			v.addf(caseFile, "worktrees[%d] is not a clean relative path with forward slashes", i)
+		case v.inTrees(p):
+			v.addf(caseFile, "worktrees[%d] names a path that tree/ already has", i)
+		case slices.Contains(s.Worktrees[:i], p):
+			v.addf(caseFile, "worktrees[%d] is listed twice", i)
+		}
 	}
 	seen := map[string]string{}
 	for _, list := range []struct {
 		key   string
 		paths []string
-	}{{"untracked", s.Untracked}, {"staged", s.Staged}} {
+	}{{"untracked", s.Untracked}, {"staged", s.Staged}, {"deleted", s.Deleted}} {
 		for i, p := range list.paths {
 			switch {
 			case !validRelPath(p):

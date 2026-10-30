@@ -159,6 +159,33 @@ func TestAll(t *testing.T) {
 	}
 }
 
+func TestUnder(t *testing.T) {
+	root := newRepo(t, map[string]string{
+		".gitignore":                "*.log\n",
+		"notes/tracked.md":          "outside every directory given\n",
+		"pbip/A.Report/report.json": "{}",
+		"pbip/A.Report/debug.log":   "ignored, still on disk\n",
+		"other/x.sql":               "select 1\n",
+	})
+	outside := t.TempDir()
+	write(t, outside, "secret.md", sentinel)
+	if err := os.Symlink(outside, filepath.Join(root, "pbip", "linked")); err != nil {
+		t.Skip("symlinks are not available")
+	}
+	set, err := open(t, root).Under([]string{"pbip", "missing", "other"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = set.Close() }()
+	want := []string{"other/x.sql", "pbip/A.Report/debug.log", "pbip/A.Report/report.json", "pbip/linked"}
+	if !slices.Equal(set.Paths, want) {
+		t.Errorf("paths = %v, want %v", set.Paths, want)
+	}
+	if got := readAll(t, set); got["pbip/linked"] != outside {
+		t.Errorf("a symlink reads as its target path, not through it")
+	}
+}
+
 func TestStagedReadsTheIndex(t *testing.T) {
 	root := newRepo(t, map[string]string{"notes/a.md": "committed\n"})
 	write(t, root, "notes/a.md", "staged\n")
@@ -374,5 +401,25 @@ func TestGitErrorQuotesNothing(t *testing.T) {
 	err := &GitError{Op: "ls-files", Exit: 128}
 	if err.Error() != "git ls-files failed (exit 128)" {
 		t.Errorf("message = %q", err.Error())
+	}
+}
+
+// TestCommonDir checks that the main work tree and a linked one, opened
+// from a subdirectory, name the same git directory.
+func TestCommonDir(t *testing.T) {
+	root := newRepo(t, map[string]string{"notes/a.md": "x\n"})
+	if err := corpus.AddWorktree(root, ".claude/worktrees/wt"); err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(root, ".git")
+	for _, dir := range []string{root, filepath.Join(root, "notes"), filepath.Join(root, ".claude", "worktrees", "wt", "notes")} {
+		r, err := Open(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := r.CommonDir()
+		if err != nil || got != want {
+			t.Errorf("CommonDir from %s = %q, %v; want %q", dir, got, err, want)
+		}
 	}
 }

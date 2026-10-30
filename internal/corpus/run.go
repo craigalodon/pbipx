@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +14,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/craigalodon/pbipx/internal/approval"
 )
 
 // The fixed synthetic identity and date of a case's commit. The date is
@@ -40,23 +43,37 @@ const commandTimeout = 2 * time.Minute
 // redactionEnv is unset for every command unless a case's env sets it.
 var redactionEnv = []string{"CI", "PRE_COMMIT", "PBIPX_NO_REVEAL"}
 
+// configDirEnv is the variable that points pbipx at its configuration
+// directory, where policy approvals are kept (ADR-0006). The runner sets it
+// for every command to the case's own directory.
+const configDirEnv = approval.EnvConfigDir
+
 // Prepared is a case's root, ready to run in.
 type Prepared struct {
 	Root string
+	// ConfigDir is the case's private configuration directory, outside the
+	// root: PBIPX_CONFIG_DIR for every command the case runs.
+	ConfigDir string
 	// Fingerprint is the resolved fingerprint of the case's [fingerprint],
 	// empty when it has none.
 	Fingerprint string
 }
 
 // Prepare builds a case's root (corpus.md, "Running a case", steps 1 to 3,
-// and "Baseline cases"): it copies tree/ (a case without one starts from an
-// empty root) and writes the policy. A case with [[baseline]] or
-// [fingerprint] then has its findings resolved by a scan with binary, its
-// baseline written and after/tree/ copied over the root. Last, unless
-// git = false, the root is committed. root must be an empty directory;
-// binary is needed only to resolve findings.
-func (c *Corpus) Prepare(cs *Case, root, binary string) (*Prepared, error) {
-	p := &Prepared{Root: root}
+// "Baseline cases" and "Policy approval"): it copies tree/ (a case without
+// one starts from an empty root) and writes the policy. A gate case then has
+// its policy approved in configDir, unless approved = false. A case with
+// [[baseline]] or [fingerprint] has its findings resolved by a scan with
+// binary and its baseline written. Then after/tree/ is copied over the
+// root, and last, unless git = false, the root is committed and the deleted
+// paths are removed from the working tree. root and
+// configDir must be empty directories, configDir outside root; binary is
+// needed only to resolve findings.
+func (c *Corpus) Prepare(cs *Case, root, configDir, binary string) (*Prepared, error) {
+	if configDir == "" || !filepath.IsAbs(configDir) {
+		return nil, fmt.Errorf("%s: the configuration directory must be an absolute path", cs.ID())
+	}
+	p := &Prepared{Root: root, ConfigDir: configDir}
 	if cs.HasTree {
 		if err := copyTree(cs.TreeDir(), root); err != nil {
 			return nil, fmt.Errorf("%s: copying tree/: %w", cs.ID(), err)
@@ -71,23 +88,116 @@ func (c *Corpus) Prepare(cs *Case, root, binary string) (*Prepared, error) {
 			return nil, fmt.Errorf("%s: writing the policy: %w", cs.ID(), err)
 		}
 	}
+	// The policy approved is the one written now, before after/tree/; it
+	// is recorded once the root is a repository, which keys the record.
+	var approved string
+	if cs.Spec.Approves() {
+		var err error
+		if approved, err = policyDigest(root); err != nil {
+			return nil, fmt.Errorf("%s: %w", cs.ID(), err)
+		}
+	}
 	if cs.Spec.NeedsResolve() {
 		if err := c.resolve(cs, binary, p); err != nil {
 			return nil, fmt.Errorf("%s: %w", cs.ID(), err)
 		}
-		if cs.HasAfter {
-			if err := copyTree(cs.AfterTreeDir(), root); err != nil {
-				return nil, fmt.Errorf("%s: copying after/tree/: %w", cs.ID(), err)
-			}
+	}
+	if cs.HasAfter {
+		if err := copyTree(cs.AfterTreeDir(), root); err != nil {
+			return nil, fmt.Errorf("%s: copying after/tree/: %w", cs.ID(), err)
 		}
 	}
 	if cs.Spec.UsesGit() {
 		if err := GitSetup(root, cs.Spec.Untracked, cs.Spec.Staged); err != nil {
 			return nil, fmt.Errorf("%s: %w", cs.ID(), err)
 		}
+		// A deleted path stays in the commit, and leaves the working tree.
+		for _, p := range cs.Spec.Deleted {
+			if err := os.Remove(filepath.Join(root, filepath.FromSlash(p))); err != nil {
+				return nil, fmt.Errorf("%s: deleting a path after the commit: %w", cs.ID(), err)
+			}
+		}
+		// A linked work tree checks out the commit, deleted paths and all.
+		for _, w := range cs.Spec.Worktrees {
+			if err := AddWorktree(root, w); err != nil {
+				return nil, fmt.Errorf("%s: %w", cs.ID(), err)
+			}
+		}
+		if approved != "" {
+			if err := Approve(root, configDir, approved); err != nil {
+				return nil, fmt.Errorf("%s: %w", cs.ID(), err)
+			}
+		}
 	}
 	return p, nil
 }
+
+// policyDigest is the digest of root/.pbipx.toml, or "" when there is no
+// policy file: a root without one has nothing to approve, and the gate
+// denies it with policy-error first.
+func policyDigest(root string) (string, error) {
+	digest, err := approval.DigestFile(filepath.Join(root, policyFile))
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("approving the policy: %w", err)
+	}
+	return digest, nil
+}
+
+// Approve records digest as approved for the repository at root in the
+// store at configDir, as `pbipx policy approve` would, with the case's
+// fixed date. The root must be a git repository: the record is keyed by
+// its clone (ADR-0006).
+func Approve(root, configDir, digest string) error {
+	repo, err := Repository(root)
+	if err != nil {
+		return fmt.Errorf("approving the policy: %w", err)
+	}
+	store := &approval.Store{Dir: configDir}
+	if err := store.Approve(repo, digest, time.Unix(caseTime, 0)); err != nil {
+		return fmt.Errorf("approving the policy: %w", err)
+	}
+	return nil
+}
+
+// Repository is what the approval of the git repository at root is
+// recorded for: its shared git directory (git rev-parse --git-common-dir),
+// as the gate finds it, and the work tree. This package cannot import
+// internal/source, whose tests import it.
+func Repository(root string) (approval.Repository, error) {
+	cmd := exec.Command("git", "rev-parse", "--git-common-dir")
+	cmd.Dir = root
+	cmd.Env = GitEnv(os.Environ())
+	out, err := cmd.Output()
+	if err != nil {
+		return approval.Repository{}, fmt.Errorf("git rev-parse: %w", err)
+	}
+	gitDir := filepath.FromSlash(strings.TrimRight(string(out), "\r\n"))
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(root, gitDir)
+	}
+	return approval.Repository{GitDir: gitDir, Root: root}, nil
+}
+
+// AddWorktree adds a linked work tree of root's repository at the
+// root-relative path rel, detached at HEAD, as Claude Code adds one under
+// .claude/worktrees/.
+func AddWorktree(root, rel string) error {
+	args := slices.Concat(gitConfigArgs, []string{"worktree", "add", "--quiet", "--detach", "--", filepath.FromSlash(rel), "HEAD"})
+	cmd := exec.Command("git", args...) //nolint:gosec // G204: a fixed git subcommand; the operand is a case's validated path
+	cmd.Dir = root
+	cmd.Env = GitEnv(os.Environ())
+	// git's output is not shown: it can quote a path.
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("git worktree add: %w", err)
+	}
+	return nil
+}
+
+// caseTime is GitDate as a Unix time: the approval date of every case.
+const caseTime = 4102444800
 
 // GitSetup makes root a git repository and commits every file in it that git
 // would add (a file the tree's own .gitignore ignores stays out), except
@@ -147,16 +257,18 @@ func GitEnv(base []string) []string {
 }
 
 // CommandEnv is the environment the binary runs in: GitEnv(base) without
-// CI, PRE_COMMIT and PBIPX_NO_REVEAL, then the case's env.
-func CommandEnv(base []string, spec *Spec) []string {
+// CI, PRE_COMMIT and PBIPX_NO_REVEAL, with PBIPX_CONFIG_DIR set to
+// configDir, then the case's env.
+func CommandEnv(base []string, spec *Spec, configDir string) []string {
 	env := slices.DeleteFunc(GitEnv(base), func(kv string) bool {
 		name, _, _ := strings.Cut(kv, "=")
-		if slices.Contains(redactionEnv, name) {
+		if slices.Contains(redactionEnv, name) || name == configDirEnv {
 			return true
 		}
 		_, set := spec.Env[name]
 		return set
 	})
+	env = append(env, configDirEnv+"="+configDir)
 	for _, k := range sortedKeys(spec.Env) {
 		env = append(env, k+"="+spec.Env[k])
 	}
@@ -191,7 +303,7 @@ func Execute(cs *Case, binary string, p *Prepared) (Outcome, error) {
 	if cs.HasStdin {
 		stdin = bytes.ReplaceAll(cs.Stdin, []byte(rootPlaceholder), []byte(p.Root))
 	}
-	out, err := runBinary(binary, p.Root, CommandArgs(cs, p), CommandEnv(os.Environ(), &cs.Spec), stdin)
+	out, err := runBinary(binary, p.Root, CommandArgs(cs, p), CommandEnv(os.Environ(), &cs.Spec, p.ConfigDir), stdin)
 	if err != nil {
 		return out, fmt.Errorf("%s: %w", cs.ID(), err)
 	}

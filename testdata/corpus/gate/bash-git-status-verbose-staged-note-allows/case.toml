@@ -1,0 +1,7 @@
+description = "git status -v whose staged diff touches only a file outside every root allows while the root holds a leak"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = ["Doe, Jane"]
+staged      = ["notes/meeting.md"]

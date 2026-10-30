@@ -1,0 +1,8 @@
+description = "git blame with the file before the revision prints the file from history; the value is only in history, the working tree is clean"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
+deleted     = ["pbip/Example.Report/definition/pages/0000/visuals/0001/visual.json"]
+known       = "predecessor"

@@ -12,3 +12,4 @@ note on the old one, never by silently editing it.
 | [0003](0003-parity-through-a-language-neutral-corpus.md) | Parity through a language-neutral corpus | Accepted |
 | [0004](0004-the-policy-file.md) | The policy file | Accepted |
 | [0005](0005-cobra-for-the-command-line.md) | Cobra for the command line | Accepted |
+| [0006](0006-policy-integrity.md) | Policy integrity through an approved digest | Accepted |

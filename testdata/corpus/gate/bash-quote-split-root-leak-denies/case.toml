@@ -1,0 +1,7 @@
+description = "a root named with quotes inside its name is still named: words are judged dequoted and resolved"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
+known       = "predecessor"

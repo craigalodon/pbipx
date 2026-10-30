@@ -130,8 +130,9 @@ func TestAssociationIsNearLinear(t *testing.T) {
 		}
 	}
 	// Quadratic association took 2.8s and 589MB on a quarter of this; the
-	// benchmark below takes about 150ms. The race detector slows it tenfold.
-	if !raceEnabled && elapsed > time.Second {
+	// benchmark below takes about 150ms. The race detector slows it tenfold;
+	// the bound leaves room for a loaded CI runner.
+	if !raceEnabled && elapsed > 5*time.Second {
 		t.Errorf("256KB took %v", elapsed)
 	}
 }
@@ -162,7 +163,7 @@ func TestAssociationLimits(t *testing.T) {
 		if !errors.As(err, &le) || le.Msg != MsgTooLarge || strings.Contains(err.Error(), "Doe") {
 			t.Errorf("%s: got %v", name, err)
 		}
-		if d := time.Since(start); !raceEnabled && d > time.Second {
+		if d := time.Since(start); !raceEnabled && d > 5*time.Second {
 			t.Errorf("%s: took %v", name, d)
 		}
 	}

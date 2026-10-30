@@ -1,0 +1,7 @@
+description = "a root named in another case scans the protected tree, as it reaches the root on a file system that folds case"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
+known       = "predecessor"

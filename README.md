@@ -34,12 +34,82 @@ never prints a value it finds.
 | `pbipx scan` | Scan a repository, staged changes or files for persisted values and personal-data shapes. Block or warn, with a reviewed baseline for warnings. |
 | `pbipx scan-text` | Scan prose such as commit messages and notes for personal-data shapes. |
 | `pbipx gate` | An AI agent's pre-tool hook. It denies reads of files with findings, and of files it cannot vet. |
+| `pbipx policy approve` / `status` | Approve the repository's policy at a terminal, or report whether it is approved. The gate denies every call until a person approves the policy, and again after any change to it. |
 | `pbipx explain` | Print a report's or model's structure (pages, visuals, tables, columns, measures, relationships, sources) with no values. |
 | `pbipx stage` / `collect` | Round-trip a project between the repository and a working copy outside it that Power BI Desktop can open. |
 | `pbipx perf` | Summarize Performance Analyzer exports without printing query text. |
 
 The commands ship as one binary for Windows, macOS and Linux, with no runtime
 to install.
+
+## Install
+
+Pre-alpha: releases are for trying it out, not for relying on it.
+
+1. From the [releases page](https://github.com/craigalodon/pbipx/releases),
+   download the archive for your platform (`pbipx_<version>_<os>_<arch>`,
+   `.zip` for Windows, `.tar.gz` otherwise), `checksums.txt` and
+   `checksums.txt.sigstore.json`.
+2. Check that `checksums.txt` was signed by this repository's release
+   workflow, with [cosign](https://docs.sigstore.dev/cosign/system_config/installation/):
+
+   ```sh
+   workflow='^https://github\.com/craigalodon/pbipx/'
+   workflow="$workflow"'\.github/workflows/release\.yml@refs/tags/v'
+   cosign verify-blob \
+     --bundle checksums.txt.sigstore.json \
+     --certificate-identity-regexp "$workflow" \
+     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+     checksums.txt
+   ```
+
+3. Check the archive against it:
+
+   ```sh
+   sha256sum --ignore-missing -c checksums.txt
+   ```
+
+   On macOS, use `shasum -a 256 --ignore-missing -c checksums.txt`; on
+   Windows, compare `Get-FileHash` with the line in `checksums.txt`.
+4. Extract the binary and put it on your `PATH` in a directory outside any
+   repository, such as `~/.local/bin`. A binary inside the working tree can be
+   changed by the agent it is meant to check
+   ([threat model](docs/design/threat-model.md), layer 4).
+
+## Getting started
+
+1. Install pbipx as above.
+2. In the repository that holds your Power BI projects, run `pbipx init`. It
+   writes a commented starting policy, `.pbipx.toml`, that protects the
+   directories holding your `*.Report` and `*.SemanticModel` folders, and
+   registers the gate as a Claude Code hook in your user-level settings
+   (`~/.claude/settings.json`, or `$CLAUDE_CONFIG_DIR`), where a project
+   cannot remove it. A project can still turn user-level hooks off with
+   `disableAllHooks`, so on shared machines and for teams use `--managed`: it
+   prints the hook as a drop-in file for an administrator's managed settings
+   instead. `--dry-run` shows what it would do; `--gitignore` adds `.pbi/`,
+   `*.pbix` and `*.abf` to `.gitignore`. init writes nothing through a
+   `.pbipx.toml` or `.gitignore` that is a symbolic link.
+
+   After upgrading pbipx, run `pbipx init` again: it updates the registered
+   hook in place (a new version may gate more tools) and removes duplicates.
+   A hook left by a pbipx binary at another path is reported, and replaced
+   with `--force`.
+3. Review the policy, above all its column lists: they are a generic start.
+4. Approve it at a terminal with `pbipx policy approve`
+   ([ADR-0006](docs/adr/0006-policy-integrity.md)), and again after every
+   change.
+5. Add the commit hooks to `.pre-commit-config.yaml` and run
+   `pre-commit install --hook-type pre-commit --hook-type commit-msg`. They
+   run the `pbipx` on your `PATH`:
+
+   ```yaml
+   - repo: https://github.com/craigalodon/pbipx
+     rev: <a release tag>
+     hooks:
+       - id: pbipx-scan
+       - id: pbipx-commit-msg
+   ```
 
 ## Principles
 

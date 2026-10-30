@@ -49,6 +49,9 @@ func main() {
 // operational error, reported without its message, which could carry a
 // value.
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
+	if len(args) > 0 && args[0] == gateCommand {
+		return runGate(args, stdin, stdout, stderr)
+	}
 	defer func() {
 		if recover() != nil {
 			fmt.Fprintln(stderr, "pbipx: internal error")
@@ -87,8 +90,8 @@ func newRootCmd() *cobra.Command {
 		Short: "tools for agentic Power BI project development",
 		Long: `pbipx: tools for agentic Power BI project development
 
-Commands: scan, scan-text, baseline, explain.
-Planned: gate, stage, collect, perf. See docs/ROADMAP.md.`,
+Commands: init, scan, scan-text, baseline, explain, gate, policy.
+Planned: stage, collect, perf. See docs/ROADMAP.md.`,
 		Version:            version,
 		SilenceErrors:      true,
 		SilenceUsage:       true,
@@ -102,7 +105,7 @@ Planned: gate, stage, collect, perf. See docs/ROADMAP.md.`,
 	root.SetVersionTemplate("pbipx {{.Version}}\n")
 	root.SetFlagErrorFunc(func(*cobra.Command, error) error { return errUsage })
 	root.SetHelpCommand(newHelpCmd())
-	root.AddCommand(newVersionCmd(), newScanCmd(), newScanTextCmd(), newBaselineCmd(), newExplainCmd())
+	root.AddCommand(newVersionCmd(), newScanCmd(), newScanTextCmd(), newBaselineCmd(), newExplainCmd(), newGateCmd(), newInitCmd(), newPolicyCmd())
 	return root
 }
 

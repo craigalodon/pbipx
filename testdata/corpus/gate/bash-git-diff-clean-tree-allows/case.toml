@@ -1,0 +1,7 @@
+description = "git diff on a clean working tree prints nothing, so it allows: the gate runs the diff in name-only form and it names no file under a root. Plants no value"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = []
+known       = "predecessor"

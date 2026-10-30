@@ -36,6 +36,11 @@ type Options struct {
 	Scanners map[policy.Kind]judge.Scanner
 	// Now is when baseline expiry is judged; zero means time.Now().
 	Now time.Time
+	// AgentSettings checks every Claude Code settings file among the paths
+	// (IsAgentSettings), whatever the policy's scan scope: one that can
+	// turn hooks off is a hooks-disabled error. pbipx scan sets it; the
+	// gate's own scans do not.
+	AgentSettings bool
 }
 
 // Run scans paths, read through r, and returns the result: every finding
@@ -48,6 +53,11 @@ func Run(paths []string, r Reader, opts Options) finding.Result {
 	}
 	var findings []finding.Finding
 	for _, path := range paths {
+		if opts.AgentSettings && IsAgentSettings(path) {
+			if f, bad := agentSettings(path, r); bad {
+				findings = append(findings, f)
+			}
+		}
 		class, kind := opts.Policy.Classify(path)
 		switch class {
 		case policy.Unvettable:
@@ -134,6 +144,19 @@ func isErrorReason(r finding.Reason) bool {
 		}
 	}
 	return false
+}
+
+// agentSettings checks one Claude Code settings file. A file that cannot be
+// read is unreadable; one that can turn hooks off is hooks-disabled.
+func agentSettings(path string, r Reader) (finding.Finding, bool) {
+	data, err := r.Read(path)
+	switch {
+	case err != nil:
+		return errorFinding(path, finding.Unreadable, 0), true
+	case HooksDisabled(data):
+		return errorFinding(path, finding.HooksDisabled, 0), true
+	}
+	return finding.Finding{}, false
 }
 
 // errorFinding is a file that was not vetted. Its locator is the line the
