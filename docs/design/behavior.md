@@ -520,6 +520,26 @@ Decisions by tool. Every tool not listed is allowed.
     `${PWD}` (the working directory as the line leaves it) and `$OLDPWD`
     are expanded; any other expansion (`$X`, `${X:-y}`, `$1`, `$(...)`,
     backticks) leaves its word unknown;
+  - on Windows a word is a path as Git Bash (MSYS2), which runs Claude
+    Code's Bash commands, reads it. A word that starts with a literal
+    `/x/` or `/x` (`x` one drive letter, either case) or `/cygdrive/x/` is
+    on drive `X:` (`/c/Users/me/repo` is `C:\Users\me\repo`); so is such
+    a value after `=` (`--file=/c/...`), which Git Bash rewrites for a
+    Windows program, git among them. `/dev/...` is a device, never a
+    file. Any other absolute word (`/usr/...`, `/tmp/...`) is under Git
+    Bash's root or one of its mounts and is placed by Git Bash's own
+    `cygpath -w` (found on `PATH`, beside `CLAUDE_CODE_GIT_BASH_PATH`, or
+    in the Git for Windows installation git runs from; argv only, two
+    seconds, at most 64 runs a decision process); the directory before a
+    glob, quote or brace is placed, never the glob. A word that cannot be
+    placed is unknown: a reading command with one, or a `cd` to one,
+    touches every protected root, and git given one is denied with
+    `git-content`. `C:/x`, `C:\x` and `//server/share/x` are Windows
+    paths already. `HOME` in Git Bash form (`/c/Users/me`) is read the
+    same way, and a Read, Grep or Write path (or the event's working
+    directory) spelled `/c/...` is judged both as written and on its
+    drive. The path then goes through the same resolution as any other:
+    long names, symlinks and case;
   - a here-document (`<<WORD`, `<<-WORD`) is read as bash reads it: its
     body runs from the line after the operator to the line that is the
     delimiter (leading tabs removed for `<<-`), or to the end of the line
