@@ -323,7 +323,7 @@ func TestWriteSettings(t *testing.T) {
 		if runtime.GOOS == "windows" {
 			t.Skip("symbolic links need privileges on Windows")
 		}
-		dir := t.TempDir()
+		dir := resolvedTempDir(t)
 		target := filepath.Join(dir, "dotfiles", "settings.json")
 		if err := os.MkdirAll(filepath.Dir(target), 0o750); err != nil {
 			t.Fatal(err)
@@ -413,6 +413,19 @@ func TestIgnores(t *testing.T) {
 
 func ptr(s string) *string { return &s }
 
+// resolvedTempDir is a fresh temporary directory with its symlinks and, on
+// Windows, short names resolved: WriteSettings returns the backup's real
+// path, which on macOS is under /private/var and on Windows has no 8.3
+// short names, where t.TempDir may be spelled otherwise.
+func resolvedTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
 // read reads a test's temporary file.
 func read(path string) ([]byte, error) {
 	return os.ReadFile(path) //nolint:gosec // G304: a test's temporary file
@@ -422,7 +435,7 @@ func read(path string) ([]byte, error) {
 // second backup must not replace the first.
 func TestWriteSettingsKeepsEveryBackup(t *testing.T) {
 	at := time.Date(2100, 1, 2, 3, 4, 5, 6, time.UTC)
-	path := filepath.Join(t.TempDir(), "settings.json")
+	path := filepath.Join(resolvedTempDir(t), "settings.json")
 	if err := os.WriteFile(path, []byte("first"), 0o600); err != nil {
 		t.Fatal(err)
 	}
