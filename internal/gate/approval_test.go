@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/craigalodon/pbipx/internal/approval"
+	"github.com/craigalodon/pbipx/internal/corpus"
 	"github.com/craigalodon/pbipx/internal/gate"
 )
 
@@ -32,7 +33,7 @@ func approvedRepo(t *testing.T) (root string, store *approval.Store) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Approve(root, digest, time.Now()); err != nil {
+	if err := store.Approve(identify(t, root), digest, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	return root, store
@@ -53,7 +54,7 @@ func TestRequireApproval(t *testing.T) {
 			return store
 		}, gate.ReasonPolicyUnapproved},
 		{"unreadable store", func(t *testing.T, root string, store *approval.Store) *approval.Store {
-			key, err := approval.Key(root)
+			key, err := approval.Key(identify(t, root).GitDir)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -170,7 +171,7 @@ func TestRequireApprovalStoreInRepository(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := inside.Approve(root, digest, time.Now()); err != nil {
+	if err := inside.Approve(identify(t, root), digest, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	ev := gate.Event{Tool: gate.Other, Cwd: root}
@@ -181,4 +182,51 @@ func TestRequireApprovalStoreInRepository(t *testing.T) {
 	if strings.Contains(d.Message, root) {
 		t.Error("the message names the path")
 	}
+}
+
+// TestRequireApprovalSharedByWorktrees checks that a linked work tree, as
+// Claude Code adds under .claude/worktrees, runs under the approval of its
+// clone with no approval of its own, and that one with another policy is
+// approved once, without the main work tree's approval lapsing.
+func TestRequireApprovalSharedByWorktrees(t *testing.T) {
+	root, store := approvedRepo(t)
+	if err := corpus.AddWorktree(root, ".claude/worktrees/wt"); err != nil {
+		t.Fatal(err)
+	}
+	wt := filepath.Join(root, ".claude", "worktrees", "wt")
+	opts := gate.Options{CheckPolicy: gate.RequireApproval(store)}
+	check(t, gate.Decide(gate.Event{Tool: gate.Other, Cwd: wt}, opts), "")
+
+	appendFile(t, filepath.Join(wt, ".pbipx.toml"), "# a branch's edit\n")
+	check(t, gate.Decide(gate.Event{Tool: gate.Other, Cwd: wt}, opts), gate.ReasonPolicyUnapproved)
+	digest, err := approval.DigestFile(filepath.Join(wt, ".pbipx.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Approve(identify(t, wt), digest, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	check(t, gate.Decide(gate.Event{Tool: gate.Other, Cwd: wt}, opts), "")
+	check(t, gate.Decide(gate.Event{Tool: gate.Other, Cwd: root}, opts), "")
+
+	// A store in the clone's git directory, or in the main work tree seen
+	// from a linked one, approves nothing.
+	for _, dir := range []string{filepath.Join(root, ".git", "pbipx"), filepath.Join(root, "config")} {
+		inside := &approval.Store{Dir: dir}
+		if err := inside.Approve(identify(t, wt), digest, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		check(t, gate.Decide(gate.Event{Tool: gate.Other, Cwd: wt}, gate.Options{CheckPolicy: gate.RequireApproval(inside)}),
+			gate.ReasonInternalError)
+	}
+}
+
+// identify is gate.Identify, which must succeed.
+func identify(t *testing.T, root string) approval.Repository {
+	t.Helper()
+	r, err := gate.Identify(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
 }

@@ -88,8 +88,12 @@ func (c *Corpus) Prepare(cs *Case, root, configDir, binary string) (*Prepared, e
 			return nil, fmt.Errorf("%s: writing the policy: %w", cs.ID(), err)
 		}
 	}
+	// The policy approved is the one written now, before after/tree/; it
+	// is recorded once the root is a repository, which keys the record.
+	var approved string
 	if cs.Spec.Approves() {
-		if err := Approve(root, configDir); err != nil {
+		var err error
+		if approved, err = policyDigest(root); err != nil {
 			return nil, fmt.Errorf("%s: %w", cs.ID(), err)
 		}
 	}
@@ -113,25 +117,81 @@ func (c *Corpus) Prepare(cs *Case, root, configDir, binary string) (*Prepared, e
 				return nil, fmt.Errorf("%s: deleting a path after the commit: %w", cs.ID(), err)
 			}
 		}
+		// A linked work tree checks out the commit, deleted paths and all.
+		for _, w := range cs.Spec.Worktrees {
+			if err := AddWorktree(root, w); err != nil {
+				return nil, fmt.Errorf("%s: %w", cs.ID(), err)
+			}
+		}
+		if approved != "" {
+			if err := Approve(root, configDir, approved); err != nil {
+				return nil, fmt.Errorf("%s: %w", cs.ID(), err)
+			}
+		}
 	}
 	return p, nil
 }
 
-// Approve records the policy at root/.pbipx.toml as approved for root in
-// the store at configDir, as `pbipx policy approve` would, with the case's
-// fixed date. A root without a policy file has nothing to approve: the gate
+// policyDigest is the digest of root/.pbipx.toml, or "" when there is no
+// policy file: a root without one has nothing to approve, and the gate
 // denies it with policy-error first.
-func Approve(root, configDir string) error {
+func policyDigest(root string) (string, error) {
 	digest, err := approval.DigestFile(filepath.Join(root, policyFile))
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil
+		return "", nil
 	}
+	if err != nil {
+		return "", fmt.Errorf("approving the policy: %w", err)
+	}
+	return digest, nil
+}
+
+// Approve records digest as approved for the repository at root in the
+// store at configDir, as `pbipx policy approve` would, with the case's
+// fixed date. The root must be a git repository: the record is keyed by
+// its clone (ADR-0006).
+func Approve(root, configDir, digest string) error {
+	repo, err := Repository(root)
 	if err != nil {
 		return fmt.Errorf("approving the policy: %w", err)
 	}
 	store := &approval.Store{Dir: configDir}
-	if err := store.Approve(root, digest, time.Unix(caseTime, 0)); err != nil {
+	if err := store.Approve(repo, digest, time.Unix(caseTime, 0)); err != nil {
 		return fmt.Errorf("approving the policy: %w", err)
+	}
+	return nil
+}
+
+// Repository is what the approval of the git repository at root is
+// recorded for: its shared git directory (git rev-parse --git-common-dir),
+// as the gate finds it, and the work tree. This package cannot import
+// internal/source, whose tests import it.
+func Repository(root string) (approval.Repository, error) {
+	cmd := exec.Command("git", "rev-parse", "--git-common-dir")
+	cmd.Dir = root
+	cmd.Env = GitEnv(os.Environ())
+	out, err := cmd.Output()
+	if err != nil {
+		return approval.Repository{}, fmt.Errorf("git rev-parse: %w", err)
+	}
+	gitDir := filepath.FromSlash(strings.TrimRight(string(out), "\r\n"))
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(root, gitDir)
+	}
+	return approval.Repository{GitDir: gitDir, Root: root}, nil
+}
+
+// AddWorktree adds a linked work tree of root's repository at the
+// root-relative path rel, detached at HEAD, as Claude Code adds one under
+// .claude/worktrees/.
+func AddWorktree(root, rel string) error {
+	args := slices.Concat(gitConfigArgs, []string{"worktree", "add", "--quiet", "--detach", "--", filepath.FromSlash(rel), "HEAD"})
+	cmd := exec.Command("git", args...) //nolint:gosec // G204: a fixed git subcommand; the operand is a case's validated path
+	cmd.Dir = root
+	cmd.Env = GitEnv(os.Environ())
+	// git's output is not shown: it can quote a path.
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("git worktree add: %w", err)
 	}
 	return nil
 }

@@ -403,3 +403,23 @@ func TestGitErrorQuotesNothing(t *testing.T) {
 		t.Errorf("message = %q", err.Error())
 	}
 }
+
+// TestCommonDir checks that the main work tree and a linked one, opened
+// from a subdirectory, name the same git directory.
+func TestCommonDir(t *testing.T) {
+	root := newRepo(t, map[string]string{"notes/a.md": "x\n"})
+	if err := corpus.AddWorktree(root, ".claude/worktrees/wt"); err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(root, ".git")
+	for _, dir := range []string{root, filepath.Join(root, "notes"), filepath.Join(root, ".claude", "worktrees", "wt", "notes")} {
+		r, err := Open(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := r.CommonDir()
+		if err != nil || got != want {
+			t.Errorf("CommonDir from %s = %q, %v; want %q", dir, got, err, want)
+		}
+	}
+}

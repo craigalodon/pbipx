@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/craigalodon/pbipx/internal/approval"
+	"github.com/craigalodon/pbipx/internal/gate"
 	"github.com/craigalodon/pbipx/internal/gate/claudecode"
 )
 
@@ -134,7 +135,11 @@ func newHook(t *testing.T) *hook {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := (&approval.Store{Dir: config}).Approve(repo, digest, time.Now()); err != nil {
+	id, err := gate.Identify(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := (&approval.Store{Dir: config}).Approve(id, digest, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	return &hook{

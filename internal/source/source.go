@@ -81,6 +81,29 @@ func Open(dir string) (*Repo, error) {
 	return &Repo{Root: root}, nil
 }
 
+// CommonDir is the git directory every work tree of this clone shares (git
+// rev-parse --git-common-dir), absolute, with symlinks resolved: the main
+// work tree's .git for a linked work tree too.
+func (r *Repo) CommonDir() (string, error) {
+	out, err := git(r.Root, "rev-parse", "rev-parse", "--git-common-dir")
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.FromSlash(strings.TrimRight(string(out), "\r\n"))
+	if dir == "" {
+		return "", &GitError{Op: "rev-parse", Exit: 0}
+	}
+	if !filepath.IsAbs(dir) {
+		// Relative to the directory git ran in.
+		dir = filepath.Join(r.Root, dir)
+	}
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return "", &GitError{Op: "rev-parse", Exit: 0}
+	}
+	return resolved, nil
+}
+
 // defaultComment is git's default comment character.
 const defaultComment = "#"
 

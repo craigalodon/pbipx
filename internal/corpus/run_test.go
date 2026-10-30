@@ -121,7 +121,11 @@ func TestPrepareApproves(t *testing.T) {
 			if p.ConfigDir != config {
 				t.Error("Prepared.ConfigDir is not the configuration directory")
 			}
-			st, err := (&approval.Store{Dir: config}).Status(root, filepath.Join(root, policyFile))
+			repo, err := Repository(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			st, err := (&approval.Store{Dir: config}).Status(repo, filepath.Join(root, policyFile))
 			if err != nil {
 				t.Fatal(err)
 			}

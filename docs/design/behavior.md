@@ -439,8 +439,8 @@ The event is JSON on stdin. Every failure denies:
 **Divergence (policy integrity).** In pbipx, the first check after the
 policy loads, before the baseline or the tool is looked at, is its approval
 ([ADR-0006](../adr/0006-policy-integrity.md)). The SHA-256 digest of
-`.pbipx.toml`'s exact bytes must equal the one a person recorded with
-`pbipx policy approve` for this repository on this machine. With no approval,
+`.pbipx.toml`'s exact bytes must be one a person recorded with
+`pbipx policy approve` for this clone on this machine. With no approval,
 or a policy changed since (a comment or whitespace edit included), every call
 is denied with `policy-unapproved`. An approval store that cannot be found
 or read denies with `internal-error`. A policy that fails to load still
@@ -459,15 +459,24 @@ when approved, 3 otherwise. Neither prints policy content.
 
 The approval is kept outside the repository, in
 `${PBIPX_CONFIG_DIR:-<user config dir>/pbipx}/approved/<key>`. The key is
-the hex SHA-256 of the repository root's absolute, cleaned,
-symlink-resolved path, so a second clone or a move needs its own approval.
-The record is TOML holding `version = 1`, `digest = "sha256:<hex>"` and
-`approved` (the UTC time), written atomically (a temporary file renamed
-into place) with mode 0600 in directories created 0700. A relative
-`PBIPX_CONFIG_DIR` is refused: resolved against the working directory, it
-could point into the repository. So is a configuration directory inside the
-repository root, as given or with symlinks resolved (of the root, and of
-the directory's deepest existing ancestor): the gate denies every call with
+the hex SHA-256 of the absolute, cleaned, symlink-resolved path of the
+clone's shared git directory (`git rev-parse --git-common-dir`), so every
+work tree of one clone, Claude Code's `.claude/worktrees/<name>` included,
+shares one record, and a second clone needs its own approval (ADR-0006,
+amendment of 2026-10-30). The record is TOML holding `version = 2`,
+`digests` (the approved `"sha256:<hex>"` digests, oldest first, at most
+16) and `approved` (the UTC time of the last approval), written atomically
+(a temporary file renamed into place) with mode 0600 in directories created
+0700. `policy approve` adds the policy's digest, or moves it to the end,
+and drops the oldest past 16; a policy is approved when its digest is in
+the set. A `version = 1` record (one `digest`, keyed by the work tree's
+path) is still read for that work tree, and the next approval there merges
+it into the clone's record and removes it. A relative `PBIPX_CONFIG_DIR` is
+refused: resolved against the working directory, it could point into the
+repository. So is a configuration directory inside the repository root, the
+clone's git directory, or the main work tree that git directory belongs to,
+as given or with symlinks resolved (of the root, and of the directory's
+deepest existing ancestor): the gate denies every call with
 `internal-error`, and `policy approve` and `policy status` exit 3. `scan`
 does not check approval.
 
@@ -632,6 +641,31 @@ Decisions by tool. Every tool not listed is allowed.
   - runs `pbipx policy approve` (`policy`, then `approve`, by any path to
     the tool, through a pipe, or under `script`, `expect` or `unbuffer`,
     which give it a terminal): approval is a person's step (ADR-0006).
+
+  In pbipx, naming a settings file in the repository, or a path in the
+  approval store or a user-level or managed settings file, denies only when
+  the command could write it: reading one is allowed (`cat
+  .claude/settings.json`, `jq .hooks ~/.claude/settings.json`, `cat` of an
+  approval record). A word could be written when it is a redirection's
+  target (input redirections are not told apart, so `cat <
+  .claude/settings.json` denies), an option (`--output=FILE`, `-oFILE`:
+  only an operand of a reading program counts as read), an assignment or a
+  wrapper's own argument, or when the command is not one that only reads.
+  The commands that only read are `cat`, `head`, `tail`, `more`, `wc`,
+  `diff`, `cmp`, `stat`, `ls`, `grep`, `egrep`, `fgrep`, and, with these
+  exceptions, `less` (not with `-o`, `-O`, `--log-file` or a `+command`),
+  `rg` (not with `--pre`), `jq` (not with `-i` or `--in-place`), `bat` (not
+  with `--pager`), `file` (not with `-C`) and `sed` (not with `-i`,
+  `--in-place`, `-f` or `--file`, and only when every script is made of
+  commands that print, delete, quit or substitute: `p`, `d`, `q`, `s///`
+  with flags among `gpiImM` and digits, `y///`, `=` and the like, after line
+  or `/regex/` addresses; `w`, `e`, `r`, `a`, `i`, `c` and `s///w` or
+  `s///e` are refused). Each runs with no environment assignment before it
+  and under no wrapper but `command`, `builtin`, `nohup`, `nice`, `stdbuf`,
+  `ionice`, `setsid`, `timeout` and `xargs`, and with every argument
+  known. `awk` is not among them: its program can write the file it reads
+  (`print > FILENAME`), and the gate does not read awk. Every other command
+  that names such a file, `cp` and `mv` included, denies.
 - **Write**, **Edit** and **MultiEdit** of `file_path`, and **NotebookEdit**
   of `notebook_path` (in pbipx, a leading `~` expanded from the gate's home
   directory, as for Read and Grep): denied with `agent-settings` when the
@@ -658,6 +692,42 @@ Decisions by tool. Every tool not listed is allowed.
 
   The message says which of these the path is, and does not name it. Every
   other write is allowed: the gate does not otherwise judge writes.
+
+**Nested work trees (pbipx).** A directory inside the repository that is
+itself a git work tree, because it holds a `.git` directory or file, is a
+nested work tree: a linked work tree (Claude Code adds one under
+`.claude/worktrees/<name>` for an isolated subagent), a submodule or a
+clone. It holds a copy of the protected roots, so wherever the gate asks
+whether a path is under, is, or contains a protected root, and wherever it
+classifies a file, the path is also judged relative to each nested work
+tree it is in, under the outer policy's roots and classes as written, and
+under the nested work tree's own `.pbipx.toml` when it has one that loads.
+The strictest decision wins: a nested policy can add roots, never remove
+the outer ones, and one that fails to load is ignored. So:
+
+- a Read of `.claude/worktrees/wt/pbip/.../visual.json` is scanned (or
+  denied as local state or unvettable) as `pbip/.../visual.json` is;
+- a path that is a nested work tree, or contains one (`.claude`,
+  `.claude/worktrees`), touches a protected root for Grep and for rules 3
+  and 4 of Bash, and so does a working directory inside a nested work
+  tree's root;
+- a tree scan walks every nested work tree's roots as well as the
+  repository's own, wherever it was triggered, as it walks every root
+  whichever one was touched. A leak in any work tree inside the repository
+  denies a tree scan from the main one.
+
+Nested work trees are found by walking the directories in question on
+disk, without following symlinks and skipping `.git` directories; a
+directory the gate cannot read is skipped, since the agent, running as the
+same user, cannot read it either.
+
+**Known limitation.** A copy of a protected root that is not inside a
+nested work tree is not recognised: a vendored project, a backup folder
+(`backup/pbip/...`), an unzipped export, or a directory named like a PBIP
+item (`*.Report`, `*.SemanticModel`) outside the roots. Such a copy is
+judged only by its own path under the policy, which usually puts it outside
+every root. Keep copies out of the repository, or list them as protected
+roots.
 
 A deny writes the Claude Code decision JSON (`permissionDecision: deny` and a
 reason) to stdout, writes the reason to stderr, and exits 2. An allow writes
@@ -893,7 +963,9 @@ behavior (2026-10-29).
   in the repository with `agent-settings`, and `pbipx scan` reports a
   committed one that sets `disableAllHooks`, or whose `env` sets a variable
   that can defeat the hook, with `hooks-disabled`, because such a file
-  turns off the gate's user-level hook. (Decided 2026-10-29.)
+  turns off the gate's user-level hook. (Decided 2026-10-29.) A shell
+  command that only reads such a file is allowed; one that could write it
+  denies (see "The gate (Claude Code)", Bash). (Decided 2026-10-30.)
 - **Divergence (reading a command line):** the predecessor finds roots in a
   Bash command only as literal whole words of the line, and a command's
   program only as its first word. A command that reaches a root without
@@ -907,6 +979,13 @@ behavior (2026-10-29).
   every root. It also denies writing into a `.claude` directory and running
   `pbipx policy approve` with `agent-settings`. The corpus cases for it are
   marked `known = "predecessor"`. (Decided 2026-10-29.)
+- **Divergence (nested work trees):** the predecessor judges a path only
+  against the protected roots as written from the repository root, so a
+  copy of a root in a linked work tree under `.claude/worktrees/`, in a
+  submodule or in a nested clone can be read and searched from the main
+  repository. pbipx applies the roots relative to each nested work tree as
+  well (see "The gate (Claude Code)", nested work trees). The corpus cases
+  for it are marked `known = "predecessor"`. (Decided 2026-10-30.)
 - **Divergence (case and paths):** on macOS and Windows, whose file systems
   fold case, pbipx compares paths and root names without regard to case
   everywhere the gate compares them (roots, local state, Claude Code

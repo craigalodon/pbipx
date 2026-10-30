@@ -54,18 +54,21 @@ var (
 
 // Spec is a case.toml.
 type Spec struct {
-	Description string            `toml:"description"`
-	Command     string            `toml:"command"`
-	Args        []string          `toml:"args"`
-	Policy      string            `toml:"policy"`
-	Exit        int               `toml:"exit"`
-	Sentinels   []string          `toml:"sentinels"`
-	Git         *bool             `toml:"git"`
-	Untracked   []string          `toml:"untracked"`
-	Staged      []string          `toml:"staged"`
-	Deleted     []string          `toml:"deleted"`
-	Env         map[string]string `toml:"env"`
-	Known       string            `toml:"known"`
+	Description string   `toml:"description"`
+	Command     string   `toml:"command"`
+	Args        []string `toml:"args"`
+	Policy      string   `toml:"policy"`
+	Exit        int      `toml:"exit"`
+	Sentinels   []string `toml:"sentinels"`
+	Git         *bool    `toml:"git"`
+	Untracked   []string `toml:"untracked"`
+	Staged      []string `toml:"staged"`
+	Deleted     []string `toml:"deleted"`
+	// Worktrees are root-relative paths where linked work trees of the
+	// root's repository are added, at the commit, after deleted is applied.
+	Worktrees []string          `toml:"worktrees"`
+	Env       map[string]string `toml:"env"`
+	Known     string            `toml:"known"`
 	// Approved, for a gate case, is false to run without an approval of the
 	// policy; a gate case otherwise runs against an approved one.
 	Approved *bool `toml:"approved"`
