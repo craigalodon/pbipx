@@ -1,0 +1,8 @@
+description = "cat of a file in a linked work tree that is outside its protected roots allows, though the work tree's roots leak: a nested work tree is not denied as a whole"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = ["Doe, Jane"]
+deleted     = ["pbip/Example.Report/definition/pages/0000/visuals/0001/visual.json"]
+worktrees   = [".claude/worktrees/wt"]

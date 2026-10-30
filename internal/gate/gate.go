@@ -115,6 +115,9 @@ type setup struct {
 	home string
 	// gitq is the decision's git session (gitquery.go).
 	gitq *gitSession
+	// nest is what is known of nested work trees (nested.go), found on
+	// first use.
+	nest *nestCache
 }
 
 // Decide decides one tool call. It never panics: a panic below it is a deny

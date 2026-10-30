@@ -245,8 +245,18 @@ func (v *validator) checkRef(r FindingRef, what string) {
 
 func (v *validator) checkGit() {
 	s := &v.cs.Spec
-	if !s.UsesGit() && (len(s.Untracked) > 0 || len(s.Staged) > 0 || len(s.Deleted) > 0) {
-		v.addf(caseFile, "untracked, staged or deleted is set but git = false")
+	if !s.UsesGit() && (len(s.Untracked) > 0 || len(s.Staged) > 0 || len(s.Deleted) > 0 || len(s.Worktrees) > 0) {
+		v.addf(caseFile, "untracked, staged, deleted or worktrees is set but git = false")
+	}
+	for i, p := range s.Worktrees {
+		switch {
+		case !validRelPath(p):
+			v.addf(caseFile, "worktrees[%d] is not a clean relative path with forward slashes", i)
+		case v.inTrees(p):
+			v.addf(caseFile, "worktrees[%d] names a path that tree/ already has", i)
+		case slices.Contains(s.Worktrees[:i], p):
+			v.addf(caseFile, "worktrees[%d] is listed twice", i)
+		}
 	}
 	seen := map[string]string{}
 	for _, list := range []struct {

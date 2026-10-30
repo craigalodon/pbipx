@@ -43,7 +43,10 @@ A runner, one per implementation, does this for each case:
    ignores is not committed. The commit uses a fixed synthetic author and
    date. Then delete the files listed in `deleted` from the root: they stay
    in the commit, so git history holds what the working tree no longer
-   does.
+   does. Then, for each path in `worktrees`, add a linked work tree of the
+   repository there, detached at the commit (`git worktree add --detach
+   <path> HEAD`), as Claude Code adds one under `.claude/worktrees/`: it
+   holds the committed files, deleted ones included.
 4. Replace `{root}` in `args` and `stdin` with the root's absolute path.
 5. Run the command in the root, with `CI`, `PRE_COMMIT` and
    `PBIPX_NO_REVEAL` unset and standard output not a terminal, unless `env`
@@ -75,6 +78,7 @@ git        = true                    # false: the root is not a git repository
 untracked  = []                      # paths left untracked
 staged     = []                      # paths staged but not committed
 deleted    = []                      # paths committed, then deleted
+worktrees  = []                      # linked work trees added at the commit
 env        = { CI = "true" }         # environment for the command
 known      = "predecessor"           # see "Known differences"
 approved   = false                   # gate only: run with no policy approval
@@ -195,14 +199,18 @@ by accident is a bug in one of them, and gets an issue.
 
 pbipx's gate denies every call unless the policy is the one a person
 approved ([ADR-0006](../adr/0006-policy-integrity.md)). So every `gate`
-case runs against an approved policy unless it says `approved = false`: in
-step 2, the runner records the policy written to the root as approved for
+case runs against an approved policy unless it says `approved = false`: the
+runner records the policy written to the root in step 2 as approved for
 that root, as the implementation's approval command would, but without its
-terminal prompt. A root with no policy file has nothing to approve. The key
+terminal prompt. pbipx keys an approval by the repository's git directory,
+so its runner records it at the end of step 3, once the root is a
+repository; the policy approved is still the one step 2 wrote. A root with
+no policy file, or with `git = false`, has nothing to approve. The key
 `approved` is valid only in a `gate` case.
 
 A `gate` case whose policy is approved may have an `after/tree/`, copied
-over the root after the approval and before the commit of step 3. That is
+over the root after the policy is written and before the commit of step 3.
+That is
 how a case changes the policy after it was approved: `policy = "tree"`,
 with the approved policy in `tree/.pbipx.toml` and the edited one in
 `after/tree/.pbipx.toml`.

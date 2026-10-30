@@ -114,3 +114,25 @@ func TestWriteControlFilesThroughLinks(t *testing.T) {
 		{"the store's target, by its own path", write(filepath.Join(linked, "approved", "x")), gate.ReasonAgentSettings},
 	})
 }
+
+// TestShellReadsOfControlFiles checks that a command that only reads a
+// file controlling the gate is allowed, and one that could write it is
+// not.
+func TestShellReadsOfControlFiles(t *testing.T) {
+	c := newControlDirs(t)
+	root := newRepo(t, cleanFiles())
+	record := filepath.Join(c.store, "approved", strings.Repeat("0", 64))
+	sh := func(cmd string) gate.Event { return gate.Event{Tool: gate.Shell, Command: cmd} }
+	run(t, root, []decideCase{
+		{"cat of the home settings", sh("cat ~/.claude/settings.json"), ""},
+		{"jq of CLAUDE_CONFIG_DIR settings", sh("jq .hooks " + filepath.Join(c.claude, "settings.json")), ""},
+		{"cat of an approval record", sh("cat " + record), ""},
+		{"ls of the store", sh("ls -la " + filepath.Join(c.store, "approved")), ""},
+		{"grep of the home local settings", sh("grep -n hooks ~/.claude/settings.local.json"), ""},
+
+		{"sed -i of the home settings", sh("sed -i s/a/b/ ~/.claude/settings.json"), gate.ReasonAgentSettings},
+		{"a redirect into a record", sh("cat x > " + record), gate.ReasonAgentSettings},
+		{"awk of a record", sh("awk 1 " + record), gate.ReasonAgentSettings},
+		{"rm of a record", sh("rm " + record), gate.ReasonAgentSettings},
+	})
+}

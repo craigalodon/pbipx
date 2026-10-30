@@ -10,6 +10,7 @@ import (
 
 	"github.com/craigalodon/pbipx/internal/approval"
 	"github.com/craigalodon/pbipx/internal/finding"
+	"github.com/craigalodon/pbipx/internal/gate"
 	"github.com/craigalodon/pbipx/internal/policy"
 )
 
@@ -48,7 +49,11 @@ func storeStatus(t *testing.T, root string) approval.Status {
 	if err != nil {
 		t.Fatal(err)
 	}
-	st, err := s.Status(root, filepath.Join(root, policy.FileName))
+	id, err := gate.Identify(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := s.Status(id, filepath.Join(root, policy.FileName))
 	if err != nil {
 		t.Fatal(err)
 	}

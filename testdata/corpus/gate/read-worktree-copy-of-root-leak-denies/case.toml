@@ -1,0 +1,9 @@
+description = "a Read of a leaking file in a linked work tree under .claude/worktrees is judged under the protected roots relative to that work tree, though the main work tree no longer has the file"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
+deleted     = ["pbip/Example.Report/definition/pages/0000/visuals/0001/visual.json"]
+worktrees   = [".claude/worktrees/wt"]
+known       = "predecessor"
