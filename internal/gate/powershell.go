@@ -191,8 +191,9 @@ func psControl(cwd, home string, words []string, ctl controls) (Decision, bool) 
 // repository (behavior.md, "The gate", PowerShell): a word naming a Claude
 // Code settings file or a .claude directory in the repository, or a file
 // outside it that controls the gate, denies with agent-settings; a word
-// naming local state with local-state; and otherwise the protected tree is
-// scanned, as if the command touched every root.
+// naming local state with local-state; a git command that could print
+// content git history holds with git-content (psGit); and otherwise the
+// protected tree is scanned, as if the command touched every root.
 func (s *setup) powershell(line string) Decision {
 	words, ok := psWords(line)
 	if !ok {
@@ -221,6 +222,10 @@ func (s *setup) powershell(line string) Decision {
 				}
 			}
 		}
+	}
+	// git printing content git history holds, as for Bash.
+	if d, ok := s.psGit(line, 0); ok {
+		return d
 	}
 	if local != "" {
 		return deny(ReasonLocalState, "the PowerShell command names %s, Power BI Desktop local state, which is never read",
