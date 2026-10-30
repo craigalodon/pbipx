@@ -3,6 +3,7 @@ package gate_test
 import (
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -58,7 +59,7 @@ func TestShellGitHistory(t *testing.T) {
 	git := gate.ReasonGitContent
 	run(t, root, []decideCase{
 		// The working tree is clean: naming the root alone allows.
-		{"cat of the clean tree", sh("ls " + filepath.Dir(leakVisual)), ""},
+		{"cat of the clean tree", sh("ls " + path.Dir(leakVisual)), ""},
 
 		// blame takes the file before or after the revision.
 		{"blame file then revision", sh("git blame " + leakVisual + " HEAD~1"), git},
