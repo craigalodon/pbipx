@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -151,6 +152,9 @@ func TestReadSymlinks(t *testing.T) {
 func TestReadUnreadable(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root reads any file")
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("mode 0 only makes a file read-only on Windows; it stays readable")
 	}
 	root := newRepo(t, cleanFiles())
 	if err := os.Chmod(filepath.Join(root, filepath.FromSlash(reportJSON)), 0); err != nil {

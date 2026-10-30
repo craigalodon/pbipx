@@ -226,8 +226,16 @@ func loadAt(ev Event, opts Options, repo *source.Repo) (*setup, *Decision) {
 	return &setup{repo: repo, policy: p, baseline: b, cwd: ev.Cwd, now: now, fold: foldCase, home: userHome(), gitq: newGitSession()}, nil
 }
 
-// userHome is the gate's own home directory, "" when unknown.
+// userHome is the directory "~" and $HOME stand for, "" when unknown. On
+// Windows Git Bash and Claude Code both take $HOME first, which may be in
+// a Git Bash form (hostPath), and %USERPROFILE% (os.UserHomeDir) when it
+// is not set; elsewhere os.UserHomeDir is $HOME.
 func userHome() string {
+	if windowsPaths {
+		if h := os.Getenv("HOME"); h != "" && fullPath(h) {
+			return filepath.Clean(hostPath(h))
+		}
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return ""

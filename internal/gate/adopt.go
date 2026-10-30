@@ -373,7 +373,7 @@ func probeShell(cwd, home, line string) (*walker, []spot, bool) {
 // something that cannot be placed.
 func (w *walker) probeIn(st cwdState, p string) {
 	if !st.known() {
-		if !filepath.IsAbs(p) {
+		if !fullPath(p) {
 			w.reach = true
 			return
 		}

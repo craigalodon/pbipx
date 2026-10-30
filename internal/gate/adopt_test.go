@@ -103,11 +103,11 @@ func TestAdoptionScopesTheGate(t *testing.T) {
 		{"read through a symlink", gate.Event{Tool: gate.Read, Path: filepath.Join(link, "B.Report/definition/pages/0000/visuals/0001/visual.json"), Cwd: a.outside}, gate.ReasonFinding},
 		{"search of it", gate.Event{Tool: gate.Search, Path: a.adopted, Cwd: a.outside}, gate.ReasonFinding},
 		{"search of a directory holding it", gate.Event{Tool: gate.Search, Path: filepath.Dir(a.adopted), Cwd: a.outside}, gate.ReasonFinding},
-		{"cat of an absolute path", gate.Event{Tool: gate.Shell, Command: "cat " + in(a.adopted, leakVisual), Cwd: a.outside}, gate.ReasonFinding},
-		{"cd into it, then cat", gate.Event{Tool: gate.Shell, Command: "cd " + a.adopted + " && cat " + leakVisual, Cwd: a.outside}, gate.ReasonFinding},
-		{"grep -r of a directory holding it", gate.Event{Tool: gate.Shell, Command: "grep -r Doe " + filepath.Dir(a.adopted), Cwd: a.outside}, gate.ReasonFinding},
+		{"cat of an absolute path", gate.Event{Tool: gate.Shell, Command: "cat " + bashPath(in(a.adopted, leakVisual)), Cwd: a.outside}, gate.ReasonFinding},
+		{"cd into it, then cat", gate.Event{Tool: gate.Shell, Command: "cd " + bashPath(a.adopted) + " && cat " + leakVisual, Cwd: a.outside}, gate.ReasonFinding},
+		{"grep -r of a directory holding it", gate.Event{Tool: gate.Shell, Command: "grep -r Doe " + bashPath(filepath.Dir(a.adopted)), Cwd: a.outside}, gate.ReasonFinding},
 		{"cat of a word that cannot be placed", gate.Event{Tool: gate.Shell, Command: `cat "$X"`, Cwd: a.plain}, gate.ReasonFinding},
-		{"cat of a clean note in it", gate.Event{Tool: gate.Shell, Command: "cat " + in(a.adopted, cleanNote), Cwd: a.outside}, ""},
+		{"cat of a clean note in it", gate.Event{Tool: gate.Shell, Command: "cat " + bashPath(in(a.adopted, cleanNote)), Cwd: a.outside}, ""},
 		{"write into its agent settings", gate.Event{Tool: gate.Write, Path: in(a.adopted, ".claude/settings.json"), Cwd: a.outside}, gate.ReasonAgentSettings},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -143,7 +143,7 @@ func TestAdoptionStaysClosed(t *testing.T) {
 			t.Fatal(err)
 		}
 		check(t, a.decide(gate.Event{Tool: gate.Read, Path: leakVisual, Cwd: a.adopted}), gate.ReasonNotARepository)
-		check(t, a.decide(gate.Event{Tool: gate.Shell, Command: "cat " + filepath.Join(a.adopted, leakVisual), Cwd: a.outside}),
+		check(t, a.decide(gate.Event{Tool: gate.Shell, Command: "cat " + bashPath(filepath.Join(a.adopted, leakVisual)), Cwd: a.outside}),
 			gate.ReasonNotARepository)
 	})
 	t.Run("working directory in the git directory", func(t *testing.T) {
@@ -239,7 +239,7 @@ func TestControlsFromAnywhere(t *testing.T) {
 		}{
 			{"write user settings", gate.Event{Tool: gate.Write, Path: userSettings}, gate.ReasonAgentSettings},
 			{"write into the store", gate.Event{Tool: gate.Write, Path: filepath.Join(a.store.Dir, "approved", "x")}, gate.ReasonAgentSettings},
-			{"redirect into user settings", gate.Event{Tool: gate.Shell, Command: "echo '{}' > " + userSettings}, gate.ReasonAgentSettings},
+			{"redirect into user settings", gate.Event{Tool: gate.Shell, Command: "echo '{}' > " + bashPath(userSettings)}, gate.ReasonAgentSettings},
 			{"run the approval", gate.Event{Tool: gate.Shell, Command: "pbipx policy approve"}, gate.ReasonAgentSettings},
 			{"read user settings", gate.Event{Tool: gate.Read, Path: userSettings}, ""},
 			{"write elsewhere", gate.Event{Tool: gate.Write, Path: "notes.txt"}, ""},
