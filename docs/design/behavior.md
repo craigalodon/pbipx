@@ -622,6 +622,13 @@ path, is denied with `event-error`: the call cannot be judged.
     not a space sets them apart, quotes kept as written. A reading or
     searching command in such a line, or any `$(` or backtick in it,
     counts as touching every protected root;
+  - a program is known by the last element of its path, without a
+    trailing `.exe` in any case, as Windows, Git Bash and WSL run it:
+    `rg.exe`, `/usr/bin/rg.exe` and `git.exe` are `rg` and `git`. Its case
+    is folded only where the file system folds case (Windows, macOS):
+    there `RG.EXE` is `rg`; elsewhere `RG` is another program.
+    **Divergence (`.exe` names):** the predecessor matches a search tool
+    by its exact name, so `rg.exe` is not a search there;
   - wrappers are skipped, with their options and operands, to the command
     they run: `env`, `command`, `exec`, `nohup`, `builtin`, `time`, `nice`,
     `sudo`, `doas`, `xargs`, `stdbuf`, `timeout`, `ionice`, `setsid`,

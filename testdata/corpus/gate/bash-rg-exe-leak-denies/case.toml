@@ -1,0 +1,7 @@
+description = "rg.exe is rg, as Windows, Git Bash and WSL run it: with no path it searches ., which touches the root"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
+known       = "predecessor"
