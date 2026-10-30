@@ -53,8 +53,18 @@ func defaultPolicy(t *testing.T) string {
 // one, into a fresh directory and commits them.
 func newRepo(t *testing.T, files map[string]string) string {
 	t.Helper()
-	isolateGit(t)
 	root := tempRoot(t)
+	newRepoAt(t, root, files)
+	return root
+}
+
+// newRepoAt is newRepo in the directory root, made if missing.
+func newRepoAt(t *testing.T, root string, files map[string]string) {
+	t.Helper()
+	isolateGit(t)
+	if err := os.MkdirAll(root, 0o750); err != nil {
+		t.Fatal(err)
+	}
 	if _, ok := files[".pbipx.toml"]; !ok {
 		write(t, root, ".pbipx.toml", defaultPolicy(t))
 	}
@@ -64,7 +74,6 @@ func newRepo(t *testing.T, files map[string]string) string {
 	if err := corpus.GitSetup(root, nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	return root
 }
 
 func write(t *testing.T, root, name, content string) {

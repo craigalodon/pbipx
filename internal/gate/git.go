@@ -692,7 +692,12 @@ func (s *setup) foreignReads(inv gitInvocation) bool {
 			if !ok {
 				continue
 			}
-			w = v
+			// Git Bash rewrites a /c/... value for git, a Windows program.
+			p, placed := msysPath(v)
+			if !placed {
+				return true
+			}
+			w = p
 		}
 		if i := strings.IndexAny(w, "*?["); i >= 0 {
 			w = path.Dir(w[:i] + "x")

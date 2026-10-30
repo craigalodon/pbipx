@@ -128,21 +128,38 @@ func Decide(ev Event, opts Options) (d Decision) {
 			d = deny(ReasonInternalError, "the gate failed; the call is denied")
 		}
 	}()
+	if c, ok := msysToolPath(ev.Cwd); ok {
+		ev.Cwd = c
+	}
 	s, failed := load(ev, opts)
 	if failed != nil {
 		return *failed
 	}
 	switch ev.Tool {
 	case Read:
-		return s.read(ev.Path)
+		return eitherPath(ev.Path, s.read)
 	case Search:
-		return s.search(ev.Path)
+		return eitherPath(ev.Path, s.search)
 	case Shell:
 		return s.shell(ev.Command)
 	case Write:
-		return s.write(ev.Path)
+		return eitherPath(ev.Path, s.write)
 	}
 	return allow()
+}
+
+// eitherPath decides a tool call on p with decide, and, when p is spelled
+// /c/... as Git Bash spells it (msysToolPath), on the Windows path as
+// well: the stricter decision wins.
+func eitherPath(p string, decide func(string) Decision) Decision {
+	d := decide(p)
+	if !d.Allow {
+		return d
+	}
+	if w, ok := msysToolPath(p); ok {
+		return decide(w)
+	}
+	return d
 }
 
 // load finds the repository the working directory is in and loads its
@@ -198,7 +215,7 @@ func load(ev Event, opts Options) (*setup, *Decision) {
 	if now.IsZero() {
 		now = time.Now()
 	}
-	return &setup{repo: repo, policy: p, baseline: b, cwd: ev.Cwd, now: now, fold: foldCase, home: homeDir(), gitq: newGitSession()}, nil
+	return &setup{repo: repo, policy: p, baseline: b, cwd: ev.Cwd, now: now, fold: foldCase, home: hostHome(homeDir()), gitq: newGitSession()}, nil
 }
 
 // homeDir is the home directory "~" and $HOME stand for, "" when unknown:

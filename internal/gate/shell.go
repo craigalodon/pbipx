@@ -380,6 +380,9 @@ type xword struct {
 	redirect bool
 	// input and here are word's: a redirection that reads, a here-string.
 	input, here bool
+	// unplaced is true for an absolute MSYS2 path that cannot be placed
+	// (msysPath); known is false then too.
+	unplaced bool
 }
 
 // view is one simple command as the rules see it.
@@ -394,9 +397,12 @@ type view struct {
 	name      string
 	rest      []string
 	restKnown []bool
-	under     []string
-	cwd       cwdState
-	pipeIn    bool
+	// restUnplaced is true when one of rest is an absolute MSYS2 path
+	// that cannot be placed (xword.unplaced).
+	restUnplaced bool
+	under        []string
+	cwd          cwdState
+	pipeIn       bool
 	// cache holds the decision's expanded words and its glob budget.
 	cache *spellCache
 }
@@ -528,6 +534,10 @@ func docKnown(doc *heredoc) bool {
 // reachesIn sets reach when p, from the working directory st, touches a
 // protected root, or when st is unknown and p relative.
 func (w *walker) reachesIn(st cwdState, p string) {
+	if p == unplacedPath {
+		w.reach = true
+		return
+	}
 	if !st.known() {
 		if !filepath.IsAbs(p) || w.s.touchesIn("/", p) {
 			w.reach = true
@@ -646,19 +656,21 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 func (s *setup) viewOf(c simple, st cwdState) view {
 	v := view{cwd: st.clone(), pipeIn: c.pipeIn}
 	var args []string
-	var known []bool
+	var known, unplaced []bool
 	for _, wd := range c.words {
 		xw := s.expandWord(wd, v.cwd)
 		v.words = append(v.words, xw)
 		if !xw.redirect {
 			args = append(args, xw.text)
 			known = append(known, xw.known)
+			unplaced = append(unplaced, xw.unplaced)
 		}
 	}
 	v.argv = stripKeywords(args)
 	v.argvKnown = known[len(known)-len(v.argv):]
 	v.name, v.rest, v.under = command(v.argv)
 	v.restKnown = v.argvKnown[len(v.argvKnown)-len(v.rest):]
+	v.restUnplaced = slices.Contains(unplaced[len(unplaced)-len(v.rest):], true)
 	return v
 }
 
@@ -878,6 +890,11 @@ func fdArgs(rest []string) (execs [][]string, paths []string) {
 			if !hasValue && i+1 < len(rest) {
 				i++
 				value = rest[i]
+			} else if p, ok := msysPath(value); ok {
+				// The word was read whole; Git Bash rewrites the value.
+				value = p
+			} else {
+				value = unplacedPath
 			}
 			if opt == "--base-directory" {
 				base = value
@@ -899,13 +916,20 @@ func fdArgs(rest []string) (execs [][]string, paths []string) {
 	}
 	if base != "" {
 		for i, p := range paths {
-			if !filepath.IsAbs(p) {
+			switch {
+			case base == unplacedPath:
+				paths[i] = unplacedPath
+			case p != unplacedPath && !filepath.IsAbs(p):
 				paths[i] = filepath.Join(base, p)
 			}
 		}
 	}
 	return execs, paths
 }
+
+// unplacedPath stands for a path that cannot be placed (msysPath): it
+// reaches every protected root.
+const unplacedPath = "\x00unplaced"
 
 // nested reads a command line passed as a word, in a working directory of
 // its own; nestedIn reads it in st.
@@ -1148,11 +1172,38 @@ func (s *setup) expandWord(w word, st cwdState) xword {
 		}
 	}
 	xw.text, xw.pattern = text.String(), pattern.String()
+	if xw.known && !xw.here && len(w.parts) > 0 && w.parts[0].kind == litPart {
+		// A literal /c/... is the path Git Bash reads: the drive's
+		// (msysPath). HOME, PWD and OLDPWD are host paths already.
+		hostWord(&xw)
+	}
 	if quotedGlob && filepath.Separator == '\\' {
 		// Windows has no glob escape: a quoted glob character would match.
 		xw.glob = false
 	}
 	return xw
+}
+
+// hostWord rewrites xw's text and pattern as the host names the path, when
+// xw is an absolute MSYS2 path (msysPath). One that cannot be placed is
+// left as written, unknown and unplaced.
+func hostWord(xw *xword) {
+	n, repl, changed, ok := msysPrefix(xw.text)
+	switch {
+	case !ok:
+		xw.known, xw.unplaced = false, true
+		return
+	case !changed:
+		return
+	}
+	head := xw.text[:n]
+	xw.text = repl + filepath.FromSlash(xw.text[n:])
+	if strings.HasPrefix(xw.pattern, head) {
+		xw.pattern = repl + filepath.FromSlash(xw.pattern[n:])
+	} else {
+		// An escaped glob character before the rewritten part.
+		xw.known, xw.unplaced = false, true
+	}
 }
 
 // escapeGlob escapes glob characters for filepath.Glob. Windows has no
@@ -1235,7 +1286,12 @@ func (s *setup) spellWord(v view, xw xword, c *spellCache) (out []string, unknow
 	}
 	cands := []string{xw.text}
 	if _, val, ok := strings.Cut(xw.text, "="); ok {
-		cands = append(cands, expandHome(val, s.home))
+		// Git Bash rewrites a /c/... after "=" too, for a Windows program.
+		if p, placed := msysPath(val); !placed {
+			unknown = true
+		} else {
+			cands = append(cands, expandHome(p, s.home))
+		}
 	}
 	if xw.glob && strings.Contains(xw.pattern, "**") {
 		cands = append(cands, globPrefix(xw.pattern))
@@ -1704,6 +1760,11 @@ func policyApprove(args []string) bool {
 // directory; from an unknown one, as if from each protected root, where
 // every relative pathspec touches the root.
 func (s *setup) gitRule(v view) string {
+	if v.name == "git" && v.restUnplaced {
+		// A path git is given that cannot be placed could be any
+		// pathspec, -C directory or file.
+		return "git"
+	}
 	dirs := v.cwd.dirs
 	if !v.cwd.known() {
 		dirs = []string{s.repo.Root}
