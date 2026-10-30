@@ -6,6 +6,7 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/craigalodon/pbipx/internal/policy"
@@ -25,7 +26,7 @@ const maxDepth = 4
 // in a message: it can carry anything.
 func (s *setup) shell(line string) Decision {
 	top := splitCommands(line)
-	w := &walker{s: s}
+	w := &walker{s: s, cache: newSpellCache()}
 	st := cwdState{dirs: []string{s.cwd}}
 	w.commands(line, top, &st, 0)
 
@@ -54,10 +55,18 @@ func (s *setup) shell(line string) Decision {
 	for _, v := range w.views {
 		if sub := s.gitRule(v); sub != "" {
 			return deny(ReasonGitContent,
-				"git %s prints file content, and its pathspecs do not provably avoid every protected root; "+
+				"%s prints file content, and its pathspecs do not provably avoid every protected root; "+
 					"git history cannot be vetted. A summary (--stat, --name-only) or pathspecs that exclude the roots are allowed",
-				displayPath(sub))
+				gitLabel(sub))
 		}
+	}
+	// A command that changes the working tree, then one that reads: the
+	// read would be judged against the tree as it is before the change.
+	if w.readAfterChange {
+		return deny(ReasonGitContent,
+			"%s changes the working tree, and a later command in the line reads files; the read would be judged "+
+				"against the tree as it was before. Run the change on its own, then the read as a separate call",
+			w.changed)
 	}
 	// Divergence: naming local state denies, as a Read of it does.
 	for _, v := range w.views {
@@ -73,6 +82,199 @@ func (s *setup) shell(line string) Decision {
 		return s.tree("a shell command over a protected root")
 	}
 	return allow()
+}
+
+// gitLabel is "git SUB" for one of git's own subcommands, and "git" for
+// any other word: a word from the command line is never echoed.
+func gitLabel(sub string) string {
+	if gitBuiltins[sub] {
+		return "git " + sub
+	}
+	return "git"
+}
+
+// gitTreeChangers are git's subcommands that write files from history, or
+// from outside the tree, into a working tree, each with the arguments
+// that make it not do so (a whole word, or a short option's letter).
+var gitTreeChangers = map[string][]string{
+	"switch": nil, "checkout": nil, "merge": nil, "pull": nil, "cherry-pick": nil,
+	"revert": nil, "am": nil, "rebase": nil, "clone": nil, "checkout-index": nil,
+	"filter-branch": nil, "mergetool": nil,
+	"restore":         {"--staged", "-S"},
+	"apply":           {"--check", "--stat", "--numstat", "--summary", "--cached"},
+	"stash":           {"list", "show", "create", "store", "drop", "clear"},
+	"reset":           nil, // judged by resetChanges
+	"read-tree":       nil, // judged by its -u
+	"sparse-checkout": {"list"},
+	"bisect":          {"log", "visualize", "view", "terms", "help"},
+	"submodule":       nil, // judged by its subcommand
+	"worktree":        nil, // judged by its subcommand
+	"bundle":          nil, // judged by its subcommand
+	"merge-file":      {"-p", "--stdout"},
+}
+
+// treeChange names the command v runs when it changes the working tree
+// with content the gate has not seen: a git command that checks out,
+// merges, applies or restores (gitTreeChangers; any git subcommand that is
+// not git's own, an alias included, counts), git clone, git worktree add,
+// git bundle unbundle, or an archive extracted (tar -x, unzip and the
+// like) or a patch applied. "" when it does not.
+func (s *setup) treeChange(v view) string {
+	switch v.name {
+	case "git":
+		dir := s.cwd
+		if v.cwd.known() {
+			dir = v.cwd.dirs[0]
+		}
+		inv, ok := parseGit(v.rest, dir)
+		if !ok {
+			return ""
+		}
+		if !gitBuiltins[inv.sub] {
+			return "git"
+		}
+		if gitChangesTree(inv.sub, inv.rest) {
+			return "git " + inv.sub
+		}
+	case "tar", "bsdtar", "gtar":
+		if tarExtracts(v.rest) {
+			return v.name + " -x"
+		}
+	case "unzip", "funzip", "gunzip", "bunzip2", "unxz", "unzstd", "unlzma", "uncompress", "patch", "ar":
+		if v.name == "ar" && (len(v.rest) == 0 || !strings.Contains(v.rest[0], "x")) {
+			return ""
+		}
+		if !slices.ContainsFunc(v.rest, func(a string) bool {
+			return slices.Contains([]string{"-c", "--stdout", "-l", "--list", "-t", "--test", "--dry-run", "-Z"}, a)
+		}) {
+			return v.name
+		}
+	case "7z", "7za", "7zz", "7zr":
+		if len(v.rest) > 0 && (v.rest[0] == "x" || v.rest[0] == "e") {
+			return v.name + " " + v.rest[0]
+		}
+	case "cpio":
+		if slices.ContainsFunc(v.rest, func(a string) bool {
+			return a == "--extract" || len(a) > 1 && a[0] == '-' && a[1] != '-' && strings.Contains(a, "i")
+		}) {
+			return "cpio -i"
+		}
+	}
+	return ""
+}
+
+// gitChangesTree reports whether git's subcommand sub, with the words
+// after it, changes the working tree.
+func gitChangesTree(sub string, rest []string) bool {
+	exempt, ok := gitTreeChangers[sub]
+	if !ok {
+		return false
+	}
+	first := ""
+	for _, a := range rest {
+		if !strings.HasPrefix(a, "-") {
+			first = a
+			break
+		}
+	}
+	switch sub {
+	case "reset":
+		return slices.ContainsFunc(rest, func(a string) bool { return a == "--hard" || a == "--merge" || a == "--keep" })
+	case "read-tree":
+		return slices.Contains(rest, "-u")
+	case "submodule":
+		return first == "update" || first == "add" || first == "foreach"
+	case "worktree":
+		return first == "add"
+	case "bundle":
+		return first == "unbundle"
+	case "stash", "bisect", "sparse-checkout":
+		return !slices.Contains(exempt, first)
+	case "restore":
+		// --staged alone touches only the index; with --worktree, both.
+		staged := slices.ContainsFunc(rest, func(a string) bool { return slices.Contains(exempt, a) })
+		return !staged || slices.Contains(rest, "--worktree") || slices.Contains(rest, "-W")
+	}
+	return !slices.ContainsFunc(rest, func(a string) bool { return slices.Contains(exempt, a) })
+}
+
+// tarExtracts reports whether tar's arguments extract: -x, --extract or
+// --get, or an x in its first word of bundled letters.
+func tarExtracts(rest []string) bool {
+	for i, a := range rest {
+		switch {
+		case a == "--extract" || a == "--get":
+			return true
+		case strings.HasPrefix(a, "--"):
+		case strings.HasPrefix(a, "-"):
+			if strings.ContainsRune(a, 'x') {
+				return true
+			}
+		case i == 0 && strings.ContainsRune(a, 'x'):
+			return true
+		}
+	}
+	return false
+}
+
+// silent are commands whose words are never read as paths.
+var silent = map[string]bool{
+	"echo": true, "printf": true, ":": true, "true": true, "false": true, "exit": true,
+	"return": true, "sleep": true,
+}
+
+// readsAnything reports whether v, run after a command that changed the
+// working tree, may read what that command wrote: a reading or searching
+// program, or any word that is, or may be, a path. git's own reads are
+// judged by rule 2.
+func (s *setup) readsAnything(v view) bool {
+	if judged(v.name) && v.name != "git" {
+		return true
+	}
+	if v.name == "git" || silent[v.name] {
+		return false
+	}
+	for _, xw := range v.words {
+		if xw.redirect && !xw.input {
+			continue
+		}
+		if s.pathLike(v, xw) {
+			return true
+		}
+	}
+	return false
+}
+
+// pathLike reports whether a word of v is or may be a path: unknown, a
+// glob, with a separator, ".", "..", "~" first, or a name that exists
+// where v runs. An option counts by its =value.
+func (s *setup) pathLike(v view, xw xword) bool {
+	if !xw.known || xw.glob {
+		return true
+	}
+	t := xw.text
+	if strings.HasPrefix(t, "-") {
+		_, val, ok := strings.Cut(t, "=")
+		if !ok {
+			return false
+		}
+		t = val
+	}
+	if t == "" {
+		return false
+	}
+	if t == "." || t == ".." || strings.HasPrefix(t, "~") || strings.ContainsAny(t, `/\`) {
+		return true
+	}
+	if !v.cwd.known() {
+		return true
+	}
+	for _, d := range v.cwd.dirs {
+		if _, err := os.Lstat(filepath.Join(d, t)); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // toolAlone reports whether line is one simple command running the tool,
@@ -118,6 +320,8 @@ type xword struct {
 	pattern  string
 	glob     bool
 	redirect bool
+	// input and here are word's: a redirection that reads, a here-string.
+	input, here bool
 }
 
 // view is one simple command as the rules see it.
@@ -135,6 +339,8 @@ type view struct {
 	under     []string
 	cwd       cwdState
 	pipeIn    bool
+	// cache holds the decision's expanded words and its glob budget.
+	cache *spellCache
 }
 
 // walker reads a command line, the lines nested in it, and the working
@@ -147,6 +353,12 @@ type walker struct {
 	// protected root: a line nested too deep or built at run time, or a
 	// find or xargs reading under a root.
 	reach bool
+	cache *spellCache
+	// changed names the first command that changes the working tree
+	// (treeChange), "" before one; readAfterChange is set when a command
+	// after it reads.
+	changed         string
+	readAfterChange bool
 }
 
 // commands reads the simple commands cmds of line, nested depth deep, from
@@ -157,31 +369,95 @@ func (w *walker) commands(line string, cmds []simple, st *cwdState, depth int) {
 		return
 	}
 	w.lines = append(w.lines, line)
-	var find *view // a find whose output this pipeline carries
-	for _, c := range cmds {
-		v := w.simple(c.words, c.pipeIn, st, depth)
+	var lister *view // a find or fd whose output this pipeline carries
+	var prev *simple // the command before, in this pipeline
+	for i, c := range cmds {
+		if !c.pipeIn {
+			prev = nil
+		}
+		v := w.simple(c, st, depth)
 		for _, sub := range c.subs {
 			// A substitution runs in a subshell, in this directory.
 			sst := v.cwd.clone()
 			w.line(sub, &sst, depth+1)
 		}
-		if !c.pipeIn {
-			find = nil
-		}
-		if v.name == "find" {
-			find = &v
-		} else if find != nil && slices.Contains(v.under, "xargs") {
-			// find P ... | xargs ... reads every file find prints.
-			for _, p := range findPaths(find.rest) {
-				w.reachesIn(find.cwd, p)
+		for _, doc := range c.docs {
+			for _, sub := range doc.subs {
+				sst := v.cwd.clone()
+				w.line(sub, &sst, depth+1)
 			}
 		}
+		if c.fallback && (judged(v.name) || strings.Contains(line, "$(") || strings.Contains(line, "`")) {
+			// The line did not tokenize: what a reading command reads, or
+			// what a substitution runs, cannot be told.
+			w.reach = true
+		}
+		if c.pipeIn && shellReadsScript(v) {
+			w.pipedScript(prev, v, depth)
+		}
+		if !c.pipeIn {
+			lister = nil
+		}
+		if v.name == "find" || v.name == "fd" || v.name == "fdfind" {
+			lister = &v
+		} else if lister != nil && (slices.Contains(v.under, "xargs") || v.name == "parallel") {
+			// find P ... | xargs ... reads every file find prints.
+			for _, p := range listRoots(*lister) {
+				w.reachesIn(lister.cwd, p)
+			}
+		}
+		prev = &cmds[i]
 	}
 }
 
 // line reads a nested command line.
 func (w *walker) line(line string, st *cwdState, depth int) {
+	if depth > maxDepth {
+		w.reach = true
+		return
+	}
 	w.commands(line, splitCommands(line), st, depth)
+}
+
+// shellReadsScript reports whether v is a shell that reads its script from
+// its input: no -c string.
+func shellReadsScript(v view) bool {
+	return shells[v.name] && shellString(v.rest) < 0
+}
+
+// pipedScript reads the script a shell v reads from a pipe, from prev, the
+// command before it: prev's here-documents and here-strings, or the
+// arguments of an echo or printf. Anything else is built at run time.
+func (w *walker) pipedScript(prev *simple, v view, depth int) {
+	if prev == nil {
+		w.reach = true
+		return
+	}
+	pv := w.s.viewOf(*prev, v.cwd)
+	fed := false
+	for _, doc := range prev.docs {
+		w.nested(doc.body, docKnown(doc), v.cwd.clone(), depth)
+		fed = true
+	}
+	for _, xw := range pv.words {
+		if xw.here {
+			w.nested(xw.text, xw.known, v.cwd.clone(), depth)
+			fed = true
+		}
+	}
+	if !fed && (pv.name == "echo" || pv.name == "printf") {
+		w.nested(strings.Join(pv.rest, " "), !slices.Contains(pv.restKnown, false), v.cwd.clone(), depth)
+		fed = true
+	}
+	if !fed {
+		w.reach = true
+	}
+}
+
+// docKnown reports whether a here-document's body is known as written: a
+// quoted one, or one with no expansion in it.
+func docKnown(doc *heredoc) bool {
+	return doc.quoted || !strings.ContainsAny(doc.body, "$`\\")
 }
 
 // reachesIn sets reach when p, from the working directory st, touches a
@@ -202,12 +478,111 @@ func (w *walker) reachesIn(st cwdState, p string) {
 
 // simple records one simple command run from st, reads what it nests, and
 // applies a cd to st.
-func (w *walker) simple(words []word, pipeIn bool, st *cwdState, depth int) view {
+func (w *walker) simple(c simple, st *cwdState, depth int) view {
 	s := w.s
-	v := view{cwd: st.clone(), pipeIn: pipeIn}
+	v := s.viewOf(c, *st)
+	v.cache = w.cache
+	w.views = append(w.views, v)
+
+	// Every command after one that changes the working tree is judged
+	// for reading; the first change is the one named.
+	if w.changed != "" && !w.readAfterChange && s.readsAnything(v) {
+		w.readAfterChange = true
+	}
+	if w.changed == "" {
+		w.changed = s.treeChange(v)
+	}
+
+	known := func() bool { return !slices.Contains(v.restKnown, false) }
+	if shells[v.name] {
+		if i := shellString(v.rest); i >= 0 {
+			w.nested(v.rest[i], v.restKnown[i], v.cwd.clone(), depth)
+		} else {
+			w.fedScript(c, v, depth)
+		}
+	}
+	switch v.name {
+	case "source", ".":
+		// source /dev/stdin reads its script from a here-document.
+		if len(v.rest) > 0 && slices.Contains([]string{"/dev/stdin", "-", "/proc/self/fd/0", "/dev/fd/0"}, v.rest[0]) {
+			w.fedScript(c, v, depth)
+		}
+	case "script":
+		// script -c 'command' runs the command under a terminal.
+		for i, a := range v.rest {
+			if (a == "-c" || a == "--command") && i+1 < len(v.rest) {
+				w.nested(v.rest[i+1], v.restKnown[i+1], v.cwd.clone(), depth)
+			}
+		}
+	case "-c", "--command":
+		// flock FILE -c 'command'.
+		if len(v.under) > 0 && v.under[len(v.under)-1] == "flock" && len(v.rest) > 0 {
+			w.nested(v.rest[0], v.restKnown[0], v.cwd.clone(), depth)
+		}
+	case "eval":
+		// eval runs in this shell: a cd in it moves the commands after it.
+		w.nestedIn(strings.Join(v.rest, " "), known(), st, depth)
+	case "watch":
+		// watch runs its words, joined, with sh -c.
+		w.nested(strings.Join(watchCommand(v.rest), " "), known(), v.cwd.clone(), depth)
+	case "parallel":
+		for _, line := range parallelLines(v.rest) {
+			w.nested(line, known(), v.cwd.clone(), depth)
+		}
+		if !strings.Contains(strings.Join(v.rest, " "), ":::") {
+			// Arguments from the input: like xargs.
+			if name, _ := program(parallelTemplate(v.rest)); readers[name] {
+				w.reachesIn(v.cwd, ".")
+			}
+		}
+	case "pwsh", "pwsh.exe", "powershell", "powershell.exe", "cmd", "cmd.exe":
+		// No parser for these: a command string, or a script on the
+		// input, could read anything.
+		if v.pipeIn || len(v.rest) > 0 && !versionOnly(v.rest) {
+			w.reach = true
+		}
+	case "ssh", "su", "runuser", "machinectl", "sshpass":
+		if remoteCommand(v.name, v.rest) || v.pipeIn {
+			w.reach = true
+		}
+	case "find":
+		for _, exec := range findExecs(v.rest) {
+			w.simple(simple{words: literalWords(exec)}, new(v.cwd.clone()), depth+1)
+		}
+		if findReads(v.rest) {
+			for _, p := range findPaths(v.rest) {
+				w.reachesIn(v.cwd, p)
+			}
+		}
+	case "fd", "fdfind":
+		execs, paths := fdArgs(v.rest)
+		for _, exec := range execs {
+			w.simple(simple{words: literalWords(exec)}, new(v.cwd.clone()), depth+1)
+		}
+		if len(execs) > 0 {
+			for _, p := range paths {
+				w.reachesIn(v.cwd, p)
+			}
+		}
+	case "cd", "pushd", "popd", "chdir":
+		s.chdir(v, st)
+	}
+	if line, known, ok := envSplit(v); ok {
+		w.nested(line, known, v.cwd.clone(), depth)
+	}
+	// xargs running a reader reads files named on its input, from here.
+	if slices.Contains(v.under, "xargs") && readers[v.name] {
+		w.reachesIn(v.cwd, ".")
+	}
+	return v
+}
+
+// viewOf is the simple command c, run from st, as the rules see it.
+func (s *setup) viewOf(c simple, st cwdState) view {
+	v := view{cwd: st.clone(), pipeIn: c.pipeIn}
 	var args []string
 	var known []bool
-	for _, wd := range words {
+	for _, wd := range c.words {
 		xw := s.expandWord(wd, v.cwd)
 		v.words = append(v.words, xw)
 		if !xw.redirect {
@@ -219,40 +594,252 @@ func (w *walker) simple(words []word, pipeIn bool, st *cwdState, depth int) view
 	v.argvKnown = known[len(known)-len(v.argv):]
 	v.name, v.rest, v.under = command(v.argv)
 	v.restKnown = v.argvKnown[len(v.argvKnown)-len(v.rest):]
-	w.views = append(w.views, v)
-
-	switch v.name {
-	case "sh", "bash", "zsh", "dash", "ksh", "mksh", "ash", "yash", "fish":
-		if i := shellString(v.rest); i >= 0 {
-			w.nested(v.rest[i], v.restKnown[i], v.cwd.clone(), depth)
-		}
-	case "script":
-		// script -c 'command' runs the command under a terminal.
-		for i, a := range v.rest {
-			if (a == "-c" || a == "--command") && i+1 < len(v.rest) {
-				w.nested(v.rest[i+1], v.restKnown[i+1], v.cwd.clone(), depth)
-			}
-		}
-	case "eval":
-		// eval runs in this shell: a cd in it moves the commands after it.
-		w.nestedIn(strings.Join(v.rest, " "), !slices.Contains(v.restKnown, false), st, depth)
-	case "find":
-		for _, exec := range findExecs(v.rest) {
-			w.simple(literalWords(exec), false, new(v.cwd.clone()), depth+1)
-		}
-		if findReads(v.rest) {
-			for _, p := range findPaths(v.rest) {
-				w.reachesIn(v.cwd, p)
-			}
-		}
-	case "cd", "pushd", "popd", "chdir":
-		s.chdir(v, st)
-	}
-	// xargs running a reader reads files named on its input, from here.
-	if slices.Contains(v.under, "xargs") && readers[v.name] {
-		w.reachesIn(v.cwd, ".")
-	}
 	return v
+}
+
+// fedScript reads the script a shell reads from a here-document or a
+// here-string given to it.
+func (w *walker) fedScript(c simple, v view, depth int) {
+	for _, doc := range c.docs {
+		w.nested(doc.body, docKnown(doc), v.cwd.clone(), depth)
+	}
+	for _, xw := range v.words {
+		if xw.here {
+			w.nested(xw.text, xw.known, v.cwd.clone(), depth)
+		}
+	}
+}
+
+// versionOnly reports whether a command's arguments only ask for its
+// version or help.
+func versionOnly(rest []string) bool {
+	for _, a := range rest {
+		switch strings.ToLower(strings.TrimLeft(a, "-/")) {
+		case "v", "version", "h", "help", "?":
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// remoteCommand reports whether ssh, su or the like is given a command to
+// run: ssh's words after the host, su's -c.
+func remoteCommand(name string, rest []string) bool {
+	switch name {
+	case "ssh":
+		const withValue = "BbcDEeFIiJLlmOopQRSWw"
+		host := false
+		for i := 0; i < len(rest); i++ {
+			a := rest[i]
+			switch {
+			case host:
+				return true
+			case a == "--":
+				host = i+1 < len(rest)
+				i++
+			case strings.HasPrefix(a, "-") && len(a) > 1:
+				if len(a) == 2 && strings.IndexByte(withValue, a[1]) >= 0 {
+					i++
+				}
+			default:
+				host = true
+			}
+		}
+		return false
+	case "sshpass", "runuser":
+		return len(rest) > 0
+	}
+	for _, a := range rest {
+		if a == "--command" || a == "--session-command" || strings.HasPrefix(a, "--command=") ||
+			strings.HasPrefix(a, "--session-command=") ||
+			len(a) > 1 && a[0] == '-' && a[1] != '-' && strings.ContainsRune(a, 'c') {
+			return true
+		}
+		if name == "machinectl" && (a == "shell" || a == "run") {
+			return true
+		}
+	}
+	return false
+}
+
+// watchCommand is the command watch runs: its words after its options.
+func watchCommand(rest []string) []string {
+	for i := 0; i < len(rest); i++ {
+		a := rest[i]
+		switch {
+		case a == "--":
+			return rest[i+1:]
+		case a == "-n" || a == "--interval" || a == "-q" || a == "--equexit" || a == "--errexit-cmd":
+			i++
+		case strings.HasPrefix(a, "-"):
+		default:
+			return rest[i:]
+		}
+	}
+	return nil
+}
+
+// parallelTemplate is the command GNU parallel runs for each argument: its
+// words after its options, up to the first ":::" or "::::".
+func parallelTemplate(rest []string) []string {
+	withValue := []string{
+		"-j", "--jobs", "-a", "--arg-file", "-d", "--delimiter", "-I", "-S", "--sshlogin", "-N",
+		"-n", "--max-args", "-E", "--colsep", "-C", "--results", "--joblog", "--tmpdir", "--timeout",
+		"--halt", "--memfree", "--load", "--retries", "--delay", "--tag-string", "--workdir", "--wd",
+	}
+	i := 0
+	for i < len(rest) && strings.HasPrefix(rest[i], "-") && !strings.HasPrefix(rest[i], ":::") {
+		if slices.Contains(withValue, rest[i]) {
+			i++
+		}
+		i++
+	}
+	end := i
+	for end < len(rest) && !strings.HasPrefix(rest[end], ":::") {
+		end++
+	}
+	return rest[min(i, end):end]
+}
+
+// parallelLines are the command lines GNU parallel runs: its template with
+// each argument after ":::" (or "::::") appended, or each argument alone
+// when there is no template.
+func parallelLines(rest []string) []string {
+	tmpl := strings.Join(parallelTemplate(rest), " ")
+	var args []string
+	inArgs := false
+	for _, a := range rest {
+		if strings.HasPrefix(a, ":::") {
+			inArgs = true
+			continue
+		}
+		if inArgs {
+			args = append(args, a)
+		}
+	}
+	if len(args) == 0 {
+		if tmpl == "" {
+			return nil
+		}
+		return []string{tmpl}
+	}
+	out := make([]string, 0, len(args))
+	for _, a := range args {
+		out = append(out, strings.TrimSpace(tmpl+" "+a))
+	}
+	return out
+}
+
+// envSplit is the command line env -S (--split-string) runs: its string,
+// then the words after it.
+func envSplit(v view) (line string, known, ok bool) {
+	i := slices.Index(v.under, "env")
+	if i < 0 {
+		return "", false, false
+	}
+	for j := 0; j < len(v.argv); j++ {
+		if baseName(v.argv[j]) != "env" {
+			continue
+		}
+		for k := j + 1; k < len(v.argv); k++ {
+			a := v.argv[k]
+			var s string
+			next := k
+			switch {
+			case a == "-S" || a == "--split-string":
+				if k+1 >= len(v.argv) {
+					return "", false, false
+				}
+				next = k + 1
+				s = v.argv[next]
+			case strings.HasPrefix(a, "--split-string="):
+				s = strings.TrimPrefix(a, "--split-string=")
+			case strings.HasPrefix(a, "-S"):
+				s = a[2:]
+			case strings.HasPrefix(a, "-") || isAssignment(a):
+				continue
+			default:
+				return "", false, false
+			}
+			known := !slices.Contains(v.argvKnown[k:], false)
+			return strings.Join(append([]string{s}, v.argv[next+1:]...), " "), known, true
+		}
+		return "", false, false
+	}
+	return "", false, false
+}
+
+// listRoots are the paths a find or fd lists under.
+func listRoots(v view) []string {
+	if v.name == "find" {
+		return findPaths(v.rest)
+	}
+	_, paths := fdArgs(v.rest)
+	return paths
+}
+
+// fdArgs reads fd's arguments: the commands -x/--exec and -X/--exec-batch
+// run (each up to ";" or the end), and the paths it searches (positional
+// arguments after the pattern, --search-path, under --base-directory),
+// "." when there are none.
+func fdArgs(rest []string) (execs [][]string, paths []string) {
+	withValue := map[string]bool{
+		"-d": true, "--max-depth": true, "--min-depth": true, "--exact-depth": true, "-E": true,
+		"--exclude": true, "-e": true, "--extension": true, "-t": true, "--type": true, "-c": true,
+		"--color": true, "-j": true, "--threads": true, "-S": true, "--size": true,
+		"--changed-within": true, "--changed-before": true, "--change-newer-than": true,
+		"--change-older-than": true, "--newer": true, "--older": true, "-o": true, "--owner": true,
+		"--path-separator": true, "--max-results": true, "--ignore-file": true, "--format": true,
+		"--and": true, "--batch-size": true, "--max-buffer-time": true,
+	}
+	base := ""
+	var pos []string
+	for i := 0; i < len(rest); i++ {
+		a := rest[i]
+		opt, value, hasValue := strings.Cut(a, "=")
+		switch {
+		case a == "-x" || a == "--exec" || a == "-X" || a == "--exec-batch":
+			j := i + 1
+			for j < len(rest) && rest[j] != ";" {
+				j++
+			}
+			execs = append(execs, rest[i+1:j])
+			i = j
+		case a == "--":
+			pos = append(pos, rest[i+1:]...)
+			i = len(rest)
+		case opt == "--base-directory" || opt == "--search-path":
+			if !hasValue && i+1 < len(rest) {
+				i++
+				value = rest[i]
+			}
+			if opt == "--base-directory" {
+				base = value
+			} else {
+				paths = append(paths, value)
+			}
+		case withValue[a]:
+			i++
+		case strings.HasPrefix(a, "-") && len(a) > 1:
+		default:
+			pos = append(pos, a)
+		}
+	}
+	if len(pos) > 1 {
+		paths = append(paths, pos[1:]...)
+	}
+	if len(paths) == 0 {
+		paths = []string{"."}
+	}
+	if base != "" {
+		for i, p := range paths {
+			if !filepath.IsAbs(p) {
+				paths[i] = filepath.Join(base, p)
+			}
+		}
+	}
+	return execs, paths
 }
 
 // nested reads a command line passed as a word, in a working directory of
@@ -285,12 +872,18 @@ func shellString(rest []string) int {
 	for i := 0; i < len(rest); i++ {
 		a := rest[i]
 		switch {
-		case a == "--":
+		case a == "--" || a == "-":
+			// The end of the options: with -c, the string follows.
+			if c && i+1 < len(rest) {
+				return i + 1
+			}
 			return -1
 		case a == "-o" || a == "+o" || a == "-O" || a == "+O":
 			i++
 		case a == "--command":
 			c = true
+		case a == "--rcfile" || a == "--init-file":
+			i++
 		case strings.HasPrefix(a, "--"):
 		case len(a) > 1 && (a[0] == '-' || a[0] == '+'):
 			c = c || strings.Contains(a[1:], "c")
@@ -440,7 +1033,7 @@ func dotRelative(p string) bool {
 // HOME (the gate's own), PWD and OLDPWD (as the line leaves them) and a
 // leading ~. Any other expansion leaves it unknown.
 func (s *setup) expandWord(w word, st cwdState) xword {
-	xw := xword{known: true, redirect: w.redirect}
+	xw := xword{known: true, redirect: w.redirect, input: w.input, here: w.here}
 	var text, pattern strings.Builder
 	quotedGlob := false
 	add := func(t string, quoted bool) {
@@ -513,8 +1106,38 @@ func escapeGlob(t string) string {
 	return b.String()
 }
 
-// maxGlobWalk is how many entries a ** glob walks before it stops.
-const maxGlobWalk = 20000
+// maxGlobEntries bounds the work every glob of one decision does, all
+// together: each directory entry read or walked costs one, each match
+// globMatchCost. A glob past it touches every protected root, and so does
+// every glob after it.
+const maxGlobEntries = 200000
+
+// globMatchCost is what one match costs against maxGlobEntries: each is
+// resolved, symlinks and all, for every rule.
+const globMatchCost = 10
+
+// maxGlobSegments bounds a glob's segments after its literal prefix; a
+// longer one touches every protected root.
+const maxGlobSegments = 64
+
+// spellCache holds one decision's expanded words, so each is placed and
+// each glob expanded once, whichever rule asks, and what is left of the
+// decision's glob budget.
+type spellCache struct {
+	m      map[string]spelled
+	ctl    map[string]string
+	paths  map[string]string
+	budget int
+}
+
+type spelled struct {
+	out     []string
+	unknown bool
+}
+
+func newSpellCache() *spellCache {
+	return &spellCache{m: map[string]spelled{}, ctl: map[string]string{}, paths: map[string]string{}, budget: maxGlobEntries}
+}
 
 // wordSpellings are the absolute paths an expanded word can stand for in
 // v: as written against each spelling of the working directory, the value
@@ -522,8 +1145,26 @@ const maxGlobWalk = 20000
 // "**" everything under its literal prefix (the prefix itself stands for
 // that: "is inside or contains" judges it). unknown is true when the word
 // cannot be placed: an expansion the gate cannot tell, or a relative path
-// from an unknown working directory.
+// from an unknown working directory. A glob past the decision's budget
+// stands for the repository root, which touches every protected root.
 func (s *setup) wordSpellings(v view, xw xword) (out []string, unknown bool) {
+	c := v.cache
+	if c == nil {
+		c = newSpellCache()
+	}
+	key := strings.Join([]string{
+		strings.Join(v.cwd.dirs, "\x00"), strconv.FormatBool(v.cwd.known()), xw.text, xw.pattern,
+		strconv.FormatBool(xw.known), strconv.FormatBool(xw.glob),
+	}, "\x01")
+	if r, ok := c.m[key]; ok {
+		return r.out, r.unknown
+	}
+	out, unknown = s.spellWord(v, xw, c)
+	c.m[key] = spelled{out, unknown}
+	return out, unknown
+}
+
+func (s *setup) spellWord(v view, xw xword, c *spellCache) (out []string, unknown bool) {
 	if !xw.known {
 		return nil, true
 	}
@@ -538,16 +1179,16 @@ func (s *setup) wordSpellings(v view, xw xword) (out []string, unknown bool) {
 	if !v.cwd.known() {
 		dirs = []string{string(filepath.Separator)}
 	}
-	for _, c := range cands {
-		if c == "" {
+	for _, cand := range cands {
+		if cand == "" {
 			continue
 		}
-		if !v.cwd.known() && !filepath.IsAbs(c) {
+		if !v.cwd.known() && !filepath.IsAbs(cand) {
 			unknown = true
 			continue
 		}
 		for _, d := range dirs {
-			out = append(out, spellings(d, c)...)
+			out = append(out, spellings(d, cand)...)
 		}
 	}
 	if xw.glob {
@@ -559,11 +1200,10 @@ func (s *setup) wordSpellings(v view, xw xword) (out []string, unknown bool) {
 			if !filepath.IsAbs(pat) {
 				pat = d + string(filepath.Separator) + pat
 			}
-			var matches []string
-			if strings.Contains(pat, "**") {
-				matches = globStar(pat)
-			} else {
-				matches, _ = filepath.Glob(pat)
+			matches, over := globMatches(pat, c)
+			if over {
+				out = append(out, s.repo.Root)
+				break
 			}
 			for _, m := range matches {
 				out = append(out, spellings(d, m)...)
@@ -604,53 +1244,155 @@ func globPrefix(pattern string) string {
 	return prefix[:lastSep]
 }
 
-// globStar is what the absolute pattern matches when "**" is a whole
-// segment that matches any number of directories, as zsh and bash with
-// globstar read it. A "**" inside a segment is "*". It walks at most
-// maxGlobWalk entries, without following symlinks.
-func globStar(pattern string) []string {
-	base := globPrefix(pattern)
-	rest := strings.TrimPrefix(filepath.ToSlash(pattern), filepath.ToSlash(base))
-	pats := segments(rest)
-	// The prefix was unescaped; the pattern after it keeps its escapes.
-	var out []string
-	walked := 0
+// globMeta reports whether a pattern segment has an unescaped glob
+// character.
+func globMeta(seg string) bool {
+	for i := 0; i < len(seg); i++ {
+		switch {
+		case seg[i] == '\\' && filepath.Separator != '\\':
+			i++
+		case strings.IndexByte("*?[", seg[i]) >= 0:
+			return true
+		}
+	}
+	return false
+}
+
+// unescapeGlob removes a literal segment's escapes.
+func unescapeGlob(seg string) string {
+	if filepath.Separator == '\\' || !strings.Contains(seg, `\`) {
+		return seg
+	}
+	var b strings.Builder
+	for i := 0; i < len(seg); i++ {
+		if seg[i] == '\\' && i+1 < len(seg) {
+			i++
+		}
+		b.WriteByte(seg[i])
+	}
+	return b.String()
+}
+
+// globMatches is what the absolute pattern matches, as a shell expands it,
+// with "**" as a whole segment matching any number of directories (zsh,
+// and bash with globstar); a "**" inside a segment is "*". Its work is
+// charged to c's budget. over is true when the budget runs out or the
+// pattern has more than maxGlobSegments segments after its literal
+// prefix: what it matches is then not told.
+func globMatches(pattern string, c *spellCache) (matches []string, over bool) {
+	vol := filepath.VolumeName(pattern)
+	sep := string(filepath.Separator)
+	base := vol + sep
+	segs := segments(pattern[len(vol):])
+	for len(segs) > 0 && !globMeta(segs[0]) {
+		base = strings.TrimSuffix(base, sep) + sep + unescapeGlob(segs[0])
+		segs = segs[1:]
+	}
+	if len(segs) > maxGlobSegments || c.budget <= 0 {
+		return nil, true
+	}
+	if slices.Contains(segs, "**") {
+		return globStar(base, segs, c)
+	}
+	cur := []string{base}
+	for _, seg := range segs {
+		var next []string
+		for _, dir := range cur {
+			if !globMeta(seg) {
+				c.budget--
+				p := strings.TrimSuffix(dir, sep) + sep + unescapeGlob(seg)
+				if _, err := os.Lstat(p); err == nil {
+					next = append(next, p)
+				}
+				continue
+			}
+			entries, err := os.ReadDir(dir)
+			c.budget -= len(entries) + 1
+			if c.budget < 0 {
+				return nil, true
+			}
+			if err != nil {
+				continue
+			}
+			for _, e := range entries {
+				if ok, err := filepath.Match(seg, e.Name()); err == nil && ok {
+					next = append(next, strings.TrimSuffix(dir, sep)+sep+e.Name())
+				}
+			}
+		}
+		c.budget -= globMatchCost * len(next)
+		if c.budget < 0 {
+			return nil, true
+		}
+		cur = next
+	}
+	return cur, false
+}
+
+// globStar is globMatches for a pattern with a "**" segment: it walks
+// everything under base, without following symlinks.
+func globStar(base string, segs []string, c *spellCache) (out []string, over bool) {
+	// Consecutive "**" segments match what one does.
+	var pats []string
+	for _, p := range segs {
+		if p == "**" && len(pats) > 0 && pats[len(pats)-1] == "**" {
+			continue
+		}
+		pats = append(pats, p)
+	}
 	_ = filepath.WalkDir(base, func(p string, _ fs.DirEntry, err error) error {
-		walked++
-		if err != nil || walked > maxGlobWalk {
+		c.budget--
+		if c.budget < 0 {
+			over = true
 			return filepath.SkipAll
+		}
+		if err != nil {
+			return nil //nolint:nilerr // an unreadable entry matches nothing under it
 		}
 		r, rerr := filepath.Rel(base, p)
 		if rerr != nil || r == "." {
 			return nil //nolint:nilerr // a path that cannot be placed matches nothing
 		}
 		if matchStar(pats, strings.Split(filepath.ToSlash(r), "/")) {
+			c.budget -= globMatchCost
 			out = append(out, p)
 		}
 		return nil
 	})
-	return out
+	if over {
+		return nil, true
+	}
+	return out, false
 }
 
 // matchStar matches glob segments against path segments; a "**" segment
-// matches any number of them.
+// matches any number of them. It takes time proportional to the product
+// of the two lengths.
 func matchStar(pats, segs []string) bool {
-	if len(pats) == 0 {
-		return len(segs) == 0
-	}
-	if pats[0] == "**" {
-		for k := 0; k <= len(segs); k++ {
-			if matchStar(pats[1:], segs[k:]) {
-				return true
+	// cur[j] is whether the patterns so far match segs[:j].
+	cur := make([]bool, len(segs)+1)
+	next := make([]bool, len(segs)+1)
+	cur[0] = true
+	for _, p := range pats {
+		clear(next)
+		if p == "**" {
+			seen := false
+			for j := range cur {
+				seen = seen || cur[j]
+				next[j] = seen
+			}
+		} else {
+			pp := strings.ReplaceAll(p, "**", "*")
+			for j := 1; j < len(cur); j++ {
+				if cur[j-1] {
+					ok, err := path.Match(pp, segs[j-1])
+					next[j] = err == nil && ok
+				}
 			}
 		}
-		return false
+		cur, next = next, cur
 	}
-	if len(segs) == 0 {
-		return false
-	}
-	ok, err := path.Match(strings.ReplaceAll(pats[0], "**", "*"), segs[0])
-	return err == nil && ok && matchStar(pats[1:], segs[1:])
+	return cur[len(segs)]
 }
 
 // viewNamesAgentSettings reports whether a word of v names a Claude Code
@@ -658,10 +1400,17 @@ func matchStar(pats, segs []string) bool {
 // for a message: a file that does not exist yet is named only by the
 // command's text.
 func (s *setup) viewNamesAgentSettings(v view) bool {
+	c := v.cache
+	if c == nil {
+		c = newSpellCache()
+	}
+	settings := func(a string) bool {
+		return slices.ContainsFunc(s.relsOf([]string{a}), scan.IsAgentSettings)
+	}
 	for _, xw := range v.words {
 		abss, _ := s.wordSpellings(v, xw)
-		for _, rel := range s.relsOf(abss) {
-			if scan.IsAgentSettings(rel) {
+		for _, a := range abss {
+			if c.memo("settings", a, settings) {
 				return true
 			}
 		}
@@ -674,20 +1423,45 @@ func (s *setup) viewNamesAgentSettings(v view) bool {
 // writes into a user-level Claude Code settings directory. It returns what
 // the path is, in words.
 func (s *setup) reachesControl(v view, ctl controls) (string, bool) {
+	c := v.cache
+	if c == nil {
+		c = newSpellCache()
+	}
 	for _, xw := range v.words {
 		abss, _ := s.wordSpellings(v, xw)
-		if what, ok := ctl.target(abss); ok {
-			return what, true
+		for _, a := range abss {
+			if what := c.control(a, false, ctl); what != "" {
+				return what, true
+			}
 		}
 	}
 	dests, _ := s.destinations(v)
 	for _, d := range dests {
 		abss, _ := s.wordSpellings(v, d)
-		if what, ok := ctl.dir(abss); ok {
-			return what, true
+		for _, a := range abss {
+			if what := c.control(a, true, ctl); what != "" {
+				return what, true
+			}
 		}
 	}
 	return "", false
+}
+
+// control is ctl.target, or with dir ctl.dir, for one absolute path,
+// remembered for the decision.
+func (c *spellCache) control(a string, dir bool, ctl controls) string {
+	key := strconv.FormatBool(dir) + a
+	if what, ok := c.ctl[key]; ok {
+		return what
+	}
+	var what string
+	if dir {
+		what, _ = ctl.dir([]string{a})
+	} else {
+		what, _ = ctl.target([]string{a})
+	}
+	c.ctl[key] = what
+	return what
 }
 
 // copiers write into their last argument, or into -t's.
@@ -851,12 +1625,45 @@ func (s *setup) gitRule(v view) string {
 // path, repository-relative.
 func (s *setup) namesLocalState(v view, xw xword) (string, bool) {
 	abss, _ := s.wordSpellings(v, xw)
-	for _, rel := range s.relsOf(abss) {
-		if class, _ := s.policy.Classify(rel); class == policy.LocalState || s.policy.LocalStateDir(rel) {
-			return rel, true
+	c := v.cache
+	if c == nil {
+		c = newSpellCache()
+	}
+	for _, a := range abss {
+		key := "local\x00" + a
+		if rel, ok := c.paths[key]; ok {
+			if rel != "" {
+				return rel, true
+			}
+			continue
+		}
+		hit := ""
+		for _, rel := range s.relsOf([]string{a}) {
+			if class, _ := s.policy.Classify(rel); class == policy.LocalState || s.policy.LocalStateDir(rel) {
+				hit = rel
+				break
+			}
+		}
+		c.paths[key] = hit
+		if hit != "" {
+			return hit, true
 		}
 	}
 	return "", false
+}
+
+// memo is f(a), remembered for the decision under kind.
+func (c *spellCache) memo(kind, a string, f func(string) bool) bool {
+	key := kind + "\x00" + a
+	if r, ok := c.paths[key]; ok {
+		return r != ""
+	}
+	r := f(a)
+	c.paths[key] = ""
+	if r {
+		c.paths[key] = "y"
+	}
+	return r
 }
 
 // readers are commands that print or copy what files hold. An argument of
@@ -893,7 +1700,9 @@ func (w *walker) reaches() bool {
 		}
 	}
 	for _, v := range w.views {
-		if !v.cwd.known() || slices.ContainsFunc(v.cwd.dirs, s.dirInRoot) {
+		inRoot := func(d string) bool { return w.cache.memo("inroot", d, s.dirInRoot) }
+		touches := func(a string) bool { return w.cache.memo("touches", a, s.touchesAbs) }
+		if !v.cwd.known() || slices.ContainsFunc(v.cwd.dirs, inRoot) {
 			return true
 		}
 		reader := readers[v.name] || searchers[v.name].always || searchers[v.name].recursive != ""
@@ -902,7 +1711,7 @@ func (w *walker) reaches() bool {
 			if unknown && reader && !optionOnly(xw.text) {
 				return true
 			}
-			if slices.ContainsFunc(abss, s.touchesAbs) {
+			if slices.ContainsFunc(abss, touches) {
 				return true
 			}
 		}
@@ -982,19 +1791,7 @@ var searchers = map[string]searcher{
 	"grep":  grepSearcher,
 	"egrep": grepSearcher,
 	"fgrep": grepSearcher,
-	"rg": {
-		always: true, withValue: "efgjmrtTABCEM", pattern: "ef",
-		longWithValue: []string{
-			"regexp", "file", "glob", "iglob", "type", "type-not", "type-add", "type-clear",
-			"threads", "max-count", "replace", "after-context", "before-context", "context",
-			"encoding", "max-columns", "max-depth", "max-filesize", "path-separator", "pre",
-			"pre-glob", "colors", "sort", "sortr", "field-match-separator",
-			"field-context-separator", "dfa-size-limit", "regex-size-limit", "engine",
-			"ignore-file", "context-separator", "hostname-bin", "hyperlink-format", "generate",
-		},
-		longPattern:   []string{"regexp", "file"},
-		longNoPattern: []string{"files", "type-list"},
-	},
+	"rg":    rgSearcher,
 	"ag": {
 		always: true, withValue: "ABCGgmpW", pattern: "g",
 		longWithValue: []string{
@@ -1010,6 +1807,41 @@ var searchers = map[string]searcher{
 		},
 		longPattern: []string{"match"},
 	},
+	// ripgrep's rga, ugrep (and ug), sift and pt: recursive by default, or
+	// when given no file, so taken as always recursive.
+	"rga":   rgSearcher,
+	"ugrep": ugrepSearcher,
+	"ug":    ugrepSearcher,
+	"sift": {
+		always: true, withValue: "efABCmx", pattern: "ef",
+		longWithValue: []string{"regexp", "file", "context", "after-context", "before-context", "exclude-dirs", "ext", "files"},
+		longPattern:   []string{"regexp", "file"},
+	},
+	"pt": {
+		always: true, withValue: "eGgABC", pattern: "e",
+		longWithValue: []string{"file-search-regexp", "ignore", "after", "before", "context", "depth"},
+	},
+}
+
+var rgSearcher = searcher{
+	always: true, withValue: "efgjmrtTABCEM", pattern: "ef",
+	longWithValue: []string{
+		"regexp", "file", "glob", "iglob", "type", "type-not", "type-add", "type-clear",
+		"threads", "max-count", "replace", "after-context", "before-context", "context",
+		"encoding", "max-columns", "max-depth", "max-filesize", "path-separator", "pre",
+		"pre-glob", "colors", "sort", "sortr", "field-match-separator",
+		"field-context-separator", "dfa-size-limit", "regex-size-limit", "engine",
+		"ignore-file", "context-separator", "hostname-bin", "hyperlink-format", "generate",
+	},
+	longPattern:   []string{"regexp", "file"},
+	longNoPattern: []string{"files", "type-list"},
+}
+
+// ugrepSearcher is ugrep's options, grep's and its own.
+var ugrepSearcher = searcher{
+	always: true, withValue: "efmABCdDNOMgtKJ", pattern: "ef",
+	longWithValue: append(slices.Clone(grepSearcher.longWithValue), "file-type", "glob", "iglob", "max-depth", "jobs", "fuzzy"),
+	longPattern:   []string{"regexp", "file"},
 }
 
 // searchPaths returns the paths a recursive search covers: the positional

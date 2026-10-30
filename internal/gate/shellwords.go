@@ -1,6 +1,7 @@
 package gate
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -45,6 +46,24 @@ type word struct {
 	// redirect is true for a redirection's target, which is not an
 	// argument of the command.
 	redirect bool
+	// input is true for the target of a redirection that reads (<, <>);
+	// here for a here-string's (<<<), which is the command's input itself,
+	// not a file.
+	input, here bool
+}
+
+// heredoc is one here-document, <<WORD or <<-WORD.
+type heredoc struct {
+	// quoted is true when any part of the delimiter was quoted: the body is
+	// then pure data. An unquoted body expands, and its command
+	// substitutions run.
+	quoted bool
+	// body is the text between the operator's line and the delimiter line,
+	// leading tabs removed for <<-.
+	body string
+	// subs are the bodies of the command substitutions in an unquoted
+	// body, each a command line of its own.
+	subs []string
 }
 
 // simple is one simple command: its words in order, redirection targets
@@ -57,6 +76,11 @@ type simple struct {
 	// subs are the bodies of the command substitutions in its words,
 	// $(...) and `...`, each a command line of its own.
 	subs []string
+	// docs are its here-documents, in order.
+	docs []*heredoc
+	// fallback is true when the line it is in did not tokenize (unbalanced
+	// quotes, a trailing backslash): its words are only approximate.
+	fallback bool
 }
 
 // args is the command's words without redirection targets.
@@ -76,9 +100,12 @@ func (s simple) args() []string {
 // bash decodes it, and $"..." is read as "...". A command substitution's
 // body is kept for the command it is in; its word holds an opaque part. A
 // redirection's target is kept as a word marked redirect. A comment runs to
-// the end of its line. With unbalanced quotes, or a trailing backslash, the
-// line is split on whitespace and those operators instead, so nothing is
-// hidden inside an unterminated quote.
+// the end of its line. A here-document's body is read as bash reads it,
+// from the line after its operator to the delimiter line, and kept with its
+// command as data (heredoc), never as commands. With unbalanced quotes, or
+// a trailing backslash, the line is split on whitespace, newlines and those
+// operators instead, so nothing is hidden inside an unterminated quote, and
+// every command is marked fallback.
 func splitCommands(line string) []simple {
 	if cmds, ok := tokenize(line); ok {
 		return cmds
@@ -96,30 +123,71 @@ type tokenizer struct {
 	inWord   bool
 	quoted   bool
 	redirect bool // the word being read is a redirection's target
+	input    bool // the redirection reads
+	here     bool // the redirection is a here-string
 	pipe     bool // the next command reads this one's output
+	// litBuf is the literal part being read, open when litOpen.
+	litBuf    strings.Builder
+	litOpen   bool
+	litQuoted bool
+	// pending are the here-documents whose bodies start after the next
+	// newline.
+	pending []pendingDoc
+}
+
+// pendingDoc is a here-document whose body is still to be read.
+type pendingDoc struct {
+	doc   *heredoc
+	delim string
+	strip bool // <<-: leading tabs are removed
 }
 
 func (t *tokenizer) lit(s string, quoted bool) {
 	t.inWord = true
 	t.quoted = t.quoted || quoted
 	t.raw.WriteString(s)
-	if n := len(t.parts); n > 0 && t.parts[n-1].kind == litPart && t.parts[n-1].quoted == quoted {
-		t.parts[n-1].text += s
+	if t.litOpen && t.litQuoted == quoted {
+		t.litBuf.WriteString(s)
 		return
 	}
-	t.parts = append(t.parts, part{kind: litPart, text: s, quoted: quoted})
+	t.flushLit()
+	t.litOpen, t.litQuoted = true, quoted
+	t.litBuf.WriteString(s)
+}
+
+// flushLit ends the literal part being read, if any.
+func (t *tokenizer) flushLit() {
+	if t.litOpen {
+		t.parts = append(t.parts, part{kind: litPart, text: t.litBuf.String(), quoted: t.litQuoted})
+	}
+	t.litBuf.Reset()
+	t.litOpen = false
 }
 
 func (t *tokenizer) expansion(kind partKind, text, raw string) {
 	t.inWord = true
 	t.raw.WriteString(raw)
+	t.flushLit()
 	t.parts = append(t.parts, part{kind: kind, text: text, raw: raw})
 }
 
+// dropWord forgets the word being read.
+func (t *tokenizer) dropWord() {
+	t.raw.Reset()
+	t.litBuf.Reset()
+	t.litOpen = false
+	t.parts = nil
+	t.inWord = false
+}
+
 func (t *tokenizer) endWord() {
+	t.flushLit()
 	if t.inWord {
-		t.cur.words = append(t.cur.words, word{text: t.raw.String(), parts: t.parts, quoted: t.quoted, redirect: t.redirect})
-		t.redirect = false
+		t.cur.words = append(t.cur.words, word{
+			text: t.raw.String(), parts: t.parts, quoted: t.quoted,
+			redirect: t.redirect, input: t.redirect && t.input, here: t.redirect && t.here,
+		})
+		t.redirect, t.input, t.here = false, false, false
 	}
 	t.raw.Reset()
 	t.parts = nil
@@ -128,13 +196,13 @@ func (t *tokenizer) endWord() {
 
 func (t *tokenizer) endCommand() {
 	t.endWord()
-	if len(t.cur.words) > 0 || len(t.cur.subs) > 0 {
+	if len(t.cur.words) > 0 || len(t.cur.subs) > 0 || len(t.cur.docs) > 0 {
 		t.cur.pipeIn = t.pipe
 		t.cmds = append(t.cmds, t.cur)
 		t.pipe = false
 	}
 	t.cur = simple{}
-	t.redirect = false
+	t.redirect, t.input, t.here = false, false, false
 }
 
 // tokenize is splitCommands for a line whose quotes balance; ok is false
@@ -147,7 +215,12 @@ func tokenize(line string) (cmds []simple, ok bool) {
 		switch c {
 		case ' ', '\t', '\r':
 			t.endWord()
-		case '\n', '(', ')':
+		case '\n':
+			t.endCommand()
+			if len(t.pending) > 0 {
+				i = t.bodies(i+1) - 1
+			}
+		case '(', ')':
 			t.endCommand()
 		case ';':
 			t.endCommand()
@@ -178,11 +251,18 @@ func tokenize(line string) (cmds []simple, ok bool) {
 			// A word of digits just before is the descriptor: part of the
 			// operator, not an argument.
 			if t.inWord && !t.quoted && isDigits(t.raw.String()) {
-				t.raw.Reset()
-				t.parts = nil
-				t.inWord = false
+				t.dropWord()
 			}
 			t.endWord()
+			if c == '<' && i+1 < len(rs) && rs[i+1] == '<' && (i+2 >= len(rs) || rs[i+2] != '<') {
+				end, ok := t.heredocOp(i + 2)
+				if !ok {
+					return nil, false
+				}
+				i = end
+				continue
+			}
+			start := i
 			i = redirectEnd(rs, i)
 			// >&2, <&0, >&- duplicate a descriptor and have no target.
 			if rs[i] == '&' && i+1 < len(rs) && (isDigit(rs[i+1]) || rs[i+1] == '-') {
@@ -192,6 +272,8 @@ func tokenize(line string) (cmds []simple, ok bool) {
 				continue
 			}
 			t.redirect = true
+			t.input = rs[start] == '<'
+			t.here = string(rs[start:i+1]) == "<<<"
 		case '#':
 			if t.inWord {
 				t.lit("#", false)
@@ -272,7 +354,152 @@ func tokenize(line string) (cmds []simple, ok bool) {
 		}
 	}
 	t.endCommand()
+	if len(t.pending) > 0 {
+		// The line ends before a body starts: each is empty, as in bash.
+		t.bodies(len(rs))
+	}
 	return t.cmds, true
+}
+
+// heredocOp reads a here-document operator's delimiter, after the "<<" that
+// ends just before i, and returns the index of its last rune. The body is
+// read at the next newline.
+func (t *tokenizer) heredocOp(i int) (int, bool) {
+	delim, strip, quoted, end, ok := readDelim(t.rs, i)
+	if !ok {
+		return 0, false
+	}
+	doc := &heredoc{quoted: quoted}
+	t.cur.docs = append(t.cur.docs, doc)
+	t.pending = append(t.pending, pendingDoc{doc: doc, delim: delim, strip: strip})
+	return end, true
+}
+
+// bodies reads the bodies of the pending here-documents, in order, from i,
+// the start of the line after their operators, and returns the index just
+// past the last delimiter line.
+func (t *tokenizer) bodies(i int) int {
+	for _, p := range t.pending {
+		body, next := readBody(t.rs, i, p.delim, p.strip)
+		i = next
+		p.doc.body = body
+		if !p.doc.quoted {
+			p.doc.subs = bodySubs([]rune(body))
+		}
+	}
+	t.pending = nil
+	return i
+}
+
+// readDelim reads a here-document's delimiter word starting at i, just
+// after "<<": an optional "-", blanks, then the word, quotes removed. It
+// returns the index of the word's last rune; ok is false when there is no
+// word or a quote in it does not close.
+func readDelim(rs []rune, i int) (delim string, strip, quoted bool, end int, ok bool) {
+	if i < len(rs) && rs[i] == '-' {
+		strip = true
+		i++
+	}
+	for i < len(rs) && (rs[i] == ' ' || rs[i] == '\t') {
+		i++
+	}
+	var b strings.Builder
+	start := i
+	for ; i < len(rs) && !strings.ContainsRune(" \t\r\n;&|()<>", rs[i]); i++ {
+		switch rs[i] {
+		case '\'':
+			k := indexRune(rs, i+1, '\'')
+			if k < 0 {
+				return "", false, false, 0, false
+			}
+			b.WriteString(string(rs[i+1 : k]))
+			quoted, i = true, k
+		case '"':
+			k := i + 1
+			for ; k < len(rs) && rs[k] != '"'; k++ {
+				if rs[k] == '\\' && k+1 < len(rs) {
+					k++
+				}
+				b.WriteRune(rs[k])
+			}
+			if k >= len(rs) {
+				return "", false, false, 0, false
+			}
+			quoted, i = true, k
+		case '\\':
+			if i+1 >= len(rs) {
+				return "", false, false, 0, false
+			}
+			i++
+			b.WriteRune(rs[i])
+			quoted = true
+		default:
+			b.WriteRune(rs[i])
+		}
+	}
+	if i == start {
+		return "", false, false, 0, false
+	}
+	return b.String(), strip, quoted, i - 1, true
+}
+
+// readBody reads a here-document's body from i, the start of a line, up to
+// the line that is the delimiter (after its leading tabs, for <<-), and
+// returns the body and the index just past the delimiter line. Without a
+// delimiter line the body runs to the end, as in bash.
+func readBody(rs []rune, i int, delim string, strip bool) (string, int) {
+	var b strings.Builder
+	for i < len(rs) {
+		nl := indexRune(rs, i, '\n')
+		if nl < 0 {
+			nl = len(rs)
+		}
+		line := string(rs[i:nl])
+		if strip {
+			line = strings.TrimLeft(line, "\t")
+		}
+		i = nl + 1
+		if line == delim {
+			return b.String(), i
+		}
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	return b.String(), len(rs)
+}
+
+// bodySubs are the command substitutions, $(...) and `...`, in an unquoted
+// here-document's body, which run when the body is expanded. One that does
+// not close runs to the end of the body.
+func bodySubs(rs []rune) []string {
+	var subs []string
+	for j := 0; j < len(rs); j++ {
+		switch {
+		case rs[j] == '\\':
+			j++
+		case rs[j] == '$' && j+1 < len(rs) && rs[j+1] == '(':
+			end := matchClose(rs, j+1, '(', ')')
+			if end < 0 {
+				return append(subs, string(rs[j+2:]))
+			}
+			subs = append(subs, string(rs[j+2:end]))
+			j = end
+		case rs[j] == '`':
+			end := j + 1
+			for end < len(rs) && rs[end] != '`' {
+				if rs[end] == '\\' {
+					end++
+				}
+				end++
+			}
+			if end >= len(rs) {
+				return append(subs, string(rs[j+1:]))
+			}
+			subs = append(subs, string(rs[j+1:end]))
+			j = end
+		}
+	}
+	return subs
 }
 
 // double reads a double-quoted string whose first rune is at i, and returns
@@ -388,11 +615,37 @@ func (t *tokenizer) dollar(i int) (int, bool) {
 }
 
 // matchClose returns the index of the close that matches the open at i,
-// skipping quoted text and escapes, or -1.
+// skipping quoted text, escapes, comments and here-document bodies, or -1.
 func matchClose(rs []rune, i int, open, close rune) int {
 	depth := 0
+	type doc struct {
+		delim string
+		strip bool
+	}
+	var pending []doc
 	for j := i; j < len(rs); j++ {
 		switch rs[j] {
+		case '\n':
+			for _, d := range pending {
+				_, next := readBody(rs, j+1, d.delim, d.strip)
+				j = next - 1
+			}
+			pending = nil
+		case '#':
+			if j > i && strings.ContainsRune(" \t\n;&|(", rs[j-1]) {
+				for j+1 < len(rs) && rs[j+1] != '\n' {
+					j++
+				}
+			}
+		case '<':
+			if j+1 < len(rs) && rs[j+1] == '<' && (j+2 >= len(rs) || rs[j+2] != '<') && rs[j-1] != '<' {
+				delim, strip, _, end, ok := readDelim(rs, j+2)
+				if !ok {
+					return -1
+				}
+				pending = append(pending, doc{delim, strip})
+				j = end
+			}
 		case '\\':
 			j++
 		case '\'':
@@ -520,34 +773,66 @@ func redirectEnd(rs []rune, i int) int {
 }
 
 // splitFields is the fallback for a line that does not tokenize: words
-// split on whitespace, and a command ends at a word that is an operator. A
-// word with a $ or a backtick holds an opaque part.
+// split on whitespace, and a command ends at a newline or at ;, &, |, ( or
+// ), whether or not a space sets it apart, and whatever quote is open.
+// Quotes are kept as written. A word with a $ or a backtick holds an
+// opaque part. Every command is marked fallback.
 func splitFields(line string) []simple {
 	var cmds []simple
 	var cur simple
+	var f strings.Builder
 	pipe := false
-	for f := range strings.FieldsSeq(line) {
-		switch f {
-		case ";", "&&", "||", "|", "|&", "&", "(", ")":
-			if len(cur.words) > 0 {
-				cur.pipeIn = pipe
-				cmds = append(cmds, cur)
-			}
-			cur = simple{}
-			pipe = f == "|" || f == "|&"
-			continue
+	endWord := func() {
+		if f.Len() == 0 {
+			return
 		}
-		quoted := strings.ContainsAny(f, `'"\`)
-		parts := []part{{kind: litPart, text: f, quoted: quoted}}
-		if strings.ContainsAny(f, "$`") {
+		w := f.String()
+		f.Reset()
+		quoted := strings.ContainsAny(w, `'"\`)
+		parts := []part{{kind: litPart, text: w, quoted: quoted}}
+		if strings.ContainsAny(w, "$`") {
 			parts = append(parts, part{kind: opaquePart, raw: ""})
 		}
-		cur.words = append(cur.words, word{text: f, parts: parts, quoted: quoted})
+		cur.words = append(cur.words, word{text: w, parts: parts, quoted: quoted})
 	}
-	if len(cur.words) > 0 {
-		cur.pipeIn = pipe
-		cmds = append(cmds, cur)
+	endCommand := func(nextPipe bool) {
+		endWord()
+		if len(cur.words) > 0 {
+			cur.pipeIn = pipe
+			cur.fallback = true
+			cmds = append(cmds, cur)
+		}
+		cur = simple{}
+		pipe = nextPipe
 	}
+	rs := []rune(line)
+	for i := 0; i < len(rs); i++ {
+		switch c := rs[i]; c {
+		case ' ', '\t', '\r':
+			endWord()
+		case '\n', ';', '(', ')':
+			endCommand(false)
+		case '&':
+			endCommand(false)
+			if i+1 < len(rs) && rs[i+1] == '&' {
+				i++
+			}
+		case '|':
+			switch {
+			case i+1 < len(rs) && rs[i+1] == '|':
+				endCommand(false)
+				i++
+			case i+1 < len(rs) && rs[i+1] == '&':
+				endCommand(true)
+				i++
+			default:
+				endCommand(true)
+			}
+		default:
+			f.WriteRune(c)
+		}
+	}
+	endCommand(false)
 	return cmds
 }
 
@@ -608,13 +893,83 @@ var keywords = map[string]bool{
 // command: nothing in it runs.
 var listKeywords = map[string]bool{"for": true, "select": true, "case": true, "in": true}
 
-// wrappers run the command that follows them, after their own options.
-// Each maps to the short options that take a separate value.
-var wrappers = map[string]string{
-	"env": "uCS", "command": "", "exec": "a", "nohup": "", "time": "fo",
-	"nice": "n", "sudo": "ugCDhprtUT", "doas": "uC", "xargs": "IndPaELsE", "builtin": "",
-	"stdbuf": "ioe", "timeout": "sk", "ionice": "cnp",
-	"setsid": "", "caffeinate": "tw",
+// wrapper describes a command that runs the command after its own options.
+type wrapper struct {
+	// short are the short options that take a value; long the long ones
+	// (without "--") that take one given apart.
+	short string
+	long  []string
+	// operands is how many words, after the options, come before the
+	// command: timeout's duration, taskset's mask, flock's file.
+	operands int
+}
+
+// wrappers run the command that follows them, by name.
+var wrappers = map[string]wrapper{
+	"env":     {short: "uCS", long: []string{"unset", "chdir", "split-string", "block-signal", "default-signal", "ignore-signal"}},
+	"command": {}, "exec": {short: "a"}, "nohup": {}, "builtin": {},
+	"time": {short: "fo", long: []string{"format", "output"}},
+	"nice": {short: "n", long: []string{"adjustment"}},
+	"sudo": {short: "ugCDhprtUT", long: []string{
+		"user", "group", "close-from", "chdir", "host", "prompt", "role", "type", "other-user", "command-timeout",
+	}},
+	"doas": {short: "uC"},
+	"xargs": {short: "IndPaELsE", long: []string{
+		"arg-file", "delimiter", "max-lines", "max-args", "max-procs", "max-chars", "process-slot-var",
+	}},
+	"stdbuf":      {short: "ioe", long: []string{"input", "output", "error"}},
+	"timeout":     {short: "sk", long: []string{"signal", "kill-after"}, operands: 1},
+	"ionice":      {short: "cnp", long: []string{"class", "classdata", "pid"}},
+	"setsid":      {},
+	"caffeinate":  {short: "tw"},
+	"unbuffer":    {},
+	"chronic":     {},
+	"taskset":     {operands: 1},
+	"flock":       {short: "wE", long: []string{"timeout", "wait", "conflict-exit-code"}, operands: 1},
+	"coproc":      {},
+	"busybox":     {},
+	"xvfb-run":    {short: "efnpsw", long: []string{"error-file", "auth-file", "server-num", "xauth-protocol", "server-args", "wait"}},
+	"nocache":     {},
+	"proxychains": {short: "f"}, "proxychains4": {short: "f"},
+	"torsocks": {}, "firejail": {}, "catchsegv": {}, "valgrind": {},
+	"strace": {short: "eoOpPsSuUXI"}, "ltrace": {short: "eoOpPsSuUXIn"},
+}
+
+// inert are programs that never run a word they are given as a command,
+// though one may name a program: `which rg`, `man grep`, `echo git diff`.
+// Any other program whose first word that is not an option is a program
+// the rules judge is judged as that program (command).
+var inert = map[string]bool{
+	"echo": true, "printf": true, "which": true, "whereis": true, "type": true, "man": true,
+	"info": true, "help": true, "apropos": true, "whatis": true, "hash": true, "alias": true,
+	"unalias": true, "unset": true, "export": true, "declare": true, "typeset": true, "local": true,
+	"readonly": true, "set": true, "shopt": true, "test": true, "[": true, "[[": true, "true": true,
+	"false": true, "mkdir": true, "rmdir": true, "touch": true, "rm": true, "ls": true, "chmod": true,
+	"chown": true, "kill": true, "pkill": true, "pgrep": true, "killall": true, "ps": true,
+	"apt": true, "apt-get": true, "apt-cache": true, "brew": true, "dnf": true, "yum": true,
+	"pacman": true, "apk": true, "snap": true, "pip": true, "pip3": true, "pipx": true, "npm": true,
+	"pnpm": true, "yarn": true, "cargo": true, "go": true, "rustup": true, "gem": true,
+	"complete": true, "compgen": true, "trap": true, "read": true, "wait": true, "jobs": true,
+	"fg": true, "bg": true, "disown": true, "exit": true, "return": true, "shift": true,
+	"mv": true, "pwd": true, "date": true, "sleep": true, "basename": true, "dirname": true,
+	"realpath": true, "readlink": true, "stat": true, "file": true, "du": true, "df": true,
+	"tree": true, "make": true, "pbipx": true, "git": true, "unzip": true, "zip": true,
+	"cd": true, "pushd": true, "popd": true,
+}
+
+// judged reports whether the rules judge a program by name: a reader, a
+// search, git, find, fd, a shell or eval.
+func judged(name string) bool {
+	_, search := searchers[name]
+	return readers[name] || search || shells[name] || name == "git" || name == "eval" ||
+		name == "find" || name == "fd" || name == "fdfind"
+}
+
+// shells are the shell interpreters: their -c string, and a script they
+// read from a here-document, a here-string or a pipe, are command lines.
+var shells = map[string]bool{
+	"sh": true, "bash": true, "zsh": true, "dash": true, "ksh": true, "mksh": true, "ash": true,
+	"yash": true, "fish": true, "rbash": true, "pdksh": true, "posh": true, "tcsh": true, "csh": true,
 }
 
 // stripKeywords drops the reserved words and grouping tokens a command
@@ -639,7 +994,10 @@ func stripKeywords(args []string) []string {
 // command returns the command a simple command runs, by its base name, the
 // arguments after it and the wrappers it runs under: leading reserved words
 // and assignments are skipped, and so are wrappers such as env, with their
-// options and assignments.
+// options, assignments and operands. `command -v` and `-V` run nothing. A
+// program that is not a known wrapper and not inert, whose first word that
+// is not an option is a program the rules judge, counts as a wrapper of
+// it: an unknown wrapper is judged by what it runs.
 func command(args []string) (name string, rest []string, under []string) {
 	args = stripKeywords(args)
 	i := 0
@@ -650,8 +1008,19 @@ func command(args []string) (name string, rest []string, under []string) {
 			continue
 		}
 		base := baseName(w)
-		withValue, ok := wrappers[base]
+		wr, ok := wrappers[base]
 		if !ok {
+			if !inert[base] && !judged(base) {
+				j := i + 1
+				for j < len(args) && strings.HasPrefix(args[j], "-") {
+					j++
+				}
+				if j < len(args) && judged(baseName(args[j])) {
+					under = append(under, base)
+					i = j
+					continue
+				}
+			}
 			return base, args[i+1:], under
 		}
 		under = append(under, base)
@@ -659,17 +1028,36 @@ func command(args []string) (name string, rest []string, under []string) {
 		for i < len(args) && (strings.HasPrefix(args[i], "-") || isAssignment(args[i])) {
 			o := args[i]
 			i++
-			// A short option that takes a value, given apart, takes the next word.
-			if len(o) == 2 && o[0] == '-' && strings.IndexByte(withValue, o[1]) >= 0 && i < len(args) {
-				i++
-			}
 			if o == "--" {
 				break
 			}
+			if base == "command" && (strings.ContainsRune(o, 'v') || strings.ContainsRune(o, 'V')) && !strings.HasPrefix(o, "--") {
+				return "", nil, under
+			}
+			if long, ok := strings.CutPrefix(o, "--"); ok {
+				if !strings.Contains(long, "=") && slices.Contains(wr.long, long) && i < len(args) {
+					i++
+				}
+				continue
+			}
+			// In a cluster of short options, one that takes a value takes
+			// the rest of the word, or the next word when it ends the word.
+			for k := 1; k < len(o); k++ {
+				if strings.IndexByte(wr.short, o[k]) >= 0 {
+					if k == len(o)-1 && i < len(args) {
+						i++
+					}
+					break
+				}
+			}
 		}
-		// timeout takes its duration before the command.
-		if base == "timeout" && i < len(args) {
-			i++
+		i = min(i+wr.operands, len(args))
+		if base == "coproc" {
+			// coproc NAME { ...; }: the name, then the group.
+			if i+1 < len(args) && args[i+1] == "{" {
+				i++
+			}
+			args = append(args[:i:i], stripKeywords(args[i:])...)
 		}
 	}
 	return "", nil, under
