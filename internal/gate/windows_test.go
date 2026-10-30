@@ -45,3 +45,27 @@ func TestWindowsPathForms(t *testing.T) {
 		{"write settings in Git Bash form", gate.Event{Tool: gate.Write, Path: gitBashForm(filepath.Join(root, ".claude", "settings.json"))}, gate.ReasonAgentSettings},
 	})
 }
+
+// TestWindowsPathFormsFindAdopted checks that a call from outside every
+// repository reaches an adopted one by any form of its path.
+func TestWindowsPathFormsFindAdopted(t *testing.T) {
+	a := newAdoption(t)
+	native := filepath.Join(a.adopted, filepath.FromSlash(leakVisual))
+	vol := filepath.VolumeName(native)
+	for _, tc := range []struct {
+		name string
+		ev   gate.Event
+	}{
+		{"cat in Git Bash form", gate.Event{Tool: gate.Shell, Command: "cat " + gitBashForm(native)}},
+		{"cd in Git Bash form, then cat", gate.Event{Tool: gate.Shell, Command: "cd " + gitBashForm(a.adopted) + " && cat " + leakVisual}},
+		{"cat with forward slashes", gate.Event{Tool: gate.Shell, Command: "cat " + bashPath(native)}},
+		{"read rooted on the drive", gate.Event{Tool: gate.Read, Path: native[len(vol):]}},
+		{"read in Git Bash form", gate.Event{Tool: gate.Read, Path: gitBashForm(native)}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ev := tc.ev
+			ev.Cwd = a.outside
+			check(t, a.decide(ev), gate.ReasonFinding)
+		})
+	}
+}

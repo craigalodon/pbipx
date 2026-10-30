@@ -500,9 +500,14 @@ func (s *Store) Adopted(r Repository) (bool, error) {
 // Roots is the index of adopted work trees: the work trees every record in
 // the store was written from, in no set order, and whether the store holds
 // any record at all. A record that does not parse adds no work tree, but
-// counts as a record. A store with no records directory has none.
+// counts as a record. A store with no records directory has none; one
+// whose records directory is not a directory is ErrStoreNotDir, checked
+// first since Windows may read a file as an empty or missing directory.
 func (s *Store) Roots() (roots []string, anyRecord bool, err error) {
 	dir := filepath.Join(s.Dir, approvedDir)
+	if info, serr := os.Stat(dir); serr == nil && !info.IsDir() {
+		return nil, false, ErrStoreNotDir
+	}
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, false, nil
