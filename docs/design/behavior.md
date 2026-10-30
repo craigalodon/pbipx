@@ -987,7 +987,9 @@ path, is denied with `event-error`: the call cannot be judged.
     `<user config dir>/pbipx` in any case (layer 6; a forged record would
     approve a weakened policy);
   - a user-level Claude Code settings file: a file named `settings*.json`
-    (case ignored) directly in `$CLAUDE_CONFIG_DIR` or in `~/.claude`;
+    (case ignored) directly in `$CLAUDE_CONFIG_DIR` or in `~/.claude`
+    (on Windows under both `%USERPROFILE%` and `%HOME%`, which Git Bash
+    may set as `/c/Users/me`, read as `C:\Users\me`);
   - inside Claude Code's managed settings directory (`/etc/claude-code`,
     `/Library/Application Support/ClaudeCode` or
     `C:\Program Files\ClaudeCode`), `managed-settings.json` and the
