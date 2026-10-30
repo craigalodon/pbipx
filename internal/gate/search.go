@@ -383,7 +383,7 @@ func (w *walker) searchConfig(sr searcher, v view) bool {
 	}
 	for _, d := range append(slices.Clone(v.cwd.dirs), w.s.home) {
 		for _, f := range sr.configFiles {
-			if _, err := os.Lstat(filepath.Join(d, f)); !errors.Is(err, fs.ErrNotExist) {
+			if _, err := os.Lstat(filepath.Join(hostPath(d), f)); !errors.Is(err, fs.ErrNotExist) {
 				return true
 			}
 		}

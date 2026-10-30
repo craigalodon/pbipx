@@ -14,6 +14,7 @@ func isolateSearch(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // os.UserHomeDir on Windows
 	for _, name := range []string{"GREP_OPTIONS", "RIPGREP_CONFIG_PATH", "ACKRC", "ACK_OPTIONS"} {
 		t.Setenv(name, "")
 	}
