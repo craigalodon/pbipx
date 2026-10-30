@@ -791,6 +791,27 @@ Decisions by tool. Every tool not listed is allowed.
 
      A root's name is compared without regard to case in these tests, on
      every platform: they only decide whether the real roots are scanned.
+
+     In pbipx a command that only lists names is left out of these tests:
+     names are schema (principle 1), so it is allowed over a protected
+     root whatever the tree holds, from any working directory that can be
+     told. The listers are `ls`, `dir`, `vdir` and `stat`; `du`, but not
+     with `--files0-from`, `--exclude-from` or `-X`; `tree`, but not with
+     `--fromfile` (which prints a listing read from a file), `-o` or `-R`
+     (which write); and `find` whose expression after its paths holds only
+     tests of names and metadata (`-name`, `-path`, `-regex`, `-type`,
+     `-maxdepth`, `-size`, `-newer` and `-newerXY`, `-mtime`, `-perm`,
+     `-user`, `-empty`, `-prune` and the like), operators, and `-print`,
+     `-print0`, `-ls` or `-printf` with only name and metadata directives
+     (`%p`, `%f`, `%h`, `%P`, `%s`, `%k`, `%m`, `%M`, `%u`, `%g`, `%y`,
+     `%d`, `%i`, `%n`, `%l`, times and escapes). `-exec`, `-execdir`,
+     `-ok`, `-okdir`, `-fprint`, `-fprintf`, `-delete`, any other primary
+     and any other directive keep the rules above. `file` reads content to
+     tell a type, and `wc` counts it: neither is a lister. A root named
+     in a substitution or here-document of a lister, or in another command
+     of the line, is judged as before, and a listing fed to a reader
+     (`ls pbip | xargs cat`) is judged by the reader. Naming local state
+     still denies.
   4. A recursive search (`grep`, `egrep` and `fgrep` with `-r` or `-R`;
      `rg`, `ag` and `ack` always) over a path that touches a root scans the
      tree. Its paths are the positional arguments after the pattern (unless
@@ -1187,6 +1208,10 @@ behavior (2026-10-29).
   pbipx takes every search to read recursively under its paths, default
   `.`, unless it is confined to the files it names (Bash, rule 4).
   (Decided 2026-10-30.)
+- **Divergence (listings):** the predecessor scans the tree for any command
+  that names a root, so `ls -R pbip` is denied while the tree leaks. pbipx
+  allows a command that only lists names (Bash, rule 3), since names are
+  schema. (Decided 2026-10-30.)
 - **Divergence (agent settings):** the predecessor neither gates writes nor
   checks Claude Code's settings. pbipx denies an agent's write to, or shell
   command naming, `.claude/settings.json` or `.claude/settings.local.json`

@@ -96,8 +96,8 @@ func TestShellResolvesWords(t *testing.T) {
 	root := nestedRepo(t)
 	run(t, root, []decideCase{
 		{"relative to a parent of the root", shIn("work", "cat pbip/B.Report/"+leakInReport), gate.ReasonFinding},
-		{"the root by a relative name", shIn("work", "ls pbip"), gate.ReasonFinding},
-		{"a directory that contains the root", sh("ls work"), gate.ReasonFinding},
+		{"the root by a relative name", shIn("work", "wc -c pbip"), gate.ReasonFinding},
+		{"a directory that contains the root", sh("wc -c work"), gate.ReasonFinding},
 		{"a sibling of the root", shIn("work", "ls other"), ""},
 		{"from inside the root's sibling", shIn("work/other", "cat ../pbip/B.Report/"+leakInReport), gate.ReasonFinding},
 		{"a flag value", shIn("work", "jq . --from-file=pbip/B.Report/"+leakInReport), gate.ReasonFinding},
@@ -195,7 +195,7 @@ func TestShellFoldCase(t *testing.T) {
 		}
 		run(t, root, []decideCase{
 			{"read local state in another case", gate.Event{Tool: gate.Read, Path: upper}, want},
-			{"shell local-state directory in another case", sh("ls pbip/A.Report/.PBI/"), shellWant},
+			{"shell local-state directory in another case", sh("wc -c pbip/A.Report/.PBI/"), shellWant},
 			{"read through the repository root in another case",
 				gate.Event{Tool: gate.Read, Path: strings.ToUpper(root) + "/pbip/A.Report/.pbi/localSettings.json"}, want},
 		})

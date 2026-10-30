@@ -1803,7 +1803,8 @@ var readers = map[string]bool{
 // of a command, placed against its working directory, is one, is inside
 // one, or contains one; a reading command has a word that cannot be
 // placed; a search reads under a path that touches one; or find, xargs
-// or a nested line reach one (walker.reach).
+// or a nested line reach one (walker.reach). A command that only lists
+// names (lister) reaches nothing.
 func (w *walker) reaches() bool {
 	s := w.s
 	if w.reach {
@@ -1811,12 +1812,15 @@ func (w *walker) reaches() bool {
 	}
 	for _, line := range w.lines {
 		for _, root := range s.policy.ProtectedRoots() {
-			if namesWord(line, root) {
+			if namesRootOutsideListers(line, root) {
 				return true
 			}
 		}
 	}
 	for _, v := range w.views {
+		if v.cwd.known() && lister(v.name, v.rest) {
+			continue
+		}
 		inRoot := func(d string) bool { return w.cache.memo("inroot", d, s.dirInRoot) }
 		touches := func(a string) bool { return w.cache.memo("touches", a, s.touchesAbs) }
 		if !v.cwd.known() || slices.ContainsFunc(v.cwd.dirs, inRoot) {
