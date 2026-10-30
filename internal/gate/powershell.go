@@ -168,11 +168,17 @@ func probePowerShell(cwd, home, line string) (spots []spot, unknown bool) {
 // settings directory, or that runs 'pbipx policy approve'. The gate
 // cannot tell a PowerShell read from a write, so naming one is enough.
 func psControl(cwd, home string, words []string, ctl controls) (Decision, bool) {
+	seen := map[string]bool{}
 	for i, w := range words {
 		if strings.EqualFold(w, "policy") && i+1 < len(words) && strings.EqualFold(words[i+1], "approve") {
 			return deny(ReasonAgentSettings, "the command may run 'pbipx policy approve'; "+
 				"approving the policy is a person's step at a terminal, and an agent may not approve the policy that binds it"), true
 		}
+		// A word is placed once: each placing costs file system calls.
+		if seen[w] {
+			continue
+		}
+		seen[w] = true
 		for _, v := range psVariants(w, home) {
 			sp := spellings(cwd, v)
 			what, ok := ctl.target(sp)
