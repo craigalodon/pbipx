@@ -13,9 +13,10 @@ import (
 // gateCommand is the gate's name on the command line.
 const gateCommand = "gate"
 
-// gateOptions are the options every gate decision is made with: the policy
-// must be one a person approved (ADR-0006).
-var gateOptions = gate.Options{CheckPolicy: gate.RequireApproval(nil)}
+// gateOptions are the options every gate decision is made with: the gate
+// acts for adopted repositories only, and their policy must be one a person
+// approved (ADR-0006).
+var gateOptions = gate.Options{CheckPolicy: gate.RequireApproval(nil), Adoption: &gate.Adoption{}}
 
 // errGateUsage is any problem with the gate's own command line. It is a deny
 // like every other failure of the gate.
@@ -33,8 +34,15 @@ prints the agent's decision JSON on stdout and the reason on stderr, and
 exits 2. Every failure, including a usage error, is a deny: the gate never
 exits with any other code.
 
-The repository's .pbipx.toml must be approved on this machine ('pbipx policy
-approve'). Until it is, and after any change to it, every call is denied.
+The gate acts only for repositories set up for pbipx: one with a .pbipx.toml,
+or one 'pbipx init' or 'pbipx policy approve' recorded on this machine. A
+call made elsewhere is allowed unless it touches such a repository, or a file
+that controls the gate. A call is judged against every such repository it
+touches, wherever it is made from.
+
+There, .pbipx.toml must be approved on this machine ('pbipx policy approve').
+Until it is, and after any change to it, every call is denied; so is every
+call while it is missing or does not load.
 
 --agent claude-code, the default and only value, reads a Claude Code
 PreToolUse event. Configure the hook with a command that turns every other

@@ -158,6 +158,7 @@ func TestValidateRules(t *testing.T) {
 			appendTo("case.toml", "approved = false\n")(t, dir)
 			write("after/tree/README.md", "x\n")(t, dir)
 		}, "or a gate case whose policy is approved"},
+		{"approved gate case without a policy", gate, replace("case.toml", `"minimal"`, `"tree"`), "tree/.pbipx.toml does not exist"},
 		{"stray file", slicer, write("notes.txt", "x\n"), `unexpected entry "notes.txt"`},
 		{"case name not kebab", slicer, rename("../Slicer_Case"), "not kebab case"},
 	}
@@ -184,6 +185,20 @@ func TestValidateRules(t *testing.T) {
 				t.Errorf("no problem contains %q; got %q", tt.want, all)
 			}
 		})
+	}
+}
+
+// TestValidateAcceptsANotAdoptedGateCase checks that a gate case may run
+// with no policy file when it runs with no approval: a repository that has
+// not adopted pbipx.
+func TestValidateAcceptsANotAdoptedGateCase(t *testing.T) {
+	dir := copyTestCorpus(t)
+	caseDir := filepath.Join(dir, filepath.FromSlash(gate))
+	replace("case.toml", `"minimal"`, `"tree"`)(t, caseDir)
+	appendTo("case.toml", "approved = false\n")(t, caseDir)
+	c := openTest(t, dir)
+	if errs := c.Validate(findCase(t, c, gate)); len(errs) != 0 {
+		t.Errorf("problems: %v", errs)
 	}
 }
 

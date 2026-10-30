@@ -1,0 +1,7 @@
+description = "A repository whose policy was approved stays adopted when .pbipx.toml is deleted: the approval record outside the repository says so, and every call denies with policy-error, so deleting the policy cannot switch the gate off. Plants no value"
+command     = "gate"
+args        = []
+policy      = "tree"
+exit        = 2
+sentinels   = []
+deleted     = [".pbipx.toml"]

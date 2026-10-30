@@ -115,11 +115,12 @@ func TestRecordFormat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "version = 2\ndigests = ['" + Digest([]byte(testPolicy)) + "']\napproved = 2100-01-02T03:04:05Z\n"
+	want := "version = 3\ndigests = ['" + Digest([]byte(testPolicy)) + "']\nroots = ['" + r.Root + "']\n" +
+		"approved = 2100-01-02T03:04:05Z\n"
 	if string(data) != want {
 		t.Errorf("record = %q, want %q", data, want)
 	}
-	for _, leak := range []string{sentinel, "Doe", "allow", "protected_roots", filepath.Base(r.Root)} {
+	for _, leak := range []string{sentinel, "Doe", "allow", "protected_roots"} {
 		if strings.Contains(string(data), leak) {
 			t.Errorf("the record holds %q", leak)
 		}
@@ -337,9 +338,19 @@ func writeRecord(t *testing.T, s *Store, key, content string) {
 
 func TestBadRecord(t *testing.T) {
 	many := strings.Repeat("'"+Digest(nil)+"', ", MaxDigests+1)
+	var roots []string
+	for i := range MaxRoots + 1 {
+		roots = append(roots, fmt.Sprintf("'%s'", filepath.Join(string(filepath.Separator), fmt.Sprint(i))))
+	}
+	manyRoots := strings.Join(roots, ", ")
 	for name, content := range map[string]string{
 		"not toml":           "version = \n",
-		"other version":      "version = 3\ndigests = ['" + Digest(nil) + "']\napproved = 2100-01-01T00:00:00Z\n",
+		"other version":      "version = 4\ndigests = ['" + Digest(nil) + "']\napproved = 2100-01-01T00:00:00Z\n",
+		"version 2, roots":   "version = 2\ndigests = ['" + Digest(nil) + "']\nroots = ['/r']\napproved = 2100-01-01T00:00:00Z\n",
+		"version 3, empty":   "version = 3\n",
+		"relative root":      "version = 3\nroots = ['r']\n",
+		"unclean root":       "version = 3\nroots = ['/r/../s']\n",
+		"too many roots":     "version = 3\nroots = [" + manyRoots + "]\n",
 		"version 2, digest":  "version = 2\ndigest = '" + Digest(nil) + "'\napproved = 2100-01-01T00:00:00Z\n",
 		"version 1, digests": "version = 1\ndigests = ['" + Digest(nil) + "']\napproved = 2100-01-01T00:00:00Z\n",
 		"no digests":         "version = 2\ndigests = []\napproved = 2100-01-01T00:00:00Z\n",
@@ -447,5 +458,122 @@ func TestCheckDigest(t *testing.T) {
 	}
 	if st, err := s.Check(r, Digest([]byte(testPolicy+"# edited\n"))); err != nil || st != Changed {
 		t.Errorf("Check of other bytes = %s, %v; want changed", st, err)
+	}
+}
+
+// TestAdopt checks that Adopt marks the clone adopted, approves nothing,
+// keeps the digests already approved, and puts the work tree in the index.
+func TestAdopt(t *testing.T) {
+	r, policyPath, s := setup(t)
+	if ok, err := s.Adopted(r); ok || err != nil {
+		t.Fatalf("Adopted before anything = %v, %v", ok, err)
+	}
+	if err := s.Adopt(r); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := s.Adopted(r); !ok || err != nil {
+		t.Errorf("Adopted after Adopt = %v, %v", ok, err)
+	}
+	if got := status(t, s, r, policyPath); got != Unapproved {
+		t.Errorf("after Adopt alone the policy is %s, want unapproved", got)
+	}
+	roots, anyRecord, err := s.Roots()
+	if err != nil || !anyRecord || !slices.Equal(roots, []string{r.Root}) {
+		t.Errorf("Roots = %v, %v, %v; want the work tree", roots, anyRecord, err)
+	}
+	approve(t, s, r, policyPath)
+	if err := s.Adopt(r); err != nil {
+		t.Fatal(err)
+	}
+	if got := status(t, s, r, policyPath); got != Approved {
+		t.Errorf("Adopt after an approval left the policy %s", got)
+	}
+	// A second work tree of the clone joins the index.
+	linked := Repository{GitDir: r.GitDir, Root: t.TempDir()}
+	if err := s.Adopt(linked); err != nil {
+		t.Fatal(err)
+	}
+	roots, _, err = s.Roots()
+	slices.Sort(roots)
+	want := []string{r.Root, linked.Root}
+	slices.Sort(want)
+	if err != nil || !slices.Equal(roots, want) {
+		t.Errorf("Roots = %v, %v; want both work trees", roots, err)
+	}
+}
+
+// TestAdoptKeepsABadRecord checks that Adopt neither replaces nor reads
+// past a record that does not parse, and that Adopted counts it.
+func TestAdoptKeepsABadRecord(t *testing.T) {
+	r, _, s := setup(t)
+	key, err := Key(r.GitDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeRecord(t, s, key, "not a record")
+	if err := s.Adopt(r); !errors.Is(err, ErrBadRecord) {
+		t.Errorf("Adopt = %v, want ErrBadRecord", err)
+	}
+	if ok, err := s.Adopted(r); !ok || !errors.Is(err, ErrBadRecord) {
+		t.Errorf("Adopted = %v, %v; want true and ErrBadRecord", ok, err)
+	}
+	roots, anyRecord, err := s.Roots()
+	if err != nil || !anyRecord || len(roots) != 0 {
+		t.Errorf("Roots = %v, %v, %v; want a record with no work tree", roots, anyRecord, err)
+	}
+}
+
+// TestRootsOfAnEmptyStore checks a store with no records directory, and one
+// with files that are not records.
+func TestRootsOfAnEmptyStore(t *testing.T) {
+	_, _, s := setup(t)
+	if roots, anyRecord, err := s.Roots(); len(roots) != 0 || anyRecord || err != nil {
+		t.Errorf("Roots of an empty store = %v, %v, %v", roots, anyRecord, err)
+	}
+	writeRecord(t, s, ".approval-123", "version = 3\nroots = ['/r']\n")
+	if roots, anyRecord, err := s.Roots(); len(roots) != 0 || anyRecord || err != nil {
+		t.Errorf("Roots with a temporary file = %v, %v, %v", roots, anyRecord, err)
+	}
+}
+
+// TestRootsKeepsTheNewest checks that a record keeps the MaxRoots most
+// recent work trees.
+func TestRootsKeepsTheNewest(t *testing.T) {
+	r, _, s := setup(t)
+	var last string
+	for i := range MaxRoots + 2 {
+		last = filepath.Join(r.Root, fmt.Sprint("w", i))
+		if err := os.Mkdir(last, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Adopt(Repository{GitDir: r.GitDir, Root: last}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	roots, _, err := s.Roots()
+	if err != nil || len(roots) != MaxRoots || !slices.Contains(roots, last) || slices.Contains(roots, filepath.Join(r.Root, "w0")) {
+		t.Errorf("Roots = %d work trees, %v; want the %d newest", len(roots), err, MaxRoots)
+	}
+}
+
+// TestVersion2Record checks that a record from before the index is still
+// read, and that the next approval adds the work tree.
+func TestVersion2Record(t *testing.T) {
+	r, policyPath, s := setup(t)
+	key, err := Key(r.GitDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := Digest([]byte(testPolicy))
+	writeRecord(t, s, key, "version = 2\ndigests = ['"+digest+"']\napproved = 2100-01-01T00:00:00Z\n")
+	if got := status(t, s, r, policyPath); got != Approved {
+		t.Errorf("a version 2 record: %s", got)
+	}
+	if roots, anyRecord, err := s.Roots(); len(roots) != 0 || !anyRecord || err != nil {
+		t.Errorf("Roots = %v, %v, %v; want a record with no work tree", roots, anyRecord, err)
+	}
+	approve(t, s, r, policyPath)
+	if roots, _, err := s.Roots(); err != nil || !slices.Equal(roots, []string{r.Root}) {
+		t.Errorf("Roots after an approval = %v, %v", roots, err)
 	}
 }

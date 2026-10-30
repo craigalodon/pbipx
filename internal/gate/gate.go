@@ -3,11 +3,13 @@
 // It knows nothing of any one agent's hook protocol: an adapter turns the
 // agent's event into an Event and the Decision into the agent's reply.
 //
-// Every failure is a deny. The repository is found and the policy and the
+// The gate acts for adopted repositories only (adopt.go): a call is judged
+// against each one it touches, wherever it is made from, and is otherwise
+// allowed. Every failure is a deny. An adopted repository's policy and
 // baseline are loaded before the tool is looked at, so a broken setup
-// denies every call. A Decision's Message names files, columns, reasons and
-// classes only: never a value, never source text, never the command line
-// the agent sent.
+// denies every call that touches it. A Decision's Message names files,
+// columns, reasons and classes only: never a value, never source text,
+// never the command line the agent sent.
 package gate
 
 import (
@@ -70,6 +72,13 @@ type Options struct {
 	// approval check plugs in here.
 	CheckPolicy func(root string, policyData []byte) *Decision
 
+	// Adoption, if set, scopes the gate to adopted repositories (adopt.go;
+	// ADR-0006, amended 2026-10-30): a call is judged against each
+	// adopted repository it touches, wherever it is made from, and is
+	// otherwise allowed. Nil judges every call against the repository the
+	// working directory is in, and denies one made outside any repository.
+	Adoption *Adoption
+
 	// Now is when baseline expiry is judged; zero means time.Now().
 	Now time.Time
 }
@@ -128,10 +137,18 @@ func Decide(ev Event, opts Options) (d Decision) {
 			d = deny(ReasonInternalError, "the gate failed; the call is denied")
 		}
 	}()
+	if opts.Adoption != nil {
+		return decideAdopted(ev, opts)
+	}
 	s, failed := load(ev, opts)
 	if failed != nil {
 		return *failed
 	}
+	return s.decide(ev)
+}
+
+// decide decides ev against the setup's repository.
+func (s *setup) decide(ev Event) Decision {
 	switch ev.Tool {
 	case Read:
 		return s.read(ev.Path)
@@ -168,6 +185,14 @@ func load(ev Event, opts Options) (*setup, *Decision) {
 		}
 		return fail(deny(ReasonInternalError, "git could not say which repository the working directory is in"))
 	}
+	return loadAt(ev, opts, repo)
+}
+
+// loadAt loads the policy of the repository repo, runs opts.CheckPolicy,
+// then loads the baseline, for ev judged as if made in repo, from ev.Cwd
+// wherever that is.
+func loadAt(ev Event, opts Options, repo *source.Repo) (*setup, *Decision) {
+	fail := func(d Decision) (*setup, *Decision) { return nil, &d }
 	policyPath := filepath.Join(repo.Root, policy.FileName)
 	p, policyData, err := policy.LoadData(policyPath)
 	if err != nil {
@@ -198,11 +223,16 @@ func load(ev Event, opts Options) (*setup, *Decision) {
 	if now.IsZero() {
 		now = time.Now()
 	}
+	return &setup{repo: repo, policy: p, baseline: b, cwd: ev.Cwd, now: now, fold: foldCase, home: userHome(), gitq: newGitSession()}, nil
+}
+
+// userHome is the gate's own home directory, "" when unknown.
+func userHome() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		home = ""
+		return ""
 	}
-	return &setup{repo: repo, policy: p, baseline: b, cwd: ev.Cwd, now: now, fold: foldCase, home: home, gitq: newGitSession()}, nil
+	return home
 }
 
 // describe is a policy or baseline error as structure: the file's name, a

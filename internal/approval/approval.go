@@ -8,8 +8,14 @@
 // is a hash of the absolute, cleaned, symlink-resolved path of the clone's
 // shared git directory, so every work tree of one clone shares it. A record
 // holds a format version, the approved digests (at most MaxDigests, the
-// most recent last) and the time of the last approval: never policy
-// content, never the path in clear.
+// most recent last), the work trees of the clone it was written from (at
+// most MaxRoots, the most recent last) and the time of the last approval:
+// never policy content.
+//
+// A record also marks its clone as adopted (ADR-0006, amended 2026-10-30):
+// `pbipx init` writes one with no digest, and the gate acts only for an
+// adopted repository. The work trees of every record together are the
+// index the gate finds adopted repositories by (Store.Roots).
 package approval
 
 import (
@@ -34,8 +40,12 @@ import (
 const EnvConfigDir = "PBIPX_CONFIG_DIR"
 
 // Version is the record format version this package writes. It also reads
-// legacyVersion.
-const Version = 2
+// setVersion and legacyVersion.
+const Version = 3
+
+// setVersion is the format of a record that holds a set of digests and no
+// work trees.
+const setVersion = 2
 
 // legacyVersion is the format of a record that holds one digest, keyed by
 // the work tree's path.
@@ -43,6 +53,9 @@ const legacyVersion = 1
 
 // MaxDigests is how many approved digests a record keeps.
 const MaxDigests = 16
+
+// MaxRoots is how many work trees a record keeps.
+const MaxRoots = 64
 
 // approvedDir is the directory of records inside the configuration
 // directory.
@@ -94,9 +107,15 @@ type record struct {
 	Version int `toml:"version"`
 	// Digest is a legacyVersion record's one digest.
 	Digest string `toml:"digest,omitempty"`
-	// Digests are a Version record's digests, oldest first.
-	Digests  []string  `toml:"digests,omitempty"`
-	Approved time.Time `toml:"approved"`
+	// Digests are a setVersion or Version record's digests, oldest first.
+	// A Version record may have none: its clone is adopted, and no policy
+	// is approved yet.
+	Digests []string `toml:"digests,omitempty"`
+	// Roots are a Version record's work trees, absolute and clean, oldest
+	// first.
+	Roots []string `toml:"roots,omitempty"`
+	// Approved is the time of the last approval; zero when there is none.
+	Approved time.Time `toml:"approved,omitempty"`
 }
 
 // Store is a configuration directory's approval records.
@@ -296,34 +315,73 @@ func (s *Store) paths(r Repository) (legacy, shared string, err error) {
 
 // Approve adds digest to the approved digests of r, approved at now, and
 // keeps the most recent MaxDigests: approving one already there makes it
-// the most recent. A record keyed by the work tree is merged in and then
-// removed. The record is written through a temporary file in the same
-// directory and renamed into place, so a reader sees the old record or the
-// new one, never part of one. Directories are created 0700 and the record
-// 0600. A record that does not parse is replaced: approving is a person's
-// act at a terminal.
+// the most recent. It records r's work tree as Adopt does. A record keyed
+// by the work tree is merged in and then removed. The record is written
+// through a temporary file in the same directory and renamed into place, so
+// a reader sees the old record or the new one, never part of one.
+// Directories are created 0700 and the record 0600. A record that does not
+// parse is replaced: approving is a person's act at a terminal.
 func (s *Store) Approve(r Repository, digest string, now time.Time) error {
 	if !digestShape.MatchString(digest) {
 		return errors.New("approval: the digest is not a sha256 digest")
 	}
+	at := now.UTC().Truncate(time.Second)
+	return s.update(r, true, func(rec *record) {
+		rec.Digests = dedupe(append(rec.Digests, digest))
+		if len(rec.Digests) > MaxDigests {
+			rec.Digests = rec.Digests[len(rec.Digests)-MaxDigests:]
+		}
+		rec.Approved = at
+	})
+}
+
+// Adopt records r's clone as adopted, with r's work tree in the index
+// (Roots), keeping every digest already approved for it: `pbipx init` runs
+// it, so the gate acts for the repository before its policy is approved.
+// It writes as Approve does. A record that does not parse is left as it
+// is, and is ErrBadRecord: the gate already treats the clone as adopted.
+func (s *Store) Adopt(r Repository) error {
+	return s.update(r, false, func(*record) {})
+}
+
+// update reads r's records (its shared one, and one keyed by its work
+// tree), applies change to them merged, adds r's work tree to the roots,
+// and writes the result as r's shared record, removing the one keyed by
+// the work tree. With replaceBad, a record that does not parse counts as
+// none; without it, it is ErrBadRecord and nothing is written.
+func (s *Store) update(r Repository, replaceBad bool, change func(*record)) error {
 	legacy, shared, err := s.paths(r)
 	if err != nil {
 		return err
 	}
-	var digests []string
+	merged := record{Version: Version}
 	for _, p := range []string{legacy, shared} {
 		if p == "" {
 			continue
 		}
-		if d, ok, err := readRecord(p); err == nil && ok {
-			digests = append(digests, d...)
+		rec, ok, err := readRecord(p)
+		if err != nil && !replaceBad {
+			return err
+		}
+		if err != nil || !ok {
+			continue
+		}
+		merged.Digests = append(merged.Digests, rec.Digests...)
+		merged.Roots = append(merged.Roots, rec.Roots...)
+		if rec.Approved.After(merged.Approved) {
+			merged.Approved = rec.Approved
 		}
 	}
-	digests = dedupe(append(digests, digest))
-	if len(digests) > MaxDigests {
-		digests = digests[len(digests)-MaxDigests:]
+	merged.Digests = dedupe(merged.Digests)
+	change(&merged)
+	if root, ok := cleanRoot(r.Root); ok {
+		merged.Roots = dedupe(append(merged.Roots, root))
 	}
-	data, err := toml.Marshal(record{Version: Version, Digests: digests, Approved: now.UTC().Truncate(time.Second)})
+	merged.Roots = dedupe(merged.Roots)
+	if len(merged.Roots) > MaxRoots {
+		merged.Roots = merged.Roots[len(merged.Roots)-MaxRoots:]
+	}
+	data, err := toml.Marshal(merged)
 	if err != nil {
 		return err
 	}
@@ -334,6 +392,15 @@ func (s *Store) Approve(r Repository, digest string, now time.Time) error {
 		_ = os.Remove(legacy)
 	}
 	return nil
+}
+
+// cleanRoot is a work tree as the index keeps it: absolute and clean. ok
+// is false for an empty or relative one, which is not kept.
+func cleanRoot(root string) (string, bool) {
+	if root == "" || !filepath.IsAbs(root) {
+		return "", false
+	}
+	return filepath.Clean(root), true
 }
 
 // dedupe is digests without repeats, each where it last appears.
@@ -379,8 +446,8 @@ func writeAtomic(path string, data []byte) error {
 
 // Recorded is the digests approved for r, oldest first: those in its
 // shared record and in a record keyed by its work tree. ok is false when
-// there is neither. A record that does not parse, or is of an unknown
-// version, is ErrBadRecord.
+// there are none: no record, or only a record that adopts the clone. A
+// record that does not parse, or is of an unknown version, is ErrBadRecord.
 func (s *Store) Recorded(r Repository) (digests []string, ok bool, err error) {
 	legacy, shared, err := s.paths(r)
 	if err != nil {
@@ -390,51 +457,126 @@ func (s *Store) Recorded(r Repository) (digests []string, ok bool, err error) {
 		if p == "" {
 			continue
 		}
-		d, found, err := readRecord(p)
+		rec, found, err := readRecord(p)
 		if err != nil {
 			return nil, false, err
 		}
 		if found {
-			ok = true
-			digests = append(digests, d...)
+			digests = append(digests, rec.Digests...)
 		}
 	}
-	return dedupe(digests), ok, nil
+	digests = dedupe(digests)
+	return digests, len(digests) > 0, nil
 }
 
-// readRecord reads one record's digests; found is false when there is no
-// record at path.
-func readRecord(path string) (digests []string, found bool, err error) {
-	data, err := os.ReadFile(path) //nolint:gosec // G304: the path is a hash under the store's own directory
+// Adopted reports whether r's clone has a record: one with an approval, or
+// one Adopt wrote. A record that does not parse counts, with ErrBadRecord,
+// so a caller can fail closed on it.
+func (s *Store) Adopted(r Repository) (bool, error) {
+	legacy, shared, err := s.paths(r)
+	if err != nil {
+		return false, err
+	}
+	for _, p := range []string{legacy, shared} {
+		if p == "" {
+			continue
+		}
+		_, found, err := readRecord(p)
+		if errors.Is(err, ErrBadRecord) {
+			return true, err
+		}
+		if err != nil {
+			return false, err
+		}
+		if found {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// Roots is the index of adopted work trees: the work trees every record in
+// the store was written from, in no set order, and whether the store holds
+// any record at all. A record that does not parse adds no work tree, but
+// counts as a record. A store with no records directory has none.
+func (s *Store) Roots() (roots []string, anyRecord bool, err error) {
+	dir := filepath.Join(s.Dir, approvedDir)
+	entries, err := os.ReadDir(dir)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, false, nil
 	}
 	if err != nil {
 		return nil, false, err
 	}
-	var r record
-	dec := toml.NewDecoder(bytes.NewReader(data)).DisallowUnknownFields()
-	if dec.Decode(&r) != nil {
-		return nil, false, ErrBadRecord
+	for _, e := range entries {
+		if !recordName.MatchString(e.Name()) {
+			continue
+		}
+		rec, found, err := readRecord(filepath.Join(dir, e.Name()))
+		switch {
+		case errors.Is(err, ErrBadRecord):
+			anyRecord = true
+		case err != nil:
+			return nil, false, err
+		case found:
+			anyRecord = true
+			roots = append(roots, rec.Roots...)
+		}
 	}
-	switch r.Version {
+	return dedupe(roots), anyRecord, nil
+}
+
+// recordName is a record's file name: a hex SHA-256 (Key).
+var recordName = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+// readRecord reads one record, validated, with a legacyVersion record's
+// digest moved into Digests; found is false when there is no record at
+// path. A record that does not parse, or is of an unknown version, is
+// ErrBadRecord.
+func readRecord(path string) (rec record, found bool, err error) {
+	data, err := os.ReadFile(path) //nolint:gosec // G304: the path is a hash under the store's own directory
+	if errors.Is(err, fs.ErrNotExist) {
+		return record{}, false, nil
+	}
+	if err != nil {
+		return record{}, false, err
+	}
+	bad := func() (record, bool, error) { return record{}, false, ErrBadRecord }
+	dec := toml.NewDecoder(bytes.NewReader(data)).DisallowUnknownFields()
+	if dec.Decode(&rec) != nil {
+		return bad()
+	}
+	switch rec.Version {
 	case legacyVersion:
-		if r.Digests != nil || !digestShape.MatchString(r.Digest) {
-			return nil, false, ErrBadRecord
+		if rec.Digests != nil || rec.Roots != nil || !digestShape.MatchString(rec.Digest) {
+			return bad()
 		}
-		return []string{r.Digest}, true, nil
+		rec.Digests, rec.Digest = []string{rec.Digest}, ""
+	case setVersion:
+		if rec.Digest != "" || rec.Roots != nil || len(rec.Digests) == 0 {
+			return bad()
+		}
 	case Version:
-		if r.Digest != "" || len(r.Digests) == 0 || len(r.Digests) > MaxDigests {
-			return nil, false, ErrBadRecord
+		if rec.Digest != "" || len(rec.Digests)+len(rec.Roots) == 0 || len(rec.Roots) > MaxRoots {
+			return bad()
 		}
-		for _, d := range r.Digests {
-			if !digestShape.MatchString(d) {
-				return nil, false, ErrBadRecord
+		for _, root := range rec.Roots {
+			if c, ok := cleanRoot(root); !ok || c != root {
+				return bad()
 			}
 		}
-		return r.Digests, true, nil
+	default:
+		return bad()
 	}
-	return nil, false, ErrBadRecord
+	if len(rec.Digests) > MaxDigests {
+		return bad()
+	}
+	for _, d := range rec.Digests {
+		if !digestShape.MatchString(d) {
+			return bad()
+		}
+	}
+	return rec, true, nil
 }
 
 // Status checks the policy file at policyPath against the approvals of r.

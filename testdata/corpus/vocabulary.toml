@@ -87,7 +87,7 @@ git-content      = "a git command that would print content from a protected root
 policy-error     = "the policy failed to load"
 policy-unapproved = "the policy has no approval, or changed since it was approved (ADR-0006)"
 event-error      = "the hook event is not valid JSON or not an object"
-not-a-repository = "the working directory is not in a git repository"
+not-a-repository = "the call touches a repository that adopted pbipx, and git cannot place it, or the working directory in it, in a work tree"
 internal-error   = "any other failure"
 
 # Process exit codes, for every command but the gate.
