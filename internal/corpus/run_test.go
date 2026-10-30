@@ -229,3 +229,15 @@ func TestCommandArgs(t *testing.T) {
 		}
 	}
 }
+
+func TestStdinRootEscapesForTheGate(t *testing.T) {
+	root := `C:\Users\x\AppData\Local\Temp\case "1"`
+	gate := &Case{Spec: Spec{Command: commandGate}}
+	if got := string(stdinRoot(gate, root)); got != `C:\\Users\\x\\AppData\\Local\\Temp\\case \"1\"` {
+		t.Errorf("gate stdin root = %s", got)
+	}
+	prose := &Case{Spec: Spec{Command: "scan-text"}}
+	if got := string(stdinRoot(prose, root)); got != root {
+		t.Errorf("prose stdin root = %s", got)
+	}
+}

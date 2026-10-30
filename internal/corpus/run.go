@@ -301,13 +301,28 @@ type Outcome struct {
 func Execute(cs *Case, binary string, p *Prepared) (Outcome, error) {
 	var stdin []byte
 	if cs.HasStdin {
-		stdin = bytes.ReplaceAll(cs.Stdin, []byte(rootPlaceholder), []byte(p.Root))
+		stdin = bytes.ReplaceAll(cs.Stdin, []byte(rootPlaceholder), stdinRoot(cs, p.Root))
 	}
 	out, err := runBinary(binary, p.Root, CommandArgs(cs, p), CommandEnv(os.Environ(), &cs.Spec, p.ConfigDir), stdin)
 	if err != nil {
 		return out, fmt.Errorf("%s: %w", cs.ID(), err)
 	}
 	return out, nil
+}
+
+// stdinRoot is the root as {root} becomes in a case's stdin. A gate case's
+// stdin is a JSON event, where {root} sits inside a string, so the path is
+// escaped as JSON: a Windows path's backslashes would otherwise make the
+// event invalid. Any other stdin is prose, and gets the path as it is.
+func stdinRoot(cs *Case, root string) []byte {
+	if cs.Spec.Command != commandGate {
+		return []byte(root)
+	}
+	quoted, err := json.Marshal(root)
+	if err != nil {
+		return []byte(root)
+	}
+	return quoted[1 : len(quoted)-1]
 }
 
 // runBinary runs binary in dir and returns what it produced.
