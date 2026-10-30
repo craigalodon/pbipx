@@ -30,6 +30,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/pelletier/go-toml/v2"
@@ -73,7 +74,8 @@ var (
 	// ErrInRepository is a configuration directory inside the repository
 	// whose policy it approves, where an agent could write an approval.
 	ErrInRepository = errors.New("approval: the configuration directory is inside the repository")
-	// ErrStoreNotDir is a store whose records directory is not a directory.
+	// ErrStoreNotDir is a store whose records directory, or a directory
+	// above it, is not a directory.
 	ErrStoreNotDir = errors.New("approval: the approval records directory is not a directory")
 )
 
@@ -501,14 +503,15 @@ func (s *Store) Adopted(r Repository) (bool, error) {
 // the store was written from, in no set order, and whether the store holds
 // any record at all. A record that does not parse adds no work tree, but
 // counts as a record. A store with no records directory has none; one
-// whose records directory is not a directory is ErrStoreNotDir, checked
-// first since Windows may read a file as an empty or missing directory.
+// whose records directory, or a directory above it, is not a directory is
+// ErrStoreNotDir, checked first since Windows may read a file as an empty
+// or missing directory.
 func (s *Store) Roots() (roots []string, anyRecord bool, err error) {
 	dir := filepath.Join(s.Dir, approvedDir)
-	if info, serr := os.Stat(dir); serr == nil && !info.IsDir() {
+	if notDirAt(dir) {
 		return nil, false, ErrStoreNotDir
 	}
-	entries, err := os.ReadDir(dir)
+	entries, err := readDir(dir)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, false, nil
 	}
@@ -533,6 +536,39 @@ func (s *Store) Roots() (roots []string, anyRecord bool, err error) {
 	return dedupe(roots), anyRecord, nil
 }
 
+// readFile and readDir read the store; a test replaces them to read as
+// Windows does, where a path through a file is missing.
+var (
+	readFile = os.ReadFile
+	readDir  = os.ReadDir
+)
+
+// missing reports whether err is a path that is not there: missing, or
+// through a file (ENOTDIR, which Windows reports as missing).
+func missing(err error) bool {
+	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR)
+}
+
+// notDirAt reports whether the nearest of path and the directories above
+// it that exists is not a directory: path is then under a file, and the
+// store is broken rather than empty.
+func notDirAt(path string) bool {
+	for p := path; ; {
+		info, err := os.Stat(p)
+		if err == nil {
+			return !info.IsDir()
+		}
+		if !missing(err) {
+			return false
+		}
+		up := filepath.Dir(p)
+		if up == p {
+			return false
+		}
+		p = up
+	}
+}
+
 // recordName is a record's file name: a hex SHA-256 (Key).
 var recordName = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
@@ -541,16 +577,19 @@ var recordName = regexp.MustCompile(`^[0-9a-f]{64}$`)
 // path. A record that does not parse, or is of an unknown version, is
 // ErrBadRecord.
 //
-// A records directory that is not a directory is an error, not an empty
+// A records directory that is not a directory, or one under a file (a
+// configuration directory below a file), is ErrStoreNotDir, not an empty
 // store: Windows reports a path through a file as missing, where Unix
 // reports ENOTDIR.
 func readRecord(path string) (rec record, found bool, err error) {
-	data, err := os.ReadFile(path) //nolint:gosec // G304: the path is a hash under the store's own directory
-	if errors.Is(err, fs.ErrNotExist) {
-		if info, serr := os.Stat(filepath.Dir(path)); serr == nil && !info.IsDir() {
+	data, err := readFile(path)
+	if missing(err) {
+		if notDirAt(path) {
 			return record{}, false, ErrStoreNotDir
 		}
-		return record{}, false, nil
+		if errors.Is(err, fs.ErrNotExist) {
+			return record{}, false, nil
+		}
 	}
 	if err != nil {
 		return record{}, false, err
