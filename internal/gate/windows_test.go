@@ -37,7 +37,7 @@ func TestWindowsPathForms(t *testing.T) {
 		{"~ in Git Bash form", sh("cat ~/../" + leak), gate.ReasonFinding},
 		{"a Git Bash drive away from the roots", sh("cat " + gitBashForm(filepath.Join(root, "README.md"))), ""},
 		{"git -C a Git Bash drive", sh("git -C " + gitBashForm(root) + " log -p"), gate.ReasonGitContent},
-		{"git -C a Git Bash drive, a path away", sh("git -C " + gitBashForm(root) + " log -p -- notes"), ""},
+		{"git -C a Git Bash drive away from the roots", sh("git -C " + gitBashForm(filepath.Join(root, "notes")) + " log -p -- ."), ""},
 
 		{"read rooted on the drive", gate.Event{Tool: gate.Read, Path: native[len(vol):]}, gate.ReasonFinding},
 		{"read with forward slashes", gate.Event{Tool: gate.Read, Path: filepath.ToSlash(native)}, gate.ReasonFinding},
