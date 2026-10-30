@@ -1,0 +1,6 @@
+description = "A Read of an absolute path into an adopted repository, made from a working directory outside every repository (the root's parent), is judged against that repository as if made there, and the leak denies"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]

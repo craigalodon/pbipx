@@ -1,0 +1,6 @@
+description = "cat of an absolute path under a protected root of an adopted repository, run from a working directory outside every repository (the root's parent), is judged against that repository, and the leak denies"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
