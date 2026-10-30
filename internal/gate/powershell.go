@@ -226,7 +226,8 @@ func (s *setup) powershell(line string) Decision {
 		return deny(ReasonLocalState, "the PowerShell command names %s, Power BI Desktop local state, which is never read",
 			displayPath(local))
 	}
-	return s.tree("a PowerShell command, which the gate cannot read,")
+	return s.tree(trigger{"the gate cannot read a PowerShell command, so it takes it to touch every protected root",
+		"Use the Read tool for a single file, or run the command from outside the protected folders."})
 }
 
 // lsp decides an LSP call (behavior.md, "The gate", LSP): each path it
@@ -235,7 +236,8 @@ func (s *setup) powershell(line string) Decision {
 // project, and scans the protected tree.
 func (s *setup) lsp(paths []string) Decision {
 	if len(paths) == 0 {
-		return s.tree("a code intelligence (LSP) call that names no file")
+		return s.tree(trigger{"a code intelligence (LSP) call names no file, so the gate takes it to touch the whole project",
+			"Name the file to look up, outside the protected folders."})
 	}
 	for _, p := range paths {
 		d := s.read(p)
