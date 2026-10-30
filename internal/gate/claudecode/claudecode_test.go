@@ -157,6 +157,10 @@ func TestRunDeniesWithoutDeciding(t *testing.T) {
 		{"empty", strings.NewReader(""), ReasonEventError},
 		{"too large", bytes.NewReader(make([]byte, maxEvent+1)), ReasonEventError},
 		{"panic", panicReader{}, ReasonInternalError},
+		{"command too long", strings.NewReader(`{"tool_name":"Bash","cwd":"/","tool_input":{"command":"` +
+			strings.Repeat(sentinel+" ", maxField/len(sentinel)+1) + `"}}`), ReasonInternalError},
+		{"path too long", strings.NewReader(`{"tool_name":"Read","cwd":"/","tool_input":{"file_path":"` +
+			strings.Repeat("a/", maxField/2+1) + `"}}`), ReasonInternalError},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
