@@ -439,8 +439,8 @@ The event is JSON on stdin. Every failure denies:
 **Divergence (policy integrity).** In pbipx, the first check after the
 policy loads, before the baseline or the tool is looked at, is its approval
 ([ADR-0006](../adr/0006-policy-integrity.md)). The SHA-256 digest of
-`.pbipx.toml`'s exact bytes must equal the one a person recorded with
-`pbipx policy approve` for this repository on this machine. With no approval,
+`.pbipx.toml`'s exact bytes must be one a person recorded with
+`pbipx policy approve` for this clone on this machine. With no approval,
 or a policy changed since (a comment or whitespace edit included), every call
 is denied with `policy-unapproved`. An approval store that cannot be found
 or read denies with `internal-error`. A policy that fails to load still
@@ -459,15 +459,24 @@ when approved, 3 otherwise. Neither prints policy content.
 
 The approval is kept outside the repository, in
 `${PBIPX_CONFIG_DIR:-<user config dir>/pbipx}/approved/<key>`. The key is
-the hex SHA-256 of the repository root's absolute, cleaned,
-symlink-resolved path, so a second clone or a move needs its own approval.
-The record is TOML holding `version = 1`, `digest = "sha256:<hex>"` and
-`approved` (the UTC time), written atomically (a temporary file renamed
-into place) with mode 0600 in directories created 0700. A relative
-`PBIPX_CONFIG_DIR` is refused: resolved against the working directory, it
-could point into the repository. So is a configuration directory inside the
-repository root, as given or with symlinks resolved (of the root, and of
-the directory's deepest existing ancestor): the gate denies every call with
+the hex SHA-256 of the absolute, cleaned, symlink-resolved path of the
+clone's shared git directory (`git rev-parse --git-common-dir`), so every
+work tree of one clone, Claude Code's `.claude/worktrees/<name>` included,
+shares one record, and a second clone needs its own approval (ADR-0006,
+amendment of 2026-10-30). The record is TOML holding `version = 2`,
+`digests` (the approved `"sha256:<hex>"` digests, oldest first, at most
+16) and `approved` (the UTC time of the last approval), written atomically
+(a temporary file renamed into place) with mode 0600 in directories created
+0700. `policy approve` adds the policy's digest, or moves it to the end,
+and drops the oldest past 16; a policy is approved when its digest is in
+the set. A `version = 1` record (one `digest`, keyed by the work tree's
+path) is still read for that work tree, and the next approval there merges
+it into the clone's record and removes it. A relative `PBIPX_CONFIG_DIR` is
+refused: resolved against the working directory, it could point into the
+repository. So is a configuration directory inside the repository root, the
+clone's git directory, or the main work tree that git directory belongs to,
+as given or with symlinks resolved (of the root, and of the directory's
+deepest existing ancestor): the gate denies every call with
 `internal-error`, and `policy approve` and `policy status` exit 3. `scan`
 does not check approval.
 

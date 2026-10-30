@@ -5,9 +5,11 @@
 // An approval is the SHA-256 digest of the policy file's exact bytes, kept
 // outside the repository in
 // ${PBIPX_CONFIG_DIR:-<user config dir>/pbipx}/approved/<key>, where the key
-// is a hash of the repository root's absolute, cleaned, symlink-resolved
-// path. A record holds a format version, the digest and the approval time:
-// never policy content, never the path in clear.
+// is a hash of the absolute, cleaned, symlink-resolved path of the clone's
+// shared git directory, so every work tree of one clone shares it. A record
+// holds a format version, the approved digests (at most MaxDigests, the
+// most recent last) and the time of the last approval: never policy
+// content, never the path in clear.
 package approval
 
 import (
@@ -20,6 +22,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -30,8 +33,16 @@ import (
 // configuration directory's pbipx/. It must be absolute; empty is unset.
 const EnvConfigDir = "PBIPX_CONFIG_DIR"
 
-// Version is the only record format version this package reads and writes.
-const Version = 1
+// Version is the record format version this package writes. It also reads
+// legacyVersion.
+const Version = 2
+
+// legacyVersion is the format of a record that holds one digest, keyed by
+// the work tree's path.
+const legacyVersion = 1
+
+// MaxDigests is how many approved digests a record keeps.
+const MaxDigests = 16
 
 // approvedDir is the directory of records inside the configuration
 // directory.
@@ -58,9 +69,9 @@ type Status int
 const (
 	// Unapproved: no record exists for the repository.
 	Unapproved Status = iota
-	// Approved: the policy's digest is the recorded one.
+	// Approved: the policy's digest is one of the recorded ones.
 	Approved
-	// Changed: a record exists, and the policy's digest differs from it.
+	// Changed: a record exists, and the policy's digest is not in it.
 	Changed
 	// Missing: there is no policy file.
 	Missing
@@ -80,8 +91,11 @@ func (s Status) String() string {
 
 // record is the file format.
 type record struct {
-	Version  int       `toml:"version"`
-	Digest   string    `toml:"digest"`
+	Version int `toml:"version"`
+	// Digest is a legacyVersion record's one digest.
+	Digest string `toml:"digest,omitempty"`
+	// Digests are a Version record's digests, oldest first.
+	Digests  []string  `toml:"digests,omitempty"`
 	Approved time.Time `toml:"approved"`
 }
 
@@ -206,10 +220,43 @@ func DigestFile(path string) (string, error) {
 	return Digest(data), nil
 }
 
-// Key is the record's file name for a repository root: the hex SHA-256 of
-// its absolute, cleaned, symlink-resolved path. The root must exist.
-func Key(root string) (string, error) {
-	abs, err := filepath.Abs(root)
+// Repository is what an approval is recorded for (ADR-0006, amended
+// 2026-10-29).
+type Repository struct {
+	// GitDir is the clone's shared git directory (git rev-parse
+	// --git-common-dir, source.Repo.CommonDir): every work tree of one
+	// clone, linked ones included, has the same one, so all of them share
+	// one record.
+	GitDir string
+	// Root is the work tree. A record written before the key was the git
+	// directory is keyed by it, and is still read until an approval merges
+	// it into the shared record.
+	Root string
+}
+
+// InClone reports whether the store's directory is in r's work tree, in
+// its git directory, or in the main work tree that git directory belongs
+// to (its parent, when it is named .git), under any spelling
+// (InRepository). A linked work tree lies inside another work tree of its
+// clone, as Claude Code's .claude/worktrees do, and anything that can write
+// to one can write there.
+func (s *Store) InClone(r Repository) bool {
+	dirs := []string{r.Root, r.GitDir}
+	if strings.EqualFold(filepath.Base(r.GitDir), ".git") {
+		dirs = append(dirs, filepath.Dir(r.GitDir))
+	}
+	for _, d := range dirs {
+		if d != "" && s.InRepository(d) {
+			return true
+		}
+	}
+	return false
+}
+
+// Key is a record's file name for a directory: the hex SHA-256 of its
+// absolute, cleaned, symlink-resolved path. The directory must exist.
+func Key(dir string) (string, error) {
+	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return "", err
 	}
@@ -221,32 +268,88 @@ func Key(root string) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
-// path is the record's path for a repository root.
-func (s *Store) path(root string) (string, error) {
-	key, err := Key(root)
+// recordPath is the path of the record keyed by dir.
+func (s *Store) recordPath(dir string) (string, error) {
+	key, err := Key(dir)
 	if err != nil {
 		return "", err
 	}
 	return filepath.Join(s.Dir, approvedDir, key), nil
 }
 
-// Approve records digest as the approved policy of the repository at root,
-// approved at now. The record is written through a temporary file in the
-// same directory and renamed into place, so a reader sees the old record or
-// the new one, never part of one. Directories are created 0700 and the
-// record 0600.
-func (s *Store) Approve(root, digest string, now time.Time) error {
+// paths are the records r's approvals are read from: one keyed by its work
+// tree (legacyVersion), when that differs, then the shared one.
+func (s *Store) paths(r Repository) (legacy, shared string, err error) {
+	if shared, err = s.recordPath(r.GitDir); err != nil {
+		return "", "", err
+	}
+	if r.Root != "" {
+		if legacy, err = s.recordPath(r.Root); err != nil {
+			return "", "", err
+		}
+		if legacy == shared {
+			legacy = ""
+		}
+	}
+	return legacy, shared, nil
+}
+
+// Approve adds digest to the approved digests of r, approved at now, and
+// keeps the most recent MaxDigests: approving one already there makes it
+// the most recent. A record keyed by the work tree is merged in and then
+// removed. The record is written through a temporary file in the same
+// directory and renamed into place, so a reader sees the old record or the
+// new one, never part of one. Directories are created 0700 and the record
+// 0600. A record that does not parse is replaced: approving is a person's
+// act at a terminal.
+func (s *Store) Approve(r Repository, digest string, now time.Time) error {
 	if !digestShape.MatchString(digest) {
 		return errors.New("approval: the digest is not a sha256 digest")
 	}
-	path, err := s.path(root)
+	legacy, shared, err := s.paths(r)
 	if err != nil {
 		return err
 	}
-	data, err := toml.Marshal(record{Version: Version, Digest: digest, Approved: now.UTC().Truncate(time.Second)})
+	var digests []string
+	for _, p := range []string{legacy, shared} {
+		if p == "" {
+			continue
+		}
+		if d, ok, err := readRecord(p); err == nil && ok {
+			digests = append(digests, d...)
+		}
+	}
+	digests = dedupe(append(digests, digest))
+	if len(digests) > MaxDigests {
+		digests = digests[len(digests)-MaxDigests:]
+	}
+	data, err := toml.Marshal(record{Version: Version, Digests: digests, Approved: now.UTC().Truncate(time.Second)})
 	if err != nil {
 		return err
 	}
+	if err := writeAtomic(shared, data); err != nil {
+		return err
+	}
+	if legacy != "" {
+		_ = os.Remove(legacy)
+	}
+	return nil
+}
+
+// dedupe is digests without repeats, each where it last appears.
+func dedupe(digests []string) []string {
+	var out []string
+	for i, d := range digests {
+		if !slices.Contains(digests[i+1:], d) {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// writeAtomic writes data to path through a temporary file renamed into
+// place, creating the directory 0700 and the file 0600.
+func writeAtomic(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
@@ -274,32 +377,68 @@ func (s *Store) Approve(root, digest string, now time.Time) error {
 	return nil
 }
 
-// Recorded is the digest recorded for the repository at root, and false
-// when there is no record. A record that does not parse, or is of another
+// Recorded is the digests approved for r, oldest first: those in its
+// shared record and in a record keyed by its work tree. ok is false when
+// there is neither. A record that does not parse, or is of an unknown
 // version, is ErrBadRecord.
-func (s *Store) Recorded(root string) (string, bool, error) {
-	path, err := s.path(root)
+func (s *Store) Recorded(r Repository) (digests []string, ok bool, err error) {
+	legacy, shared, err := s.paths(r)
 	if err != nil {
-		return "", false, err
+		return nil, false, err
 	}
+	for _, p := range []string{legacy, shared} {
+		if p == "" {
+			continue
+		}
+		d, found, err := readRecord(p)
+		if err != nil {
+			return nil, false, err
+		}
+		if found {
+			ok = true
+			digests = append(digests, d...)
+		}
+	}
+	return dedupe(digests), ok, nil
+}
+
+// readRecord reads one record's digests; found is false when there is no
+// record at path.
+func readRecord(path string) (digests []string, found bool, err error) {
 	data, err := os.ReadFile(path) //nolint:gosec // G304: the path is a hash under the store's own directory
 	if errors.Is(err, fs.ErrNotExist) {
-		return "", false, nil
+		return nil, false, nil
 	}
 	if err != nil {
-		return "", false, err
+		return nil, false, err
 	}
 	var r record
 	dec := toml.NewDecoder(bytes.NewReader(data)).DisallowUnknownFields()
-	if dec.Decode(&r) != nil || r.Version != Version || !digestShape.MatchString(r.Digest) {
-		return "", false, ErrBadRecord
+	if dec.Decode(&r) != nil {
+		return nil, false, ErrBadRecord
 	}
-	return r.Digest, true, nil
+	switch r.Version {
+	case legacyVersion:
+		if r.Digests != nil || !digestShape.MatchString(r.Digest) {
+			return nil, false, ErrBadRecord
+		}
+		return []string{r.Digest}, true, nil
+	case Version:
+		if r.Digest != "" || len(r.Digests) == 0 || len(r.Digests) > MaxDigests {
+			return nil, false, ErrBadRecord
+		}
+		for _, d := range r.Digests {
+			if !digestShape.MatchString(d) {
+				return nil, false, ErrBadRecord
+			}
+		}
+		return r.Digests, true, nil
+	}
+	return nil, false, ErrBadRecord
 }
 
-// Status checks the policy file at policyPath against the approval of the
-// repository at root.
-func (s *Store) Status(root, policyPath string) (Status, error) {
+// Status checks the policy file at policyPath against the approvals of r.
+func (s *Store) Status(r Repository, policyPath string) (Status, error) {
 	digest, err := DigestFile(policyPath)
 	if errors.Is(err, fs.ErrNotExist) {
 		return Missing, nil
@@ -307,19 +446,19 @@ func (s *Store) Status(root, policyPath string) (Status, error) {
 	if err != nil {
 		return Unapproved, err
 	}
-	return s.Check(root, digest)
+	return s.Check(r, digest)
 }
 
-// Check checks a policy's digest against the approval of the repository at
-// root. It is never Missing.
-func (s *Store) Check(root, digest string) (Status, error) {
-	recorded, ok, err := s.Recorded(root)
+// Check checks a policy's digest against the approvals of r: Approved when
+// it is one of the approved digests. It is never Missing.
+func (s *Store) Check(r Repository, digest string) (Status, error) {
+	digests, ok, err := s.Recorded(r)
 	switch {
 	case err != nil:
 		return Unapproved, err
 	case !ok:
 		return Unapproved, nil
-	case recorded != digest:
+	case !slices.Contains(digests, digest):
 		return Changed, nil
 	}
 	return Approved, nil
