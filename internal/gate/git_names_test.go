@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/craigalodon/pbipx/internal/corpus"
 	"github.com/craigalodon/pbipx/internal/gate"
 )
 
@@ -213,5 +214,19 @@ func TestShellGitOtherRepositories(t *testing.T) {
 		{"a linked work tree's blob", sh("git -C " + wt + " show HEAD:" + reportJSON), git},
 		{"a linked work tree's blame", sh("git -C " + wt + " blame " + reportJSON), git},
 		{"a linked work tree's blame away", sh("git -C " + wt + " blame README.md"), ""},
+	})
+
+	// A repository nested in the work tree: the roots apply relative to it.
+	inner := filepath.Join(root, "vendor", "inner")
+	write(t, inner, "README.md", "Inner.\n")
+	write(t, inner, "pbip/x.json", "{}\n")
+	if err := corpus.GitSetup(inner, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	run(t, root, []decideCase{
+		{"a nested repository's root file", sh("git -C vendor/inner blame pbip/x.json"), git},
+		{"a nested repository's log", sh("git -C vendor/inner log -p"), git},
+		{"a nested repository's log, a path away", sh("git -C vendor/inner log -p -- README.md"), ""},
+		{"a nested repository's blame away", sh("git -C vendor/inner blame README.md"), ""},
 	})
 }

@@ -449,7 +449,7 @@ type gitCheck struct {
 	content bool
 	// deny is content that cannot be placed.
 	deny bool
-	// bySpecs: specs must provably avoid every root (avoidsRoots). Nil
+	// bySpecs: specs must provably avoid every root (specsAvoid). Nil
 	// specs are the whole tree.
 	bySpecs bool
 	specs   []pathspec
@@ -506,7 +506,7 @@ func (s *setup) gitContent(args []string) string {
 		return ""
 	case c.deny || inv.elsewhere || inv.place == gitUnknown:
 		return inv.sub
-	case c.bySpecs && (inv.oddSpecs || !s.avoidsRoots(c.specs)):
+	case c.bySpecs && (inv.oddSpecs || !s.specsAvoid(inv, c.specs)):
 		return inv.sub
 	}
 	for _, r := range c.runs {
@@ -1541,11 +1541,41 @@ func (s *setup) place(inv gitInvocation, a string, exclude bool) pathspec {
 	return pathspec{rel: path.Join(inv.prefix, path.Clean(r)), exclude: exclude}
 }
 
-// avoidsRoots reports whether pathspecs provably keep a git command away
-// from every protected root: each root is excluded, or no positive pathspec
+// specsAvoid is avoidsRootsIn for inv's pathspecs and the protected roots.
+// In a repository nested in this one's work tree the roots apply relative
+// to it as well (frames): the specs are judged again from its top, against
+// its roots.
+func (s *setup) specsAvoid(inv gitInvocation, specs []pathspec) bool {
+	if !avoidsRootsIn(s.policy.ProtectedRoots(), specs) {
+		return false
+	}
+	if inv.prefix == "" {
+		return true
+	}
+	fs := s.frames(inv.prefix)
+	f := fs[len(fs)-1]
+	if f.sub != "." {
+		return true
+	}
+	inner := make([]pathspec, 0, len(specs))
+	for _, sp := range specs {
+		if !sp.unprovable {
+			r, ok := relTo(inv.prefix, sp.rel, false)
+			if !ok {
+				continue // outside the nested work tree
+			}
+			sp.rel = r
+		}
+		inner = append(inner, sp)
+	}
+	return avoidsRootsIn(f.roots(), inner)
+}
+
+// avoidsRootsIn reports whether pathspecs provably keep a git command away
+// from every one of roots: each root is excluded, or no positive pathspec
 // touches it. No positive pathspec means the whole tree. An exclusion
 // counts only when it can be placed and covers the whole root.
-func (s *setup) avoidsRoots(specs []pathspec) bool {
+func avoidsRootsIn(roots []string, specs []pathspec) bool {
 	var positives []pathspec
 	for _, sp := range specs {
 		if !sp.exclude {
@@ -1555,7 +1585,7 @@ func (s *setup) avoidsRoots(specs []pathspec) bool {
 	if len(positives) == 0 {
 		positives = []pathspec{{rel: "."}}
 	}
-	for _, root := range s.policy.ProtectedRoots() {
+	for _, root := range roots {
 		excluded := false
 		for _, sp := range specs {
 			if sp.exclude && !sp.unprovable && (sp.rel == "." || root == sp.rel || strings.HasPrefix(root, sp.rel+"/")) {
