@@ -121,7 +121,7 @@ func TestShellKeywords(t *testing.T) {
 		{"function keyword", sh("function f { rg Doe; }"), "", gate.ReasonFinding},
 		{"time", sh("time rg x"), "", gate.ReasonFinding},
 		{"for over files", sh("for f in notes/*; do cat $f; done"), "", gate.ReasonFinding},
-		{"git after if", sh("if true; then git diff; fi"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"git after if", sh("if true; then git log -p; fi"), gate.ReasonGitContent, gate.ReasonGitContent},
 		{"git after !", sh("! git log -p"), gate.ReasonGitContent, gate.ReasonGitContent},
 		{"git in a group", sh("{ git show; }"), gate.ReasonGitContent, gate.ReasonGitContent},
 		{"a test away from the roots", sh("if [ -f x ]; then echo y; fi"), "", ""},
@@ -176,7 +176,7 @@ func TestShellFindAndXargs(t *testing.T) {
 		{"xargs reader with options", sh("echo x | xargs -n 1 -I {} cat {}"), "", gate.ReasonFinding},
 		{"xargs reader from a directory away", shIn("sql", "echo x | xargs cat"), "", ""},
 		{"xargs non-reader", shIn("sql", "echo x | xargs echo"), "", ""},
-		{"find -exec git", sh(`find notes -exec git diff \;`), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"find -exec git", sh(`find notes -exec git log -p \;`), gate.ReasonGitContent, gate.ReasonGitContent},
 	})
 }
 
@@ -303,19 +303,19 @@ func TestShellQuoting(t *testing.T) {
 func TestShellNested(t *testing.T) {
 	runBoth(t, []both{
 		{"sh -c", shIn("sql", `bash -c "cd ../notes && rg x .."`), "", gate.ReasonFinding},
-		{"sh -c git", sh("sh -c 'git diff'"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"sh -c git", sh("sh -c 'git log -p'"), gate.ReasonGitContent, gate.ReasonGitContent},
 		{"bash -lc", sh("bash -lc 'git log -p'"), gate.ReasonGitContent, gate.ReasonGitContent},
 		{"zsh -o opt -c", sh("zsh -o extendedglob -c 'git show'"), gate.ReasonGitContent, gate.ReasonGitContent},
-		{"eval", sh("eval 'git diff'"), gate.ReasonGitContent, gate.ReasonGitContent},
-		{"eval words", sh("eval git diff"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"eval", sh("eval 'git log -p'"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"eval words", sh("eval git log -p"), gate.ReasonGitContent, gate.ReasonGitContent},
 		{"eval moves the directory", sh("eval 'cd sql'; rg x"), "", ""},
 		{"sh -c does not", sh("sh -c 'cd sql'; rg x"), "", gate.ReasonFinding},
 		{"too deep", shIn("sql", "eval eval eval eval eval eval ls"), "", gate.ReasonFinding},
 		{"not too deep", shIn("sql", "eval eval eval ls"), "", ""},
 		{"built at run time", shIn("sql", `bash -c "$CMD"`), "", gate.ReasonFinding},
-		{"a substitution", shIn("sql", "echo $(git diff)"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a substitution", shIn("sql", "echo $(git log -p)"), gate.ReasonGitContent, gate.ReasonGitContent},
 		{"a backtick substitution", shIn("sql", "echo `cd .. && rg x`"), "", gate.ReasonFinding},
-		{"script -c", shIn("sql", "script -c 'git diff' /dev/null"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"script -c", shIn("sql", "script -c 'git log -p' /dev/null"), gate.ReasonGitContent, gate.ReasonGitContent},
 		{"sh running a file", shIn("sql", "sh build.sh"), "", ""},
 	})
 }

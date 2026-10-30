@@ -1,6 +1,7 @@
-description = "git -C . diff: the global option consumes its argument and diff is still found. Plants no value"
+description = "git -C . diff: the global option consumes its argument and diff is still found; it prints a file deleted under the root. Plants no value"
 command     = "gate"
 args        = []
 policy      = "default"
 exit        = 2
 sentinels   = []
+deleted     = ["pbip/Example.Report/definition/report.json"]

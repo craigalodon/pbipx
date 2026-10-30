@@ -2,14 +2,19 @@ package gate
 
 import (
 	"errors"
+	"os"
 	"path"
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/craigalodon/pbipx/internal/baseline"
+	"github.com/craigalodon/pbipx/internal/policy"
+	"github.com/craigalodon/pbipx/internal/scan"
 )
 
 // Git subcommands that always print file content (behavior.md, "The gate",
-// Bash rule 2).
+// Bash rule 2). grep is judged by the files it would print from.
 var gitAlwaysContent = map[string]bool{
 	"blame": true, "annotate": true, "grep": true, "archive": true,
 	"format-patch": true, "difftool": true, "range-diff": true,
@@ -34,7 +39,7 @@ var gitSummaryFlags = []string{
 var gitPatchFlags = []string{
 	"-p", "-u", "--patch", "--patch-with-stat", "--patch-with-raw", "-U", "--unified",
 	"--cc", "-c", "--dd", "--remerge-diff", "--full-diff", "-L", "--word-diff", "--color-words",
-	"--function-context", "-W", "--binary", "--ext-diff", "--textconv", "-S", "-G",
+	"--function-context", "-W", "--binary", "--ext-diff", "--textconv", "-S", "-G", "--check",
 }
 
 // gitValueFlags are flags whose value can be attached without "=".
@@ -57,10 +62,64 @@ var gitGlobalWithValue = map[string]bool{
 	"--config-env": true, "--super-prefix": true, "--list-cmds": true, "--attr-source": true,
 }
 
+// gitRevValueOpts are options of log, show and the diff commands that take
+// their value as the next word (git show --max-count 1 HEAD). Only options
+// known to do so are listed: a word wrongly taken for a value could hide a
+// revision.
+var gitRevValueOpts = map[string]bool{
+	"-n": true, "--max-count": true, "--skip": true, "--since": true, "--after": true,
+	"--until": true, "--before": true, "--since-as-filter": true, "--author": true,
+	"--committer": true, "--grep": true, "--grep-reflog": true, "--date": true,
+	"--diff-merges": true, "--diff-filter": true, "-S": true, "-G": true, "-O": true,
+	"-L": true, "--find-object": true, "--output": true, "--line-prefix": true,
+	"--word-diff-regex": true, "--stat-width": true, "--stat-name-width": true,
+	"--stat-graph-width": true, "--stat-count": true, "--color-moved-ws": true,
+	"--src-prefix": true, "--dst-prefix": true, "--anchored": true, "--diff-algorithm": true,
+	"-I": true, "--ignore-matching-lines": true, "--skip-to": true, "--rotate-to": true,
+	"--inter-hunk-context": true, "--output-indicator-new": true, "--output-indicator-old": true,
+	"--output-indicator-context": true, "--ws-error-highlight": true, "--default": true,
+	"--exclude": true,
+}
+
+// gitStripNext are the diff options removed from a name-only run that
+// take their value as the next word, which goes with them.
+var gitStripNext = map[string]bool{
+	"--output": true, "--line-prefix": true, "--word-diff-regex": true, "--stat-width": true,
+	"--stat-name-width": true, "--stat-graph-width": true, "--stat-count": true,
+	"--color-moved-ws": true,
+}
+
+// gitStripNames are the options removed from a name-only run, alone or
+// with "=value": each changes only how a diff is printed, or prints it
+// elsewhere (--output), and some cannot be combined with --name-status.
+var gitStripNames = map[string]bool{
+	"-p": true, "-u": true, "--patch": true, "--patch-with-stat": true, "--patch-with-raw": true,
+	"--no-patch": true, "-s": true, "--quiet": true, "--stat": true, "--numstat": true,
+	"--shortstat": true, "--summary": true, "--compact-summary": true, "--raw": true,
+	"--name-only": true, "--name-status": true, "--check": true, "--dirstat": true,
+	"--dirstat-by-file": true, "--cumulative": true, "--function-context": true, "-W": true,
+	"--binary": true, "--ext-diff": true, "--no-ext-diff": true, "--textconv": true,
+	"--no-textconv": true, "--word-diff": true, "--color-words": true, "--color": true,
+	"--no-color": true, "--color-moved": true, "--graph": true, "--oneline": true,
+	"--pretty": true, "--format": true, "--relative": true, "--no-relative": true,
+	"--show-signature": true, "--log-size": true, "--show-linear-break": true, "--unified": true,
+	"--output": true, "--line-prefix": true, "--word-diff-regex": true, "--stat-width": true,
+	"--stat-name-width": true, "--stat-graph-width": true, "--stat-count": true,
+	"--color-moved-ws": true,
+}
+
+// gitNameOnly are the options every name-only run of a diff, log or show
+// is given: names and statuses separated by NUL, nothing run but git, and
+// paths relative to the top of the work tree.
+var gitNameOnly = []string{
+	"--name-status", "-z", "--no-color", "--no-ext-diff", "--no-textconv", "--no-relative",
+}
+
 // gitBuiltins are git's own commands. git runs a built-in command before it
 // looks for an alias of the same name, so these are never resolved as
-// aliases; any other name may be one. Every command this file judges is
-// here.
+// aliases. A name that is neither one of these nor an alias is denied when
+// the command might print content: it could be an alias defined earlier
+// in the same command line, or a git-<name> program.
 var gitBuiltins = map[string]bool{}
 
 func init() {
@@ -81,6 +140,9 @@ func init() {
 			"sparse-checkout", "stash", "status", "submodule", "switch", "symbolic-ref", "tag",
 			"update-index", "update-ref", "var", "verify-commit", "verify-pack", "verify-tag",
 			"version", "whatchanged", "worktree", "write-tree", "mergetool", "instaweb",
+			"stage", "init-db", "pack-refs", "prune-packed", "multi-pack-index",
+			"update-server-info", "patch-id", "stripspace", "fmt-merge-msg", "mailsplit",
+			"mailinfo", "get-tar-commit-id", "unpack-objects", "refs", "last-modified",
 		},
 	} {
 		for _, name := range list {
@@ -97,6 +159,23 @@ func mapKeys(m map[string]bool) []string {
 	return out
 }
 
+// gitPlace is where a git command runs, relative to this repository.
+type gitPlace int
+
+const (
+	// gitHere is this repository: its work tree, a work tree linked to it,
+	// or a repository nested inside its work tree.
+	gitHere gitPlace = iota
+	// gitUnknown is a directory that does not exist, cannot be asked
+	// about, or is a repository whose work tree holds this one.
+	gitUnknown
+	// gitForeign is another repository, outside this one's work tree.
+	gitForeign
+	// gitNongit is a directory outside every repository (and not above
+	// this one).
+	gitNongit
+)
+
 // gitInvocation is one git command line, read far enough to judge it.
 type gitInvocation struct {
 	sub string // the subcommand
@@ -106,6 +185,9 @@ type gitInvocation struct {
 	// specs are the words after "--", and dashdash whether there was one.
 	specs    []string
 	dashdash bool
+	// globals are the global options before the subcommand, with their
+	// values, but -C: a name-only run passes them on.
+	globals []string
 	// dir is the directory relative paths start from (-C moves it).
 	dir string
 	// elsewhere is true when --git-dir or --work-tree point git at a tree
@@ -118,6 +200,16 @@ type gitInvocation struct {
 	// oddSpecs is true when a global option changes how every pathspec
 	// matches (--literal-pathspecs, --glob-pathspecs, --icase-pathspecs).
 	oddSpecs bool
+
+	// place is where dir is (locate). For gitHere, top is the root of the
+	// work tree git runs in ("" inside a git directory), and prefix is
+	// where that work tree is in this repository's tree: "" for this
+	// repository and its linked work trees, whose paths are this
+	// repository's, and the nested repository's path for one nested in
+	// it.
+	place  gitPlace
+	top    string
+	prefix string
 }
 
 // parseGit reads a git command's words after "git". ok is false when there
@@ -130,6 +222,7 @@ func parseGit(words []string, cwd string) (inv gitInvocation, ok bool) {
 // parse reads words, global options then a subcommand, on top of what inv
 // already holds.
 func (inv gitInvocation) parse(words []string) (gitInvocation, bool) {
+	inv.globals = slices.Clone(inv.globals)
 	i := 0
 	for i < len(words) {
 		w := words[i]
@@ -163,8 +256,15 @@ func (inv gitInvocation) parse(words []string) (gitInvocation, bool) {
 		case w == "--literal-pathspecs" || w == "--glob-pathspecs" || w == "--icase-pathspecs":
 			inv.oddSpecs = true
 		}
+		takesNext := gitGlobalWithValue[name] && !hasValue
+		if w != "-C" {
+			inv.globals = append(inv.globals, w)
+			if takesNext && next != "" {
+				inv.globals = append(inv.globals, next)
+			}
+		}
 		i++
-		if gitGlobalWithValue[name] && !hasValue {
+		if takesNext {
 			i++
 		}
 	}
@@ -303,6 +403,33 @@ func positional(args []string) []string {
 	return out
 }
 
+// positionalIndex is the indexes in args of the arguments that are neither
+// options nor the value of an option in values, which take the next word
+// unless their value is attached with "=". "-" alone is positional.
+func positionalIndex(args []string, values map[string]bool) []int {
+	var out []int
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if len(a) < 2 || a[0] != '-' {
+			out = append(out, i)
+			continue
+		}
+		if !strings.Contains(a, "=") && values[a] {
+			i++
+		}
+	}
+	return out
+}
+
+// positionalOf is the words of args at positionalIndex.
+func positionalOf(args []string, values map[string]bool) []string {
+	var out []string
+	for _, i := range positionalIndex(args, values) {
+		out = append(out, args[i])
+	}
+	return out
+}
+
 // pathspec is one path a git command is limited to, or excludes.
 type pathspec struct {
 	rel     string // repository-relative, clean; "" when it cannot be placed
@@ -315,6 +442,32 @@ type pathspec struct {
 
 // unprovable is the answer for content whose source cannot be placed.
 func unprovable() []pathspec { return []pathspec{{unprovable: true}} }
+
+// gitCheck is what judging a git command needs: whether it prints content,
+// and how to tell where the content comes from.
+type gitCheck struct {
+	content bool
+	// deny is content that cannot be placed.
+	deny bool
+	// bySpecs: specs must provably avoid every root (avoidsRoots). Nil
+	// specs are the whole tree.
+	bySpecs bool
+	specs   []pathspec
+	// runs are name-only forms of the command: every file each one names
+	// must be allowed.
+	runs []nameRun
+}
+
+func noContent() gitCheck               { return gitCheck{} }
+func unplaceable() gitCheck             { return gitCheck{content: true, deny: true} }
+func bySpecs(specs []pathspec) gitCheck { return gitCheck{content: true, bySpecs: true, specs: specs} }
+func byRuns(runs ...nameRun) gitCheck   { return gitCheck{content: true, runs: runs} }
+func contentIf(c bool, specs []pathspec) gitCheck {
+	if !c {
+		return noContent()
+	}
+	return bySpecs(specs)
+}
 
 // gitContent decides rule 2 for one simple command: whether it is git
 // printing content that could come from a protected root. args is the
@@ -336,20 +489,49 @@ func (s *setup) gitContent(args []string) string {
 	if !ok || inv.unsafe {
 		return inv.sub
 	}
-	specs, content := s.gitSpecs(inv)
-	if !content {
+	s.locate(&inv)
+	switch inv.place {
+	case gitForeign, gitNongit:
+		// The protected roots are this repository's: elsewhere only a path
+		// the command names can reach them (diff --no-index, grep
+		// --no-index).
+		if s.foreignReads(inv) {
+			return inv.sub
+		}
 		return ""
 	}
-	if !inv.elsewhere && !inv.oddSpecs && s.avoidsRoots(specs) {
+	c := s.gitSpecs(inv)
+	switch {
+	case !c.content:
 		return ""
+	case c.deny || inv.elsewhere || inv.place == gitUnknown:
+		return inv.sub
+	case c.bySpecs && (inv.oddSpecs || !s.avoidsRoots(c.specs)):
+		return inv.sub
 	}
-	return inv.sub
+	for _, r := range c.runs {
+		ok := s.git().names(inv.dir, r, func(p string) bool { return !s.namedForbidden(inv, p, r) })
+		if !ok {
+			return inv.sub
+		}
+	}
+	return ""
+}
+
+// git is the decision's git session.
+func (s *setup) git() *gitSession {
+	if s.gitq == nil {
+		s.gitq = newGitSession()
+	}
+	return s.gitq
 }
 
 // resolveAlias returns the invocation git runs when inv's subcommand is an
 // alias: its expansion, split as git splits it, then inv's arguments. ok is
 // false when that cannot be told: a shell alias ("!"), an alias of an
-// alias, an expansion that does not split, or git failing to answer.
+// alias, an expansion that does not split, git failing to answer, or a
+// name that is neither a built-in command nor an alias (an alias defined
+// earlier in the same command line, or a git-<name> program).
 func (s *setup) resolveAlias(inv gitInvocation) (gitInvocation, bool) {
 	if gitBuiltins[inv.sub] || inv.unsafe {
 		return inv, true
@@ -358,10 +540,7 @@ func (s *setup) resolveAlias(inv gitInvocation) (gitInvocation, bool) {
 		// The alias would come from another repository's configuration.
 		return inv, false
 	}
-	expansion, err := configValue(inv.dir, "alias."+inv.sub, "")
-	if errors.Is(err, errNotSet) {
-		return inv, true // not an alias: another program, or a typo
-	}
+	expansion, err := s.git().configValue(inv.dir, "alias."+inv.sub, "")
 	if err != nil || strings.HasPrefix(expansion, "!") {
 		return inv, false
 	}
@@ -370,13 +549,8 @@ func (s *setup) resolveAlias(inv gitInvocation) (gitInvocation, bool) {
 		return inv, false
 	}
 	next, ok := inv.parse(slices.Concat(words, inv.rest))
-	if !ok {
+	if !ok || !gitBuiltins[next.sub] {
 		return inv, false
-	}
-	if !gitBuiltins[next.sub] {
-		if _, err := configValue(next.dir, "alias."+next.sub, ""); !errors.Is(err, errNotSet) {
-			return inv, false
-		}
 	}
 	return next, true
 }
@@ -428,101 +602,739 @@ func splitAlias(v string) ([]string, bool) {
 	return out, true
 }
 
-// gitSpecs says whether inv prints content and, if it does, the paths that
-// content can come from. Nil specs with content true is the whole tree.
-func (s *setup) gitSpecs(inv gitInvocation) (specs []pathspec, content bool) {
+// locate sets where inv runs: in this repository (or one nested in its
+// work tree), in another repository, outside every repository, or
+// somewhere that cannot be told.
+func (s *setup) locate(inv *gitInvocation) {
+	inv.place = gitUnknown
+	if inv.elsewhere {
+		return
+	}
+	if st, err := os.Stat(inv.dir); err != nil || !st.IsDir() {
+		// It may be made earlier in the same command line.
+		return
+	}
+	info, err := s.git().repoAt(inv.dir)
+	if err != nil {
+		return
+	}
+	if info.nongit {
+		if !s.holdsRepo(inv.dir) {
+			inv.place = gitNongit
+		}
+		return
+	}
+	ours, err := s.git().commonDir(s.repo.Root)
+	if err != nil {
+		return
+	}
+	if samePath(resolve(info.common), ours, s.fold) {
+		inv.place, inv.top = gitHere, info.top
+		return
+	}
+	// Another repository: nested in this one's work tree, holding it, or
+	// apart from it.
+	where := info.top
+	if where == "" {
+		where = info.common
+	}
+	switch r, ok := s.relAny(where); {
+	case ok && info.top != "" && r != ".":
+		inv.place, inv.top, inv.prefix = gitHere, info.top, r
+	case ok:
+		// A git directory inside this work tree with no work tree of its
+		// own: its paths cannot be placed here.
+	case !s.holdsRepo(where):
+		inv.place = gitForeign
+	}
+}
+
+// holdsRepo reports whether the absolute path a is this repository's root
+// or a directory above it.
+func (s *setup) holdsRepo(a string) bool {
+	for _, sp := range []string{a, resolve(a)} {
+		if _, above := relTo(sp, s.repo.Root, true); above {
+			return true
+		}
+	}
+	return false
+}
+
+// relAny is a relative to the repository root, as spelled or with its
+// symlinks resolved.
+func (s *setup) relAny(a string) (string, bool) {
+	if r, ok := s.rel(a); ok {
+		return r, true
+	}
+	return s.rel(resolve(a))
+}
+
+// samePath compares two clean absolute paths.
+func samePath(a, b string, fold bool) bool {
+	a, b = filepath.Clean(a), filepath.Clean(b)
+	if fold {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
+}
+
+// foreignReads reports whether a git command run outside this repository
+// names a path in it that it could print: any word, or the value of a
+// --flag=value, that is a protected root, is inside or contains one, or is
+// a file named for its content's sake (forbiddenRel).
+func (s *setup) foreignReads(inv gitInvocation) bool {
+	for _, w := range inv.rest {
+		if w == "--" || w == "-" {
+			continue
+		}
+		if strings.HasPrefix(w, "-") {
+			_, v, ok := strings.Cut(w, "=")
+			if !ok {
+				continue
+			}
+			w = v
+		}
+		if i := strings.IndexAny(w, "*?["); i >= 0 {
+			w = path.Dir(w[:i] + "x")
+		}
+		if s.touchesIn(inv.dir, w) {
+			return true
+		}
+		for _, r := range s.relsOf(spellings(inv.dir, w)) {
+			if s.forbiddenRel(r) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// forbiddenRel reports whether content from the repository-relative path
+// rel may not be printed by git: rel is a protected root, is inside one or
+// contains one (local state lives there too), or is a Claude Code
+// settings file, the policy or the baseline.
+func (s *setup) forbiddenRel(rel string) bool {
+	if s.touchesRel(rel) || scan.IsAgentSettings(rel) {
+		return true
+	}
+	return strings.EqualFold(rel, policy.FileName) || strings.EqualFold(rel, baseline.FileName)
+}
+
+// namedForbidden judges one path a name-only run printed. git prints it
+// relative to the top of the work tree it runs in; grep prints it with a
+// revision as "REV:path", and grep --no-index and diff comparing files
+// outside the work tree relative to the directory they run in (r.dirRel).
+// Every reading is judged.
+func (s *setup) namedForbidden(inv gitInvocation, p string, r nameRun) bool {
+	cands := []string{p}
+	if r.grep {
+		for i := range len(p) {
+			if p[i] != ':' {
+				continue
+			}
+			rest := p[i+1:]
+			cands = append(cands, rest)
+			if tree, ok := revPath(p[:i]); ok {
+				cands = append(cands, path.Join(tree, rest))
+			}
+		}
+	}
+	for _, c := range cands {
+		if filepath.IsAbs(c) {
+			if s.absForbidden(c) {
+				return true
+			}
+			continue
+		}
+		clean := path.Clean(c)
+		if clean == ".." || strings.HasPrefix(clean, "../") {
+			if inv.top == "" || s.absForbidden(filepath.Join(inv.top, filepath.FromSlash(c))) {
+				return true
+			}
+		} else if s.forbiddenRel(path.Join(inv.prefix, clean)) {
+			return true
+		}
+		if r.dirRel && s.absForbidden(abs(inv.dir, c)) {
+			return true
+		}
+	}
+	return false
+}
+
+// absForbidden is forbiddenRel for an absolute path, as spelled and with
+// symlinks resolved; a path outside the repository is allowed, and one
+// above it holds every root.
+func (s *setup) absForbidden(a string) bool {
+	if s.touchesAbs(a) || s.touchesAbs(resolve(a)) {
+		return true
+	}
+	return slices.ContainsFunc(s.relsOf([]string{a, resolve(a)}), s.forbiddenRel)
+}
+
+// gitSpecs says whether inv prints content and, if it does, how to place
+// it.
+func (s *setup) gitSpecs(inv gitInvocation) gitCheck {
 	patch := hasFlag(inv.args, gitPatchFlags)
 	after := func() []pathspec {
 		if hasFlag(inv.args, []string{"--pathspec-from-file"}) {
 			return unprovable()
 		}
-		return s.parseSpecs(inv.specs, inv.dir)
+		return s.parseSpecs(inv, inv.specs)
 	}
 	switch inv.sub {
 	case "blame", "annotate":
-		return s.blameSpecs(inv), true
+		return bySpecs(s.blameSpecs(inv))
 	case "diff":
 		if hasFlag(inv.args, gitSummaryFlags) && !patch {
-			return nil, false
+			return noContent()
 		}
-		return after(), true
+		return s.diffCheck(inv)
 	case "diff-tree":
-		if !patch && !hasFlag(inv.args, []string{"--stdin"}) {
-			return nil, false
+		if hasFlag(inv.args, []string{"--stdin"}) {
+			return unplaceable()
 		}
-		return after(), true
+		if !patch {
+			return noContent()
+		}
+		extra := []string{"-r", "--no-commit-id"}
+		if hasFlag(inv.args, []string{"-c", "--cc"}) {
+			extra = append(extra, "--combined-all-paths")
+		}
+		return byRuns(s.diffRun(inv, []string{"diff-tree"}, extra, inv.args, nil))
 	case "diff-index", "diff-files":
 		if !patch {
-			return nil, false
+			return noContent()
 		}
-		return after(), true
+		return byRuns(s.diffRun(inv, []string{inv.sub}, nil, inv.args, nil))
 	case "show":
-		return s.showSpecs(inv, patch)
-	case "log", "reflog", "whatchanged":
+		return s.showCheck(inv, patch)
+	case "log", "whatchanged":
 		if !patch {
-			return nil, false
+			return noContent()
 		}
-		return after(), true
+		return s.logCheck(inv, []string{inv.sub}, inv.args)
+	case "reflog":
+		return s.reflogCheck(inv)
 	case "stash":
-		return s.stashSpecs(inv)
-	case "add":
+		return s.stashCheck(inv)
+	case "grep":
+		return s.grepCheck(inv)
+	case "status":
+		return s.verboseCheck(inv, verbosity(inv.args, "u"), false)
+	case "add", "stage":
 		if !hasShort(inv.args, 'p', "--patch", "") && !hasShort(inv.args, 'i', "--interactive", "") {
-			return nil, false
+			return noContent()
 		}
 		if hasFlag(inv.args, []string{"--pathspec-from-file"}) {
-			return unprovable(), true
+			return bySpecs(unprovable())
 		}
-		return s.parseSpecs(slices.Concat(positional(inv.args), inv.specs), inv.dir), true
+		vals := map[string]bool{"--chmod": true}
+		return bySpecs(s.parseSpecs(inv, slices.Concat(positionalOf(inv.args, vals), inv.specs)))
 	case "restore":
 		if !hasShort(inv.args, 'p', "--patch", "s") {
-			return nil, false
+			return noContent()
 		}
 		if hasFlag(inv.args, []string{"--pathspec-from-file"}) {
-			return unprovable(), true
+			return bySpecs(unprovable())
 		}
-		return s.parseSpecs(slices.Concat(positional(inv.args), inv.specs), inv.dir), true
+		vals := map[string]bool{"-s": true, "--source": true, "--conflict": true}
+		return bySpecs(s.parseSpecs(inv, slices.Concat(positionalOf(inv.args, vals), inv.specs)))
 	case "checkout", "reset":
 		if !hasShort(inv.args, 'p', "--patch", "bB") {
-			return nil, false
+			return noContent()
 		}
-		return after(), true
+		return bySpecs(s.treeishSpecs(inv))
 	case "commit":
-		if !hasShort(inv.args, 'p', "--patch", "mFCcSt") && !hasFlag(inv.args, []string{"--interactive"}) {
-			return nil, false
+		if hasShort(inv.args, 'p', "--patch", "mFCcSt") || hasFlag(inv.args, []string{"--interactive"}) {
+			return bySpecs(after())
 		}
-		return after(), true
+		if hasFlag(inv.args, []string{"--dry-run"}) {
+			// The dry run prints the diff that would be committed: with -a,
+			// -o or -i, unstaged changes too.
+			return s.verboseCheck(inv, verbosity(inv.args, "mFCcSt"), true)
+		}
+		return noContent()
 	case "rebase", "am":
 		if hasFlag(inv.args, []string{"--show-current-patch"}) ||
 			(inv.sub == "rebase" && hasShort(inv.args, 'x', "--exec", "sSXo")) {
-			return unprovable(), true
+			return unplaceable()
 		}
-		return nil, false
+		return noContent()
 	case "request-pull":
-		return unprovable(), hasShort(inv.args, 'p', "", "")
+		return contentIf(hasShort(inv.args, 'p', "", ""), unprovable())
 	case "bundle":
-		return unprovable(), bundleToOutput(inv.args)
+		return contentIf(bundleToOutput(inv.args), unprovable())
 	case "merge-tree":
 		// The trivial merge prints the merged content; --write-tree, the
 		// default for two commits, prints object names.
 		trivial := hasFlag(inv.args, []string{"--trivial-merge"}) ||
 			(!hasFlag(inv.args, []string{"--write-tree"}) && len(positional(inv.args)) >= 3)
-		return unprovable(), trivial
+		return contentIf(trivial, unprovable())
 	case "merge-file":
-		return unprovable(), hasFlag(inv.args, []string{"--object-id"})
+		return contentIf(hasFlag(inv.args, []string{"--object-id"}), unprovable())
 	case "submodule":
-		return unprovable(), slices.Contains(positional(inv.args), "foreach")
+		return contentIf(slices.Contains(positional(inv.args), "foreach"), unprovable())
 	case "bisect":
-		return unprovable(), len(inv.args) > 0 && inv.args[0] == "run"
+		return contentIf(len(inv.args) > 0 && inv.args[0] == "run", unprovable())
 	case "cat-file":
 		return s.catFileSpecs(inv)
 	}
 	if gitUnplaceable[inv.sub] {
-		return unprovable(), true
+		return unplaceable()
 	}
 	if gitAlwaysContent[inv.sub] {
-		return after(), true
+		return bySpecs(after())
 	}
-	return nil, false
+	return noContent()
+}
+
+// filterDiffArgs is args without the options that only change how a diff
+// is printed (gitStripNames, "-U<n>", "-X<param>"), and their values;
+// keep names options to leave in place (stash show's -u).
+func filterDiffArgs(args []string, keep ...string) []string {
+	var out []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		name, _, hasValue := strings.Cut(a, "=")
+		switch {
+		case slices.Contains(keep, a):
+		case gitStripNames[name]:
+			if gitStripNext[name] && !hasValue {
+				i++
+			}
+			continue
+		case strings.HasPrefix(a, "-U") || strings.HasPrefix(a, "-X"):
+			continue
+		}
+		out = append(out, a)
+	}
+	return out
+}
+
+// diffRun is the name-only form of a diff, log or show: the global
+// options, head (the subcommand and any of its own subcommand), the
+// name-only options, extra, args without their printing options, and the
+// pathspecs after "--". keep is passed to filterDiffArgs.
+func (s *setup) diffRun(inv gitInvocation, head, extra, args, keep []string) nameRun {
+	argv := slices.Concat(inv.globals, head, gitNameOnly, extra, filterDiffArgs(args, keep...))
+	if inv.dashdash {
+		argv = append(append(argv, "--"), inv.specs...)
+	}
+	return nameRun{argv: argv, combined: slices.Contains(extra, "--combined-all-paths")}
+}
+
+// diffCheck judges git diff. With --no-index, or two paths of which one is
+// outside the work tree (git then compares the two files, wherever they
+// are), the paths it names are judged; otherwise its name-only form is.
+func (s *setup) diffCheck(inv gitInvocation) gitCheck {
+	noIndex := hasFlag(inv.args, []string{"--no-index"})
+	outside := noIndex || s.namesOutside(inv)
+	if outside {
+		if s.foreignReads(inv) || s.namesDir(inv) {
+			return unplaceable()
+		}
+		if noIndex {
+			return noContent()
+		}
+	}
+	r := s.diffRun(inv, []string{"diff"}, []string{"-c", "--combined-all-paths"}, inv.args, nil)
+	r.dirRel = outside
+	return byRuns(r)
+}
+
+// namesOutside reports whether a word of inv, taken as a path, is an
+// existing file or directory outside the work tree inv runs in.
+func (s *setup) namesOutside(inv gitInvocation) bool {
+	for _, w := range inv.rest {
+		if w == "--" || strings.HasPrefix(w, "-") {
+			continue
+		}
+		for _, a := range spellings(inv.dir, w) {
+			if _, err := os.Stat(a); err != nil {
+				continue
+			}
+			if _, in := relTo(inv.top, a, s.fold); inv.top == "" || !in {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// namesDir reports whether a word of inv, taken as a path, is a directory
+// inside this repository: diff --no-index would compare every file under
+// it.
+func (s *setup) namesDir(inv gitInvocation) bool {
+	for _, w := range inv.rest {
+		if w == "--" || strings.HasPrefix(w, "-") {
+			continue
+		}
+		for _, a := range spellings(inv.dir, w) {
+			if st, err := os.Stat(a); err == nil && st.IsDir() {
+				if _, ok := s.relAny(a); ok {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// mergeFlags are the options that choose how log and show print a merge.
+var mergeFlags = []string{"-c", "--cc", "-m", "--dd", "--diff-merges", "--remerge-diff", "--no-diff-merges"}
+
+// mergeRisk says how a log-like command prints merges. remerge is true
+// when it may print a remerge diff, whose content cannot be placed by
+// names: --remerge-diff, --diff-merges=remerge, or -m with
+// log.diffMerges set to remerge (or a setting that cannot be read).
+func (s *setup) mergeRisk(inv gitInvocation, args []string) (remerge bool) {
+	on := false
+	for i, a := range args {
+		name, v, hasValue := strings.Cut(a, "=")
+		if name == "--diff-merges" && !hasValue && i+1 < len(args) {
+			v, hasValue = args[i+1], true
+		}
+		switch {
+		case a == "--remerge-diff":
+			return true
+		case name == "--diff-merges" && hasValue && (v == "remerge" || v == "r"):
+			return true
+		case a == "-m", name == "--diff-merges" && hasValue && (v == "on" || v == "m"):
+			on = true
+		}
+	}
+	if !on {
+		return false
+	}
+	v, err := s.git().configValue(inv.dir, "log.diffMerges", "")
+	if errors.Is(err, errNotSet) {
+		return false
+	}
+	return err != nil || v == "remerge" || v == "r"
+}
+
+// logCheck judges a log-like command printing patches: log, whatchanged,
+// reflog show, stash list. -L follows lines through history and has no
+// name-only form; --stdin reads revisions the gate cannot see.
+func (s *setup) logCheck(inv gitInvocation, head, args []string) gitCheck {
+	if hasFlag(args, []string{"-L", "--stdin"}) || s.mergeRisk(inv, args) {
+		return unplaceable()
+	}
+	extra := []string{"--format="}
+	if hasFlag(args, mergeFlags) {
+		// A combined diff of a merge prints a parent's file under the
+		// merge's path when it was renamed: name every parent's path.
+		extra = append(extra, "--cc", "--combined-all-paths")
+	}
+	return byRuns(s.diffRun(inv, head, extra, args, nil))
+}
+
+// reflogCheck judges git reflog: reflog show (the default) is log.
+func (s *setup) reflogCheck(inv gitInvocation) gitCheck {
+	head, args := []string{"reflog"}, inv.args
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		if args[0] != "show" {
+			return noContent() // expire, delete, exists, drop, list
+		}
+		head, args = []string{"reflog", "show"}, args[1:]
+	}
+	if !hasFlag(args, gitPatchFlags) {
+		return noContent()
+	}
+	return s.logCheck(inv, head, args)
+}
+
+// showCheck judges git show. Its revisions (the positional arguments up
+// to the first that is not one, which with the rest are paths) are looked
+// up in the repository: a commit prints a diff (unless a summary flag is
+// given), judged by its name-only form; a blob or a tree prints itself, a
+// tag prints its target, and an object that cannot be resolved, or is
+// named by searching commit messages, cannot be placed.
+func (s *setup) showCheck(inv gitInvocation, patch bool) gitCheck {
+	if hasFlag(inv.args, gitRefSets) || s.mergeRisk(inv, inv.args) {
+		return unplaceable()
+	}
+	diff := !hasFlag(inv.args, gitSummaryFlags) || patch
+	var blobs []string
+	commit, revs := false, 0
+	args := slices.Clone(inv.args)
+	drop := map[int]bool{}
+	for _, i := range positionalIndex(inv.args, gitRevValueOpts) {
+		a := inv.args[i]
+		if revs < 0 {
+			continue
+		}
+		kind, p := s.kindOf(inv, a)
+		if kind == revUnplaceable && !strings.Contains(a, ":") && s.isPath(inv, a) {
+			revs = -1 // a path: it and every positional after it
+			continue
+		}
+		revs++
+		switch kind {
+		case revBlobPath:
+			blobs = append(blobs, p)
+			drop[i] = true
+		case revTag:
+			// The name-only form shows the commit, without the tag's
+			// header.
+			args[i] = a + "^{commit}"
+			commit = true
+		case revCommit:
+			commit = true
+		default:
+			return unplaceable()
+		}
+	}
+	if revs <= 0 {
+		commit = true // HEAD
+	}
+	c := gitCheck{content: len(blobs) > 0, bySpecs: len(blobs) > 0, specs: s.blobSpecs(inv, blobs)}
+	if diff && commit {
+		var kept []string
+		for i, a := range args {
+			if !drop[i] {
+				kept = append(kept, a)
+			}
+		}
+		// show prints a merge as a combined diff, unless --first-parent
+		// alone makes it a diff against the first parent: name every
+		// parent's path, as logCheck does.
+		extra := []string{"--format="}
+		if !hasFlag(inv.args, []string{"--first-parent"}) || hasFlag(inv.args, mergeFlags) {
+			extra = append(extra, "--cc", "--combined-all-paths")
+		}
+		c.content = true
+		c.runs = append(c.runs, s.diffRun(inv, []string{"show"}, extra, kept, nil))
+	}
+	return c
+}
+
+// isPath reports whether a, relative to inv's directory, exists.
+func (s *setup) isPath(inv gitInvocation, a string) bool {
+	_, err := os.Lstat(abs(inv.dir, a))
+	return err == nil
+}
+
+// revKind is what a revision argument names.
+type revKind int
+
+const (
+	revUnplaceable revKind = iota
+	revCommit              // a commit, or a range of commits
+	revTag                 // an annotated tag of a commit
+	revBlobPath            // REV:path or :path, with the path returned
+)
+
+// kindOf is what a revision argument of show names.
+func (s *setup) kindOf(inv gitInvocation, a string) (revKind, string) {
+	if strings.Contains(a, ":/") || strings.Contains(a, "^{/") {
+		return revUnplaceable, "" // a search of commit messages
+	}
+	if p, ok := revPath(a); ok {
+		return revBlobPath, p
+	}
+	if inv.elsewhere || inv.place != gitHere {
+		return revUnplaceable, ""
+	}
+	g := s.git()
+	if left, right, ok := cutRange(a); ok {
+		for _, side := range []string{left, right} {
+			if side != "" && g.objectType(inv.dir, side+"^{commit}") != "commit" {
+				return revUnplaceable, ""
+			}
+		}
+		return revCommit, ""
+	}
+	if strings.HasPrefix(a, "^") {
+		if g.objectType(inv.dir, a[1:]+"^{commit}") == "commit" {
+			return revCommit, ""
+		}
+		return revUnplaceable, ""
+	}
+	switch g.objectType(inv.dir, a) {
+	case "commit":
+		return revCommit, ""
+	case "tag":
+		// An annotated tag prints its target: a commit's diff is judged as
+		// a commit's, anything else is content.
+		if g.objectType(inv.dir, a+"^{}") == "commit" {
+			return revTag, ""
+		}
+	}
+	return revUnplaceable, ""
+}
+
+// cutRange splits A..B and A...B.
+func cutRange(a string) (left, right string, ok bool) {
+	if l, r, found := strings.Cut(a, "..."); found {
+		return l, r, true
+	}
+	return strings.Cut(a, "..")
+}
+
+// stashCheck judges git stash. stash show prints a diff with a patch flag
+// (its -u is --include-untracked), or with none at all when
+// stash.showPatch is true; stash list prints each stash's patch with a
+// patch flag; stash -p and stash push -p print hunks.
+func (s *setup) stashCheck(inv gitInvocation) gitCheck {
+	sub, args := "push", inv.args
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		sub, args = args[0], args[1:]
+	}
+	switch sub {
+	case "show":
+		patchFlags := slices.DeleteFunc(slices.Clone(gitPatchFlags), func(f string) bool { return f == "-u" })
+		if !hasFlag(args, patchFlags) {
+			if hasFlag(args, gitSummaryFlags) {
+				return noContent()
+			}
+			v, err := s.git().configValue(inv.dir, "stash.showPatch", "bool")
+			if errors.Is(err, errNotSet) || (err == nil && v == "false") {
+				return noContent()
+			}
+		}
+		return byRuns(s.diffRun(inv, []string{"stash", "show"}, nil, args, []string{"-u"}))
+	case "list":
+		if !hasFlag(args, gitPatchFlags) {
+			return noContent()
+		}
+		return s.logCheck(inv, []string{"stash", "list"}, args)
+	case "push", "save":
+		if !hasShort(args, 'p', "--patch", "m") {
+			return noContent()
+		}
+		return bySpecs(s.parseSpecs(inv, inv.specs))
+	}
+	return noContent()
+}
+
+// grepLongValues are git grep's long options that take the next word.
+var grepLongValues = map[string]bool{
+	"--max-depth": true, "--threads": true, "--context": true, "--after-context": true,
+	"--before-context": true, "--max-count": true,
+}
+
+// grepCheck judges git grep. With -l, -L, -c or -q it prints names,
+// counts or nothing. Otherwise its name-only form (-l -z) names the files
+// it would print lines from. -O runs a pager on the files; -f - reads
+// patterns from standard input, which the gate cannot see.
+func (s *setup) grepCheck(inv gitInvocation) gitCheck {
+	names, negated := false, false
+	for i := 0; i < len(inv.args); i++ {
+		a := inv.args[i]
+		name, _, hasValue := strings.Cut(a, "=")
+		switch {
+		case len(a) < 2 || a[0] != '-':
+		case strings.HasPrefix(a, "--"):
+			switch name {
+			case "--files-with-matches", "--name-only", "--files-without-match", "--count", "--quiet":
+				names = true
+			case "--no-files-with-matches", "--no-name-only", "--no-files-without-match", "--no-count",
+				"--no-quiet", "--no-null", "--no-full-name":
+				negated = true
+			case "--open-files-in-pager":
+				return unplaceable()
+			}
+			if grepLongValues[name] && !hasValue {
+				i++
+			}
+		default:
+			for j := 1; j < len(a); j++ {
+				c := a[j]
+				switch {
+				case c == 'O':
+					return unplaceable()
+				case strings.IndexByte("lLcq", c) >= 0:
+					names = true
+				case strings.IndexByte("ABCefm", c) >= 0:
+					if c == 'f' && (a[j+1:] == "-" || (j == len(a)-1 && i+1 < len(inv.args) && inv.args[i+1] == "-")) {
+						return unplaceable()
+					}
+					if j == len(a)-1 {
+						i++
+					}
+					j = len(a)
+				}
+			}
+		}
+	}
+	switch {
+	case negated:
+		return unplaceable()
+	case names:
+		return noContent()
+	}
+	var args []string
+	for _, a := range inv.args {
+		name, _, _ := strings.Cut(a, "=")
+		if name == "--color" || name == "--no-color" || name == "--textconv" {
+			continue
+		}
+		args = append(args, a)
+	}
+	argv := slices.Concat(inv.globals, []string{"grep", "-l", "-z", "--full-name", "--no-color", "--no-textconv"}, args)
+	if inv.dashdash {
+		argv = append(append(argv, "--"), inv.specs...)
+	}
+	return byRuns(nameRun{argv: argv, grep: true, dirRel: hasFlag(inv.args, []string{"--no-index"})})
+}
+
+// verbosity counts -v and --verbose in args (--no-verbose resets it). A
+// cluster of short options ends at a letter of withValue.
+func verbosity(args []string, withValue string) int {
+	n := 0
+	for _, a := range args {
+		switch {
+		case a == "--verbose":
+			n++
+		case a == "--no-verbose":
+			n = 0
+		case len(a) > 1 && a[0] == '-' && a[1] != '-':
+			for j := 1; j < len(a); j++ {
+				if a[j] == 'v' {
+					n++
+				}
+				if strings.IndexByte(withValue, a[j]) >= 0 {
+					break
+				}
+			}
+		}
+	}
+	return n
+}
+
+// verboseCheck judges git status -v, which prints the staged diff (and
+// with -vv the unstaged one too), and commit --dry-run -v, which prints
+// what would be committed: both, here. Each diff is judged by its
+// name-only form.
+func (s *setup) verboseCheck(inv gitInvocation, v int, both bool) gitCheck {
+	if v == 0 {
+		return noContent()
+	}
+	runs := []nameRun{{argv: slices.Concat(inv.globals, []string{"diff", "--cached"}, gitNameOnly)}}
+	if v >= 2 || both {
+		runs = append(runs, nameRun{argv: slices.Concat(inv.globals, []string{"diff"}, gitNameOnly)})
+	}
+	return byRuns(runs...)
+}
+
+// treeishSpecs are the paths checkout -p and reset -p show hunks of: the
+// positional arguments, but a first one that names a tree-ish (when it
+// also names a file, git cannot tell which it is, nor can the gate), then
+// those after "--".
+func (s *setup) treeishSpecs(inv gitInvocation) []pathspec {
+	if hasFlag(inv.args, []string{"--pathspec-from-file"}) {
+		return unprovable()
+	}
+	vals := map[string]bool{"-b": true, "-B": true, "--orphan": true, "--conflict": true}
+	pos := positionalOf(inv.args, vals)
+	if len(pos) > 0 && s.git().objectType(inv.dir, pos[0]+"^{tree}") == "tree" {
+		if !inv.dashdash && s.isPath(inv, pos[0]) {
+			return unprovable()
+		}
+		pos = pos[1:]
+	}
+	return s.parseSpecs(inv, slices.Concat(pos, inv.specs))
 }
 
 // blameSpecs are the paths blame and annotate can read: every positional
@@ -547,143 +1359,7 @@ func (s *setup) blameSpecs(inv gitInvocation) []pathspec {
 	if len(paths) == 0 {
 		return nil
 	}
-	return s.literalSpecs(paths, inv.dir)
-}
-
-// showSpecs judges git show. Each object it is given is looked up in the
-// repository: a commit prints a diff (unless a summary flag is given), a
-// blob or a tree prints itself, a tag prints its target, and an object
-// that cannot be resolved, or is named by searching commit messages, cannot
-// be placed.
-func (s *setup) showSpecs(inv gitInvocation, patch bool) ([]pathspec, bool) {
-	if hasFlag(inv.args, gitRefSets) {
-		return unprovable(), true
-	}
-	diff := !hasFlag(inv.args, gitSummaryFlags) || patch
-	var blobs []string
-	commit := false
-	revs := showRevs(inv.args)
-	for _, a := range revs {
-		switch kind, p := s.kindOf(inv, a); kind {
-		case revBlobPath:
-			blobs = append(blobs, p)
-		case revCommit:
-			commit = true
-		default:
-			return unprovable(), true
-		}
-	}
-	if len(revs) == 0 {
-		commit = true // HEAD
-	}
-	specs := s.blobSpecs(blobs, inv.dir)
-	switch {
-	case diff && commit && len(inv.specs) == 0:
-		return nil, true
-	case diff && commit:
-		specs = append(specs, s.parseSpecs(inv.specs, inv.dir)...)
-	}
-	return specs, len(specs) > 0
-}
-
-// showRevs is show's positional arguments: its objects. The value of -n is
-// skipped.
-func showRevs(args []string) []string {
-	var out []string
-	for i := 0; i < len(args); i++ {
-		switch a := args[i]; {
-		case a == "-n":
-			i++
-		case !strings.HasPrefix(a, "-"):
-			out = append(out, a)
-		}
-	}
-	return out
-}
-
-// revKind is what a revision argument names.
-type revKind int
-
-const (
-	revUnplaceable revKind = iota
-	revCommit              // a commit, a range of commits, or a tag of one
-	revBlobPath            // REV:path or :path, with the path returned
-)
-
-// kindOf is what a revision argument of show names.
-func (s *setup) kindOf(inv gitInvocation, a string) (revKind, string) {
-	if strings.Contains(a, ":/") || strings.Contains(a, "^{/") {
-		return revUnplaceable, "" // a search of commit messages
-	}
-	if p, ok := revPath(a); ok {
-		return revBlobPath, p
-	}
-	if inv.elsewhere {
-		return revUnplaceable, ""
-	}
-	if left, right, ok := cutRange(a); ok {
-		for _, side := range []string{left, right} {
-			if side != "" && objectType(inv.dir, side+"^{commit}") != "commit" {
-				return revUnplaceable, ""
-			}
-		}
-		return revCommit, ""
-	}
-	if strings.HasPrefix(a, "^") {
-		if objectType(inv.dir, a[1:]+"^{commit}") == "commit" {
-			return revCommit, ""
-		}
-		return revUnplaceable, ""
-	}
-	switch objectType(inv.dir, a) {
-	case "commit":
-		return revCommit, ""
-	case "tag":
-		// An annotated tag prints its target: a commit's diff is judged as
-		// a commit's, anything else is content.
-		if objectType(inv.dir, a+"^{}") == "commit" {
-			return revCommit, ""
-		}
-	}
-	return revUnplaceable, ""
-}
-
-// cutRange splits A..B and A...B.
-func cutRange(a string) (left, right string, ok bool) {
-	if l, r, found := strings.Cut(a, "..."); found {
-		return l, r, true
-	}
-	return strings.Cut(a, "..")
-}
-
-// stashSpecs judges git stash. stash show prints a diff with a patch flag,
-// or with none at all when stash.showPatch is true; stash -p and stash push
-// -p print hunks.
-func (s *setup) stashSpecs(inv gitInvocation) ([]pathspec, bool) {
-	sub, args := "push", inv.args
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		sub, args = args[0], args[1:]
-	}
-	switch sub {
-	case "show":
-		if hasFlag(args, gitPatchFlags) {
-			return s.parseSpecs(inv.specs, inv.dir), true
-		}
-		if hasFlag(args, gitSummaryFlags) {
-			return nil, false
-		}
-		v, err := configValue(inv.dir, "stash.showPatch", "bool")
-		if errors.Is(err, errNotSet) || (err == nil && v == "false") {
-			return nil, false
-		}
-		return s.parseSpecs(inv.specs, inv.dir), true
-	case "push", "save":
-		if !hasShort(args, 'p', "--patch", "m") {
-			return nil, false
-		}
-		return s.parseSpecs(inv.specs, inv.dir), true
-	}
-	return nil, false
+	return s.literalSpecs(inv, paths)
 }
 
 // bundleToOutput reports whether args, after "bundle", create a bundle on
@@ -702,9 +1378,9 @@ func bundleToOutput(args []string) bool {
 
 // catFileSpecs judges git cat-file: every mode but -t, -s, -e and
 // --batch-check prints an object.
-func (s *setup) catFileSpecs(inv gitInvocation) ([]pathspec, bool) {
+func (s *setup) catFileSpecs(inv gitInvocation) gitCheck {
 	if hasFlag(inv.args, gitCatFileSafe) {
-		return nil, false
+		return noContent()
 	}
 	var blobs []string
 	for _, a := range positional(inv.args) {
@@ -713,24 +1389,25 @@ func (s *setup) catFileSpecs(inv gitInvocation) ([]pathspec, bool) {
 			continue
 		}
 		if strings.Contains(a, ":/") || strings.Contains(a, "^{/") {
-			return unprovable(), true
+			return unplaceable()
 		}
 		p, ok := revPath(a)
 		if !ok {
 			// An object name: what it holds cannot be told.
-			return unprovable(), true
+			return unplaceable()
 		}
 		blobs = append(blobs, p)
 	}
 	if len(blobs) == 0 {
 		// --batch reads object names from standard input.
-		return unprovable(), true
+		return unplaceable()
 	}
-	return s.blobSpecs(blobs, inv.dir), true
+	return bySpecs(s.blobSpecs(inv, blobs))
 }
 
 // revPath splits REV:path, as show and cat-file take it, and returns the
-// path. ":path" and ":N:path" name the index.
+// path. ":path" and ":N:path" name the index. The path starts after the
+// first ":" outside braces: HEAD@{10:00}:x is the path x at a time.
 func revPath(a string) (string, bool) {
 	if strings.HasPrefix(a, ":") {
 		rest := a[1:]
@@ -739,38 +1416,58 @@ func revPath(a string) (string, bool) {
 		}
 		return rest, true
 	}
-	_, p, ok := strings.Cut(a, ":")
-	return p, ok
+	depth := 0
+	for i := range len(a) {
+		switch a[i] {
+		case '{':
+			depth++
+		case '}':
+			if depth > 0 {
+				depth--
+			}
+		case ':':
+			if depth == 0 {
+				return a[i+1:], true
+			}
+		}
+	}
+	return "", false
 }
 
-// blobSpecs places REV:path paths: relative to the repository root, unless
-// they start with ./ or ../, which are relative to dir.
-func (s *setup) blobSpecs(paths []string, dir string) []pathspec {
+// blobSpecs places REV:path paths: relative to the top of the work tree,
+// unless they start with ./ or ../, which are relative to inv's directory.
+func (s *setup) blobSpecs(inv gitInvocation, paths []string) []pathspec {
 	out := make([]pathspec, 0, len(paths))
 	for _, p := range paths {
 		if p == "." || p == ".." || strings.HasPrefix(p, "./") || strings.HasPrefix(p, "../") {
-			out = append(out, s.place(abs(dir, p), false))
+			out = append(out, s.place(inv, abs(inv.dir, p), false))
 			continue
 		}
-		out = append(out, s.place(filepath.Join(s.repo.Root, filepath.FromSlash(p)), false))
+		clean := path.Clean(p)
+		if clean == ".." || strings.HasPrefix(clean, "../") || path.IsAbs(clean) {
+			out = append(out, pathspec{unprovable: true})
+			continue
+		}
+		out = append(out, pathspec{rel: path.Join(inv.prefix, clean)})
 	}
 	return out
 }
 
-// literalSpecs places file paths that git takes literally, relative to dir.
-func (s *setup) literalSpecs(paths []string, dir string) []pathspec {
+// literalSpecs places file paths that git takes literally, relative to
+// inv's directory.
+func (s *setup) literalSpecs(inv gitInvocation, paths []string) []pathspec {
 	out := make([]pathspec, 0, len(paths))
 	for _, p := range paths {
-		out = append(out, s.place(abs(dir, p), false))
+		out = append(out, s.place(inv, abs(inv.dir, p), false))
 	}
 	return out
 }
 
 // parseSpecs reads pathspecs with their magic (gitglossary, "pathspec"):
 // ":!x", ":^x" and ":(exclude)x" exclude; ":/x" and ":(top)x" start from
-// the repository root; ":(literal)" turns globs off. Other magic, and a
-// glob, make a pathspec unprovable.
-func (s *setup) parseSpecs(specs []string, dir string) []pathspec {
+// the top of the work tree; ":(literal)" turns globs off. Other magic, and
+// a glob, make a pathspec unprovable.
+func (s *setup) parseSpecs(inv gitInvocation, specs []string) []pathspec {
 	out := make([]pathspec, 0, len(specs))
 	for _, raw := range specs {
 		exclude, top, literal, odd := false, false, false, false
@@ -815,27 +1512,33 @@ func (s *setup) parseSpecs(specs []string, dir string) []pathspec {
 			out = append(out, pathspec{exclude: exclude, unprovable: true})
 			continue
 		}
-		a := abs(dir, p)
+		a := abs(inv.dir, p)
 		if top {
-			a = filepath.Join(s.repo.Root, filepath.FromSlash(p))
+			if inv.top == "" {
+				out = append(out, pathspec{exclude: exclude, unprovable: true})
+				continue
+			}
+			a = filepath.Join(inv.top, filepath.FromSlash(p))
 		}
-		out = append(out, s.place(a, exclude))
+		out = append(out, s.place(inv, a, exclude))
 	}
 	return out
 }
 
-// place makes a pathspec of the absolute path a.
-func (s *setup) place(a string, exclude bool) pathspec {
-	r, ok := s.rel(a)
+// place makes a pathspec of the absolute path a: relative to the top of
+// the work tree inv runs in, then to this repository's root.
+func (s *setup) place(inv gitInvocation, a string, exclude bool) pathspec {
+	if inv.top == "" {
+		return pathspec{exclude: exclude, unprovable: true}
+	}
+	r, ok := relTo(inv.top, a, s.fold)
 	if !ok {
-		if r2, ok2 := s.rel(resolve(a)); ok2 {
-			r, ok = r2, true
-		}
+		r, ok = relTo(inv.top, resolve(a), s.fold)
 	}
 	if !ok {
 		return pathspec{exclude: exclude, unprovable: true}
 	}
-	return pathspec{rel: path.Clean(r), exclude: exclude}
+	return pathspec{rel: path.Join(inv.prefix, path.Clean(r)), exclude: exclude}
 }
 
 // avoidsRoots reports whether pathspecs provably keep a git command away

@@ -1,6 +1,0 @@
-description = "git diff prints content and git history cannot be vetted, so it denies even on a clean tree. Plants no value"
-command     = "gate"
-args        = []
-policy      = "default"
-exit        = 2
-sentinels   = []

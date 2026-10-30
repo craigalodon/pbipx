@@ -520,8 +520,11 @@ Decisions by tool. Every tool not listed is allowed.
      assignments, with no `$(` or backtick) is allowed: it redacts on its own.
      `policy approve` is never the tool alone (below).
   2. A git command that prints file content is **denied** outright (git
-     history cannot be vetted), unless its pathspecs provably avoid every
-     protected root:
+     history cannot be vetted), unless it provably prints nothing from a
+     protected root. In pbipx, for the commands that have a name-only form,
+     the gate asks git itself (see Clarifications, "Gate", divergence on
+     git's name-only check); for the others, its pathspecs must provably
+     avoid every protected root:
      - always content: `blame`, `annotate`, `grep`, `archive`,
        `format-patch`, `difftool`, `range-diff`;
      - content that cannot be placed, whatever the pathspecs:
@@ -559,7 +562,11 @@ Decisions by tool. Every tool not listed is allowed.
        with `git config --get alias.<name>`. A shell alias (`!`), an alias
        that does not split, or an alias of an alias is denied; otherwise the
        expansion, split as git splits it, replaces the subcommand and is
-       judged with the rest of the arguments;
+       judged with the rest of the arguments. In pbipx a subcommand that is
+       neither one of git's own nor an alias is denied too: it may be an
+       alias defined earlier in the same line (`git config alias.lp 'log
+       -p' && git lp`, looked up before it exists) or a `git-<name>`
+       program, whose output cannot be told;
      - git's global options `-C`, `-c`, `--config-env`, `--git-dir`,
        `--work-tree`, `--namespace` and `--attr-source` consume their
        argument. `--git-dir` and `--work-tree` make every content
@@ -583,6 +590,17 @@ Decisions by tool. Every tool not listed is allowed.
        and `annotate`, every positional argument before or after `--`, and
        `--contents`, since git takes the file before or after the
        revision; for `add -p` and `restore -p`, every positional argument.
+       In pbipx, positional arguments are read as git reads them: the
+       value of an option that takes the next word (`-n`, `--max-count`,
+       `--since`, `--author`, `--grep`, `--diff-filter`, `--date`, `-S`,
+       `-L`, `--output`, `restore -s` and the like) is neither a revision
+       nor a path; for `show`, positionals are revisions up to the first
+       that is not one and names an existing path, which with the rest is
+       a pathspec; for `checkout -p` and `reset -p`, a first positional
+       naming a tree-ish is the source (denied when it also names a path),
+       the rest pathspecs. `REV:path` is cut at the first `:` outside
+       braces, so `HEAD@{10:00}` is a revision and `HEAD@{10:00}:x` the
+       path `x`.
   3. If the working directory is inside a protected root, or the command
      names a root as a whole word, the protected tree is scanned as for Grep.
      In pbipx the tree is scanned too when:
@@ -907,6 +925,64 @@ behavior (2026-10-29).
   every root. It also denies writing into a `.claude` directory and running
   `pbipx policy approve` with `agent-settings`. The corpus cases for it are
   marked `known = "predecessor"`. (Decided 2026-10-29.)
+- **Divergence (git's name-only check):** the predecessor denies `git
+  diff`, `git show`, `git log -p`, `git stash show -p` and `git grep`
+  unless pathspecs after `--` exclude every root, so the commands agents
+  run most (`git diff` on a clean tree, `git show HEAD`, `git log -p
+  src/main.go`) are denied. pbipx runs the same git command in a form
+  that prints only file names, reads its output (never printed) and
+  allows the command when every file it would print content from is
+  outside every protected root, is not a Claude Code settings file, and
+  is not `.pbipx.toml` or the baseline:
+  - `diff`, `show` of commits, `log` and `whatchanged` with a patch flag,
+    `reflog` (show) with one, `stash show` with one (or with
+    `stash.showPatch`), `stash list` with one, and `diff-tree`,
+    `diff-index` and `diff-files` with one: the same arguments with the
+    options that only change how the diff is printed removed (`-p`,
+    `-U<n>`, `--stat`, `--format`, `--output`, `--color`, `--word-diff`,
+    `--check` and kin) and `--name-status -z --no-color --no-ext-diff
+    --no-textconv --no-relative` added; `--format=` for the log-like
+    commands, `-r --no-commit-id` for `diff-tree`. Both sides of a rename
+    or copy are judged. A merge printed as a combined diff can show a
+    parent's file under a renamed path, so `--cc --combined-all-paths` is
+    added to `show` (unless `--first-parent` alone is given), to a log
+    with a merge option, and `-c --combined-all-paths` to `diff`. A
+    remerge diff (`--remerge-diff`, `--diff-merges=remerge`, or `-m` with
+    `log.diffMerges` set to it), `-L`, and `--stdin` are denied. A tag
+    given to `show` is shown as its commit; a blob, tree, unresolvable
+    name, message search or ref set given to `show` is judged as before.
+  - `git diff --no-index`, or a diff naming an existing path outside the
+    work tree (git then compares two files): denied when a path it names
+    is under a root, or is a directory in the repository; with
+    `--no-index`, allowed otherwise.
+  - `grep`: allowed outright with `-l`, `-L`, `-c` or `-q` (names, counts
+    or nothing), denied with `-O` (it runs a pager on the files), `-f -`
+    or a negation of those options; otherwise run as `git grep -l -z
+    --full-name --no-color --no-textconv` with the same arguments. A name
+    printed as `REV:path` is judged as the path, and under the tree
+    `REV:dir` as `dir/path`.
+  - `status -v` (the staged diff) and `-vv` (and the unstaged one), and
+    `commit --dry-run -v` (both): `git diff --cached` and `git diff` in
+    name-only form.
+
+  Each git command runs with an argv, the global options given (but `-C`,
+  which becomes its directory), `GIT_PAGER=cat`, `GIT_EXTERNAL_DIFF`
+  unset, `GIT_NO_LAZY_FETCH=1`, `GIT_OPTIONAL_LOCKS=0`, standard input
+  empty and standard error discarded, within 10 seconds, and all of one
+  decision's within 30. A timeout, a failure (any exit but 0 or 1), a
+  name holding a control character or output that does not parse
+  denies. Every existing deny for options that change what is printed
+  (`-c`, `--git-dir`, environment, aliases) still applies.
+
+  A git command whose directory (`-C`, or `cd`) is outside this
+  repository's work tree, in another repository or in none, cannot print
+  this repository's history: it is allowed unless a word it names (`git -C
+  ../other diff --no-index x ../repo/pbip/y`) is a path under a root here.
+  A directory that does not exist, a repository whose work tree holds this
+  one, and a directory above it count as unknown, and content is denied
+  there. A work tree linked to this repository shares its history and is
+  judged as this one; a repository nested in the work tree is judged with
+  its paths placed under it. (Decided 2026-10-30.)
 - **Divergence (case and paths):** on macOS and Windows, whose file systems
   fold case, pbipx compares paths and root names without regard to case
   everywhere the gate compares them (roots, local state, Claude Code

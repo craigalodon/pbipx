@@ -105,9 +105,10 @@ func TestShellGitHistory(t *testing.T) {
 		{"diff-tree --stdin", sh("git diff-tree --stdin"), git},
 		{"diff-tree raw", sh("git diff-tree -r HEAD"), ""},
 		{"diff-tree -p limited away", sh("git diff-tree -p HEAD -- notes"), ""},
-		{"diff-index -p", sh("git diff-index -p HEAD"), git},
+		{"diff-index -p", sh("git diff-index -p HEAD~1"), git},
+		{"diff-index -p of a clean tree", sh("git diff-index -p HEAD"), ""},
 		{"diff-index raw", sh("git diff-index HEAD"), ""},
-		{"diff-files -p", sh("git diff-files -p"), git},
+		{"diff-files -p of a clean tree", sh("git diff-files -p"), ""},
 		{"fast-export", sh("git fast-export --all"), git},
 		{"fast-export limited", sh("git fast-export --all -- notes"), git},
 		{"pack-objects", sh("git pack-objects --stdout"), git},
@@ -172,7 +173,7 @@ func TestShellGitHistory(t *testing.T) {
 		{"alias to status", sh("git st"), ""},
 		{"alias that does not split", sh("git q"), git},
 		{"alias with an unsafe -c", sh("git cfg"), git},
-		{"not an alias", sh("git no-such-command"), ""},
+		{"not an alias", sh("git no-such-command"), git},
 		{"alias set with -c", sh("git -c alias.x=status x"), git},
 		{"alias set with --config-env", sh("git --config-env=alias.x=X x"), git},
 
@@ -190,8 +191,9 @@ func TestShellGitHistory(t *testing.T) {
 		{"-c color.ui", sh("git -c color.ui=never status"), ""},
 		{"-c core.quotepath", sh("git -c core.quotePath=off status"), ""},
 		{"--exec-path=", sh("git --exec-path=/tmp status"), git},
-		{"--literal-pathspecs", sh("git --literal-pathspecs diff -- . ':!pbip'"), git},
-		{"--icase-pathspecs", sh("git --icase-pathspecs diff -- notes"), git},
+		{"--literal-pathspecs", sh("git --literal-pathspecs diff HEAD~1 -- . ':!pbip'"), git},
+		{"--icase-pathspecs", sh("git --icase-pathspecs diff HEAD~1 -- PBIP"), git},
+		{"--icase-pathspecs away", sh("git --icase-pathspecs diff HEAD~1 -- NOTES"), ""},
 		{"--git-dir with a summary", sh("git --git-dir=.git show --stat " + blob), git},
 		{"GIT_PAGER=cat", sh("GIT_PAGER=cat git log --oneline"), ""},
 		{"GIT_PAGER command", sh("GIT_PAGER='less -R' git log --oneline"), git},
@@ -207,6 +209,8 @@ func TestShellGitHistory(t *testing.T) {
 func TestShellGitStashShowPatch(t *testing.T) {
 	root := newRepo(t, cleanFiles())
 	gitIn(t, root, "config", "stash.showPatch", "true")
+	write(t, root, reportJSON, `{"layoutOptimization": "Fit"}`)
+	gitIn(t, root, "stash", "push", "--quiet", "--message", "wip")
 	sh := func(cmd string) gate.Event { return gate.Event{Tool: gate.Shell, Command: cmd} }
 	run(t, root, []decideCase{
 		{"stash show", sh("git stash show"), gate.ReasonGitContent},

@@ -219,6 +219,11 @@ func TestTreeScanReasons(t *testing.T) {
 func TestShell(t *testing.T) {
 	clean := newRepo(t, cleanFiles())
 	leaky := newRepo(t, leakyFiles())
+	// An unstaged change under the root, with nothing personal in it: the
+	// diff of the working tree names a file there.
+	for _, root := range []string{clean, leaky} {
+		write(t, root, reportJSON, `{"layoutOptimization": "Fit"}`)
+	}
 	sh := func(cmd string) gate.Event { return gate.Event{Tool: gate.Shell, Command: cmd} }
 	shIn := func(dir, cmd string) gate.Event { return gate.Event{Tool: gate.Shell, Command: cmd, Cwd: dir} }
 	for _, tc := range []struct {
@@ -241,14 +246,16 @@ func TestShell(t *testing.T) {
 		{"git diff --stat -p", sh("git diff --stat -p"), gate.ReasonGitContent, gate.ReasonGitContent},
 		{"git diff -- notes", sh("git diff -- notes"), "", ""},
 		{"git diff -- .", sh("git diff -- ."), gate.ReasonGitContent, gate.ReasonGitContent},
-		{"git diff without -- is the whole tree", sh("git diff notes"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"git diff of a path without --", sh("git diff notes"), "", ""},
+		{"git diff of a root without --", sh("git diff pbip"), gate.ReasonGitContent, gate.ReasonGitContent},
 		{"git diff excluding the root", sh("git diff -- . ':!pbip'"), "", gate.ReasonFinding},
 		{"git diff excluding with ^", sh("git diff -- ':^pbip'"), "", gate.ReasonFinding},
 		{"git diff excluding with long magic", sh("git diff -- ':(exclude)pbip'"), "", gate.ReasonFinding},
-		{"git diff excluding inside the root only", sh("git diff -- ':!pbip/A.Report'"), gate.ReasonGitContent, gate.ReasonGitContent},
-		{"git diff glob exclusion is not proof", sh("git diff -- ':!pbi*'"), gate.ReasonGitContent, gate.ReasonGitContent},
-		{"git diff glob pathspec", sh("git diff -- 'notes/*'"), gate.ReasonGitContent, gate.ReasonGitContent},
-		{"git diff icase pathspec", sh("git diff -- ':(icase)notes'"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"git diff excluding inside the root only", sh("git diff -- ':!pbip/A.Report/StaticResources'"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"git diff glob exclusion, judged by git", sh("git diff -- ':!pbi*'"), "", ""},
+		{"git diff glob pathspec, judged by git", sh("git diff -- 'notes/*'"), "", ""},
+		{"git diff icase pathspec, judged by git", sh("git diff -- ':(icase)notes'"), "", ""},
+		{"git diff icase pathspec reaching the root", sh("git diff -- ':(icase)PBIP'"), gate.ReasonGitContent, gate.ReasonGitContent},
 		{"git diff top pathspec", sh("git diff -- :/notes"), "", ""},
 		{"git diff path outside the repository", sh("git diff -- ../elsewhere"), gate.ReasonGitContent, gate.ReasonGitContent},
 		{"git log", sh("git log --oneline"), "", ""},
@@ -256,7 +263,7 @@ func TestShell(t *testing.T) {
 		{"git log -U1", sh("git log -U1"), gate.ReasonGitContent, gate.ReasonGitContent},
 		{"git log -L", sh("git log -L1,2:README.md"), gate.ReasonGitContent, gate.ReasonGitContent},
 		{"git log -p limited", sh("git log -p -- notes sql"), "", ""},
-		{"git log grep for a value", sh("git log -p --grep='Doe, Jane'"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"git log grep for a value", sh("git log -p --grep='Doe, Jane'"), "", ""},
 		{"git reflog -p", sh("git reflog -p"), gate.ReasonGitContent, gate.ReasonGitContent},
 		{"git show", sh("git show"), gate.ReasonGitContent, gate.ReasonGitContent},
 		{"git show --stat", sh("git show --stat HEAD"), "", ""},
@@ -281,7 +288,7 @@ func TestShell(t *testing.T) {
 		{"git cat-file --batch", sh("git cat-file --batch"), gate.ReasonGitContent, gate.ReasonGitContent},
 		{"git cat-file --batch-check", sh("git cat-file --batch-check"), "", ""},
 		{"git stash show", sh("git stash show"), "", ""},
-		{"git stash show -p", sh("git stash show -p"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"git stash show -p with no stash", sh("git stash show -p"), "", ""},
 		{"git --git-dir", sh("git --git-dir=.git diff -- notes"), gate.ReasonGitContent, gate.ReasonGitContent},
 		{"git --no-pager", sh("git --no-pager diff"), gate.ReasonGitContent, gate.ReasonGitContent},
 		{"git -c option", sh("git -c core.pager=cat diff"), gate.ReasonGitContent, gate.ReasonGitContent},
