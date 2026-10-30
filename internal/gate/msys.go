@@ -31,8 +31,6 @@ type msysMode struct {
 	// mount is an absolute MSYS2 path that is not on a drive (/usr/x) as
 	// a host path; ok is false when it cannot be told.
 	mount func(p string) (string, bool)
-	// device is a path under /dev as the host spells it.
-	device func(p string) string
 }
 
 // msys is the gate's mode: on, on Windows.
@@ -46,8 +44,6 @@ func hostMSYS() msysMode {
 		on:    true,
 		drive: func(l byte) string { return string(l) + `:\` },
 		mount: cygpathMount,
-		// \\.\NUL and the like: a device, never a file in a repository.
-		device: func(p string) string { return `\\.\` + filepath.FromSlash(strings.TrimPrefix(p, "/dev/")) },
 	}
 }
 
@@ -77,8 +73,13 @@ func msysPrefix(w string) (n int, repl string, changed, ok bool) {
 	if n, l, ok := msysDrive(w); ok {
 		return n, msys.drive(l), true, true
 	}
-	if w == "/dev" || strings.HasPrefix(w, "/dev/") {
-		return len(w), msys.device(w), true, true
+	for _, d := range []string{"/dev", "/proc"} {
+		if w == d || strings.HasPrefix(w, d+"/") {
+			// Devices and process files, never a file in a repository:
+			// kept as written, as the rules that know /dev/stdin and
+			// /proc/self/fd/0 read them.
+			return 0, "", false, true
+		}
 	}
 	// The rest is under the MSYS2 root. A glob, quote or brace is not
 	// given to cygpath, whose runtime would expand it: only the directory

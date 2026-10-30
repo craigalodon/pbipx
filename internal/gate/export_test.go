@@ -1,7 +1,6 @@
 package gate
 
 import (
-	"os"
 	"path/filepath"
 )
 
@@ -16,8 +15,8 @@ func SetFoldCase(fold bool) (restore func()) {
 
 // SetMSYS turns on the reading of Git Bash paths, as on Windows, on any
 // platform: drive letter l's root is the directory drives/l (lower case),
-// an MSYS2 path off the drives is placed by mount (nil: none is), and
-// /dev/... is os.DevNull. It returns a function that restores the mode.
+// and an MSYS2 path off the drives is placed by mount (nil: none is). It
+// returns a function that restores the mode.
 func SetMSYS(drives string, mount func(string) (string, bool)) (restore func()) {
 	old := msys
 	if mount == nil {
@@ -28,8 +27,7 @@ func SetMSYS(drives string, mount func(string) (string, bool)) (restore func()) 
 		drive: func(l byte) string {
 			return filepath.Join(drives, string(l|0x20)) + string(filepath.Separator)
 		},
-		mount:  mount,
-		device: func(string) string { return os.DevNull },
+		mount: mount,
 	}
 	return func() { msys = old }
 }

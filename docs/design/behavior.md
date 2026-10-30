@@ -525,13 +525,15 @@ Decisions by tool. Every tool not listed is allowed.
     `/x/` or `/x` (`x` one drive letter, either case) or `/cygdrive/x/` is
     on drive `X:` (`/c/Users/me/repo` is `C:\Users\me\repo`); so is such
     a value after `=` (`--file=/c/...`), which Git Bash rewrites for a
-    Windows program, git among them. `/dev/...` is a device, never a
-    file. Any other absolute word (`/usr/...`, `/tmp/...`) is under Git
-    Bash's root or one of its mounts and is placed by Git Bash's own
-    `cygpath -w` (found on `PATH`, beside `CLAUDE_CODE_GIT_BASH_PATH`, or
-    in the Git for Windows installation git runs from; argv only, two
-    seconds, at most 64 runs a decision process); the directory before a
-    glob, quote or brace is placed, never the glob. A word that cannot be
+    Windows program, git among them. `/dev/...` and `/proc/...` are
+    devices and process files, never a file in a repository, and are kept
+    as written (`source /dev/stdin` is still read as such). Any other
+    absolute word (`/usr/...`, `/tmp/...`) is under Git Bash's root or
+    one of its mounts and is placed by Git Bash's own `cygpath -w` (found
+    on `PATH`, beside `CLAUDE_CODE_GIT_BASH_PATH`, or in the Git for
+    Windows installation git runs from; argv only, two seconds, at most
+    64 runs a decision process); the directory before a glob, quote or
+    brace is placed, never the glob. A word that cannot be
     placed is unknown: a reading command with one, or a `cd` to one,
     touches every protected root, and git given one is denied with
     `git-content`. `C:/x`, `C:\x` and `//server/share/x` are Windows

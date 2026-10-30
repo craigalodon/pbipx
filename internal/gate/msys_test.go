@@ -53,6 +53,7 @@ func TestShellGitBashPaths(t *testing.T) {
 		{"cat a file outside the roots", sh("cat /c/work/repo/README.md"), ""},
 		{"cat outside the repository", sh("cat /c/work/elsewhere.md"), ""},
 		{"/dev/null", sh("cat /c/work/repo/README.md 2>/dev/null"), ""},
+		{"source /dev/stdin", sh("source /dev/stdin <<'EOF'\ngit log -p\nEOF"), gate.ReasonGitContent},
 		// Off the drives, with no cygpath: the word could be anything.
 		{"unplaceable read", sh("cat /etc/x"), gate.ReasonFinding},
 		{"unplaceable git pathspec", sh("git diff -- /etc/x"), gate.ReasonGitContent},

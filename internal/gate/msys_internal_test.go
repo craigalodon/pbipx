@@ -13,10 +13,9 @@ func fakeMSYS(t *testing.T) {
 	t.Cleanup(func() { msys = old })
 	mounts := map[string]string{"/": `C:\Git`, "/usr": `C:\Git\usr`, "/tmp": `C:\Temp`, "/tmp/a": `C:\Temp\a`}
 	msys = msysMode{
-		on:     true,
-		drive:  func(l byte) string { return string(l) + `:\` },
-		mount:  func(p string) (string, bool) { r, ok := mounts[p]; return r, ok },
-		device: func(string) string { return `\\.\NUL` },
+		on:    true,
+		drive: func(l byte) string { return string(l) + `:\` },
+		mount: func(p string) (string, bool) { r, ok := mounts[p]; return r, ok },
 	}
 }
 
@@ -39,7 +38,9 @@ func TestMSYSPath(t *testing.T) {
 		{"/tmp/a", `C:\Temp\a`, true},
 		{"/tmp/*.md", `C:\Temp` + sl("/*.md"), true},
 		{"/", `C:\Git`, true},
-		{"/dev/null", `\\.\NUL`, true},
+		{"/dev/null", "/dev/null", true},
+		{"/dev/stdin", "/dev/stdin", true},
+		{"/proc/self/fd/0", "/proc/self/fd/0", true},
 		{"/etc/hosts", "", false},
 		{"/cygdrive", "", false},
 		{"/cc/x", "", false},
