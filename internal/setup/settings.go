@@ -9,6 +9,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 	"time"
 )
@@ -89,6 +91,13 @@ func UserSettingsDirs() []string {
 	}
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
 		dirs = append(dirs, filepath.Join(home, ".claude"))
+	}
+	// On Windows the platform's home is USERPROFILE, but Claude Code (Node's
+	// os.homedir) reads HOME first when it is set, so both are listed.
+	if home := os.Getenv("HOME"); runtime.GOOS == "windows" && filepath.IsAbs(home) {
+		if d := filepath.Join(home, ".claude"); !slices.Contains(dirs, d) {
+			dirs = append(dirs, d)
+		}
 	}
 	return dirs
 }

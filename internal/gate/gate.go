@@ -198,11 +198,22 @@ func load(ev Event, opts Options) (*setup, *Decision) {
 	if now.IsZero() {
 		now = time.Now()
 	}
+	return &setup{repo: repo, policy: p, baseline: b, cwd: ev.Cwd, now: now, fold: foldCase, home: homeDir(), gitq: newGitSession()}, nil
+}
+
+// homeDir is the home directory "~" and $HOME stand for, "" when unknown:
+// HOME when it is set, as Git Bash and Claude Code (Node's os.homedir)
+// both read it first on every platform, and otherwise the platform's own
+// (USERPROFILE on Windows).
+func homeDir() string {
+	if h := os.Getenv("HOME"); h != "" {
+		return h
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		home = ""
+		return ""
 	}
-	return &setup{repo: repo, policy: p, baseline: b, cwd: ev.Cwd, now: now, fold: foldCase, home: home, gitq: newGitSession()}, nil
+	return home
 }
 
 // describe is a policy or baseline error as structure: the file's name, a
