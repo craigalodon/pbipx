@@ -618,6 +618,9 @@ func (s *setup) locate(inv *gitInvocation) {
 	if err != nil {
 		return
 	}
+	// git prints the paths resolved and, on Windows, with forward
+	// slashes; the paths compared with them are resolved too (resolve).
+	info.top, info.common = resolveGit(info.top), resolveGit(info.common)
 	if info.nongit {
 		if !s.holdsRepo(inv.dir) {
 			inv.place = gitNongit
@@ -943,7 +946,10 @@ func (s *setup) diffCheck(inv gitInvocation) gitCheck {
 }
 
 // namesOutside reports whether a word of inv, taken as a path, is an
-// existing file or directory outside the work tree inv runs in.
+// existing file or directory outside the work tree inv runs in. Like git,
+// it compares each spelling with its symlinks resolved: a path spelled
+// through a link to the work tree (macOS's /var for /private/var) is
+// inside it, and a link inside the work tree that points out of it is not.
 func (s *setup) namesOutside(inv gitInvocation) bool {
 	for _, w := range inv.rest {
 		if w == "--" || strings.HasPrefix(w, "-") {
@@ -953,7 +959,7 @@ func (s *setup) namesOutside(inv gitInvocation) bool {
 			if _, err := os.Stat(a); err != nil {
 				continue
 			}
-			if _, in := relTo(inv.top, a, s.fold); inv.top == "" || !in {
+			if _, in := relTo(inv.top, resolve(a), s.fold); inv.top == "" || !in {
 				return true
 			}
 		}

@@ -17,19 +17,99 @@ var foldCase = runtime.GOOS == "darwin" || runtime.GOOS == "windows"
 // maxLinks is how many symlinks resolving one path follows.
 const maxLinks = 255
 
-// abs is p made absolute against dir, and clean.
+// windowsPaths is whether paths are Windows paths: with a volume, either
+// separator, and the Git Bash forms hostPath turns into them.
+var windowsPaths = filepath.Separator == '\\'
+
+// hostPath is p as the operating system names it. On Windows, where Claude
+// Code runs shell commands in Git Bash, a Git Bash drive path "/c/x" is
+// "C:\x"; every other p, and every p elsewhere, is returned unchanged.
+func hostPath(p string) string {
+	if !windowsPaths {
+		return p
+	}
+	if d, ok := gitBashDrive(p); ok {
+		return d
+	}
+	return p
+}
+
+// gitBashDrive is the Windows path of a Git Bash drive path: "/c" and
+// "/c/rest" are "C:\" and "C:\rest", with backslashes. ok is false for any
+// other p.
+func gitBashDrive(p string) (string, bool) {
+	if len(p) < 2 || p[0] != '/' || !isASCIILetter(p[1]) || (len(p) > 2 && p[2] != '/') {
+		return "", false
+	}
+	rest := ""
+	if len(p) > 3 {
+		rest = strings.ReplaceAll(p[3:], "/", `\`)
+	}
+	return strings.ToUpper(p[1:2]) + `:\` + rest, true
+}
+
+func isASCIILetter(c byte) bool { return 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' }
+
+// isAbs reports whether p names a place without the working directory:
+// filepath.IsAbs, and on Windows also a path rooted on the current drive
+// ("\x", "/x", Git Bash's "/c/x") or relative to a drive ("D:x").
+func isAbs(p string) bool {
+	if filepath.IsAbs(p) {
+		return true
+	}
+	return windowsPaths && p != "" && (os.IsPathSeparator(p[0]) || filepath.VolumeName(p) != "")
+}
+
+// fullPath reports whether p names one place whatever the working
+// directory: filepath.IsAbs once p is read as hostPath reads it. On Windows
+// a path rooted on the current drive is not one, since the drive is the
+// working directory's.
+func fullPath(p string) bool { return filepath.IsAbs(hostPath(p)) }
+
+// onDrive is p, which filepath.IsAbs is false for, placed on a drive, on
+// Windows: a rooted p ("\x") is on dir's drive, and a drive-relative "D:x"
+// is x against dir when dir is on D: and against D:'s root otherwise. ok is
+// false for any other p, and everywhere but Windows.
+func onDrive(dir, p string) (string, bool) {
+	if !windowsPaths || p == "" {
+		return "", false
+	}
+	if os.IsPathSeparator(p[0]) {
+		return filepath.VolumeName(dir) + p, true
+	}
+	if v := filepath.VolumeName(p); v != "" {
+		if strings.EqualFold(v, filepath.VolumeName(dir)) {
+			return dir + string(filepath.Separator) + p[len(v):], true
+		}
+		return v + string(filepath.Separator) + p[len(v):], true
+	}
+	return "", false
+}
+
+// abs is p made absolute against dir, and clean. On Windows p may be in a
+// Git Bash form (hostPath), rooted on dir's drive, or drive-relative
+// (onDrive).
 func abs(dir, p string) string {
+	p = hostPath(p)
 	if filepath.IsAbs(p) {
 		return filepath.Clean(p)
+	}
+	if d, ok := onDrive(dir, p); ok {
+		return filepath.Clean(d)
 	}
 	return filepath.Join(dir, p)
 }
 
 // rawJoin is p made absolute against dir and not cleaned: the path the
-// operating system walks, where ".." follows a symlink before it.
+// operating system walks, where ".." follows a symlink before it. p is read
+// as abs reads it.
 func rawJoin(dir, p string) string {
+	p = hostPath(p)
 	if filepath.IsAbs(p) {
 		return p
+	}
+	if d, ok := onDrive(dir, p); ok {
+		return d
 	}
 	return dir + string(filepath.Separator) + p
 }
@@ -56,9 +136,15 @@ func expandHome(p, home string) string {
 // decision about a path is made for each spelling, and the strictest wins:
 // a protected root reached through a link, or a link inside a root that
 // points elsewhere, is still judged as what it is under the policy.
+//
+// On Windows a Git Bash drive path "/c/x" is also read as Windows reads it,
+// "\c\x" on dir's drive: a file tool given that path opens that file.
 func spellings(dir, p string) []string {
 	out := []string{abs(dir, p)}
-	if !filepath.IsAbs(p) {
+	if _, ok := gitBashDrive(p); ok && windowsPaths {
+		out = append(out, spellings(dir, filepath.FromSlash(p))...)
+	}
+	if !isAbs(p) {
 		if d, err := filepath.EvalSymlinks(dir); err == nil {
 			out = append(out, filepath.Join(d, p))
 		}
@@ -79,6 +165,9 @@ func (s *setup) spellings(p string) []string { return spellings(s.cwd, p) }
 // component at a time, a ".." applied to what is resolved so far, as the
 // operating system walks it. From the first component that does not exist,
 // the rest is applied lexically. Past maxLinks links, p is returned clean.
+// On Windows a junction is followed as a link, and each existing component
+// is spelled by its long name (longName), as git and filepath.EvalSymlinks
+// spell it, so a short "RUNNER~1" and its long name compare equal.
 func resolvePath(p string) string {
 	vol := filepath.VolumeName(p)
 	sep := string(filepath.Separator)
@@ -99,12 +188,17 @@ func resolvePath(p string) string {
 		if err != nil {
 			return filepath.Join(append([]string{next}, todo...)...)
 		}
-		if info.Mode()&os.ModeSymlink == 0 {
-			resolved = next
+		if !isLink(info) {
+			resolved = longName(next)
 			continue
 		}
 		links++
 		target, err := os.Readlink(next)
+		if err != nil && info.Mode()&os.ModeSymlink == 0 {
+			// A reparse point that is not a link (isLink).
+			resolved = longName(next)
+			continue
+		}
 		if err != nil || links > maxLinks {
 			return filepath.Clean(p)
 		}
@@ -120,6 +214,16 @@ func resolvePath(p string) string {
 
 // resolve is a with its symlinks resolved (resolvePath).
 func resolve(a string) string { return resolvePath(a) }
+
+// resolveGit is a path git printed, absolute, in the form resolve gives:
+// separators as the operating system writes them and symlinks resolved.
+// An empty path stays empty.
+func resolveGit(p string) string {
+	if p == "" {
+		return ""
+	}
+	return resolve(filepath.FromSlash(p))
+}
 
 // segments splits a path at its separators, without empty segments.
 func segments(p string) []string {

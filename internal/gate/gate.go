@@ -198,11 +198,24 @@ func load(ev Event, opts Options) (*setup, *Decision) {
 	if now.IsZero() {
 		now = time.Now()
 	}
+	return &setup{repo: repo, policy: p, baseline: b, cwd: ev.Cwd, now: now, fold: foldCase, home: homeDir(), gitq: newGitSession()}, nil
+}
+
+// homeDir is the directory "~" and $HOME stand for, "" when unknown. On
+// Windows Git Bash and Claude Code both take $HOME first, which may be in
+// a Git Bash form (hostPath), and %USERPROFILE% (os.UserHomeDir) when it
+// is not set; elsewhere os.UserHomeDir is $HOME.
+func homeDir() string {
+	if windowsPaths {
+		if h := os.Getenv("HOME"); h != "" && fullPath(h) {
+			return filepath.Clean(hostPath(h))
+		}
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		home = ""
+		return ""
 	}
-	return &setup{repo: repo, policy: p, baseline: b, cwd: ev.Cwd, now: now, fold: foldCase, home: home, gitq: newGitSession()}, nil
+	return home
 }
 
 // describe is a policy or baseline error as structure: the file's name, a

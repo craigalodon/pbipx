@@ -529,7 +529,7 @@ func docKnown(doc *heredoc) bool {
 // protected root, or when st is unknown and p relative.
 func (w *walker) reachesIn(st cwdState, p string) {
 	if !st.known() {
-		if !filepath.IsAbs(p) || w.s.touchesIn("/", p) {
+		if !fullPath(p) || w.s.touchesIn("/", p) {
 			w.reach = true
 		}
 		return
@@ -899,7 +899,7 @@ func fdArgs(rest []string) (execs [][]string, paths []string) {
 	}
 	if base != "" {
 		for i, p := range paths {
-			if !filepath.IsAbs(p) {
+			if !isAbs(p) {
 				paths[i] = filepath.Join(base, p)
 			}
 		}
@@ -1057,18 +1057,18 @@ func (s *setup) chdir(v view, st *cwdState) {
 		return
 	default:
 		target = args[i]
-		if os.Getenv("CDPATH") != "" && !filepath.IsAbs(target) && !dotRelative(target) {
+		if os.Getenv("CDPATH") != "" && !isAbs(target) && !dotRelative(target) {
 			// CDPATH can take a bare name anywhere.
 			unknown()
 			return
 		}
 	}
-	if target == "" || (!st.known() && !filepath.IsAbs(target)) {
+	if target == "" || (!st.known() && !fullPath(target)) {
 		unknown()
 		return
 	}
 	bases := st.dirs
-	if filepath.IsAbs(target) {
+	if fullPath(target) {
 		bases = []string{string(filepath.Separator)}
 	}
 	var dirs []string
@@ -1248,7 +1248,7 @@ func (s *setup) spellWord(v view, xw xword, c *spellCache) (out []string, unknow
 		if cand == "" {
 			continue
 		}
-		if !v.cwd.known() && !filepath.IsAbs(cand) {
+		if !v.cwd.known() && !fullPath(cand) {
 			unknown = true
 			continue
 		}
@@ -1258,13 +1258,10 @@ func (s *setup) spellWord(v view, xw xword, c *spellCache) (out []string, unknow
 	}
 	if xw.glob {
 		for _, d := range dirs {
-			if !v.cwd.known() && !filepath.IsAbs(xw.pattern) {
+			if !v.cwd.known() && !fullPath(xw.pattern) {
 				break
 			}
-			pat := xw.pattern
-			if !filepath.IsAbs(pat) {
-				pat = d + string(filepath.Separator) + pat
-			}
+			pat := rawJoin(d, xw.pattern)
 			matches, over := globMatches(pat, c)
 			if over {
 				out = append(out, s.repo.Root)
