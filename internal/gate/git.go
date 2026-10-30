@@ -7,10 +7,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-
-	"github.com/craigalodon/pbipx/internal/baseline"
-	"github.com/craigalodon/pbipx/internal/policy"
-	"github.com/craigalodon/pbipx/internal/scan"
 )
 
 // Git subcommands that always print file content (behavior.md, "The gate",
@@ -683,8 +679,8 @@ func samePath(a, b string, fold bool) bool {
 
 // foreignReads reports whether a git command run outside this repository
 // names a path in it that it could print: any word, or the value of a
-// --flag=value, that is a protected root, is inside or contains one, or is
-// a file named for its content's sake (forbiddenRel).
+// --flag=value, that is a protected root, is inside or contains one under
+// any spelling (forbiddenRel).
 func (s *setup) foreignReads(inv gitInvocation) bool {
 	for _, w := range inv.rest {
 		if w == "--" || w == "-" {
@@ -714,14 +710,11 @@ func (s *setup) foreignReads(inv gitInvocation) bool {
 
 // forbiddenRel reports whether content from the repository-relative path
 // rel may not be printed by git: rel is a protected root, is inside one or
-// contains one (local state lives there too), or is a Claude Code
-// settings file, the policy or the baseline.
-func (s *setup) forbiddenRel(rel string) bool {
-	if s.touchesRel(rel) || scan.IsAgentSettings(rel) {
-		return true
-	}
-	return strings.EqualFold(rel, policy.FileName) || strings.EqualFold(rel, baseline.FileName)
-}
+// contains one, a nested work tree's roots included (local state lives
+// there too). The files that control the gate (the policy, the baseline,
+// Claude Code's settings) are readable, so git may print them as a Read
+// may; only writing them is denied.
+func (s *setup) forbiddenRel(rel string) bool { return s.touchesRel(rel) }
 
 // namedForbidden judges one path a name-only run printed. git prints it
 // relative to the top of the work tree it runs in; grep prints it with a

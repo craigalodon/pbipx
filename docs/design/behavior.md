@@ -1246,8 +1246,14 @@ behavior (2026-10-29).
   src/main.go`) are denied. pbipx runs the same git command in a form
   that prints only file names, reads its output (never printed) and
   allows the command when every file it would print content from is
-  outside every protected root, is not a Claude Code settings file, and
-  is not `.pbipx.toml` or the baseline:
+  outside every protected root, a nested work tree's roots included
+  (local state lives under the roots, so it is covered too). The files
+  that control the gate (`.pbipx.toml`, the baseline, Claude Code's
+  settings files) are readable with Read and `cat`, so git may print them
+  as well: `git show` of a commit that only changes `.pbipx.toml` is
+  allowed. (Decided 2026-10-30; until then they blocked the name-only
+  check, which denied what a Read allows.) Every rule for writing them is
+  unchanged:
   - `diff`, `show` of commits, `log` and `whatchanged` with a patch flag,
     `reflog` (show) with one, `stash show` with one (or with
     `stash.showPatch`), `stash list` with one, and `diff-tree`,

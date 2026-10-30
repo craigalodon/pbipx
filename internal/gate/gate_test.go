@@ -281,7 +281,9 @@ func TestShell(t *testing.T) {
 		{"git -C moves blame into a root", sh("git -C pbip/A.Report blame definition/report.json"), gate.ReasonGitContent, gate.ReasonGitContent},
 		{"git -C moves blame away", sh("git -C notes blame clean.md"), "", ""},
 		{"git annotate inside", sh("git annotate " + reportJSON), gate.ReasonGitContent, gate.ReasonGitContent},
-		{"git grep", sh("git grep student"), gate.ReasonGitContent, gate.ReasonGitContent},
+		// In the clean tree only the policy holds the word: it is readable,
+		// so git may print it.
+		{"git grep", sh("git grep student"), "", gate.ReasonGitContent},
 		{"git grep limited", sh("git grep student -- notes"), "", ""},
 		{"git archive", sh("git archive HEAD"), gate.ReasonGitContent, gate.ReasonGitContent},
 		{"git format-patch", sh("git format-patch -1"), gate.ReasonGitContent, gate.ReasonGitContent},

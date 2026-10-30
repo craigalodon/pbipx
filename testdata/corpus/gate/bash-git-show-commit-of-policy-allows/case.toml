@@ -1,0 +1,7 @@
+description = "git show of a commit that adds the policy and files outside every root allows: the policy is readable, so git may print it as a Read may. Plants no value"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = []
+known       = "predecessor"
