@@ -1003,7 +1003,11 @@ path, is denied with `event-error`: the call cannot be judged.
     the working directory, the repository's root and each protected root.
     A git command that changes the working tree (as for Bash) followed by
     a statement other than git denies, since the later one is judged
-    against the tree as it was before;
+    against the tree as it was before. A nested command line shares the
+    session of the line around it: its statements run in order with the
+    line's, and a location change, an environment assignment or a change
+    to the tree in either counts for both (`iex 'Set-Location pbip'; git
+    log -p -- x` is judged as moved);
   - any word naming local state denies with `local-state`;
   - otherwise the protected tree is scanned, as for Grep: a block or an
     error anywhere there denies, a clean tree allows.

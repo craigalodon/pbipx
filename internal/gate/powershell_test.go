@@ -164,6 +164,24 @@ func TestPowerShellGitHistory(t *testing.T) {
 		// A change to the tree, then a read.
 		{"checkout, then a read", ps("git checkout HEAD~1; Get-Content README.md"), git},
 		{"pull, then git status", ps("git pull; git status"), ""},
+
+		// A nested line shares the session of the line around it: a
+		// location change, an environment assignment or a change to the
+		// tree in either counts for both.
+		{"a root's path, no move", ps("git log -p -- A.Report/definition/report.json"), ""},
+		{"a root's path, nested, no move", ps("iex 'git log -p -- A.Report/definition/report.json'"), ""},
+		{"a move, then git", ps("Set-Location pbip; git log -p -- A.Report/definition/report.json"), git},
+		{"a move, then nested git", ps("Set-Location pbip; iex 'git log -p -- A.Report/definition/report.json'"), git},
+		{"a nested move, then git", ps("iex 'Set-Location pbip'; git log -p -- A.Report/definition/report.json"), git},
+		{"a nested move, then nested git", ps("iex 'Set-Location pbip'; cmd /c 'git log -p -- A.Report/definition/report.json'"), git},
+		{"Start-Process of a shell in another directory", ps(
+			"Start-Process pwsh -WorkingDirectory pbip -ArgumentList '-c','git log -p -- A.Report/definition/report.json'"), git},
+		{"a pager, then nested git", ps("$env:GIT_PAGER = 'less'; iex 'git log --oneline'"), git},
+		{"a nested pager, then git", ps("iex '$env:GIT_PAGER = ''less'''; git log --oneline"), git},
+		{"a harmless pager, then nested git", ps("$env:GIT_PAGER = 'cat'; iex 'git log --oneline'"), ""},
+		{"a nested checkout, then a read", ps("iex 'git checkout HEAD~1'; Get-Content README.md"), git},
+		{"a checkout, then a nested read", ps("git checkout HEAD~1; cmd /c 'type README.md'"), git},
+		{"a nested checkout, then nested git", ps("iex 'git pull'; iex 'git status'"), git},
 	})
 
 	// A clean change in a root, not committed: the tree scan allows, and

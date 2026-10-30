@@ -230,7 +230,7 @@ func (s *setup) powershell(line string) Decision {
 		}
 	}
 	// git printing content git history holds, as for Bash.
-	if d, ok := s.psGit(line, 0); ok {
+	if d, ok := s.psGit(line); ok {
 		return d
 	}
 	if local != "" {

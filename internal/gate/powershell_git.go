@@ -439,14 +439,33 @@ type psFound struct {
 	calls  []psGitCall
 	nested []string
 	opaque string
+	// moves is true when the statement starts a program in another
+	// working directory (Start-Process -WorkingDirectory).
+	moves bool
 }
 
-// psGit decides rule 2 for a PowerShell line, and the rule against a
-// command that changes the working tree before another reads it: each git
-// command the line runs, directly, through the call operator, a script
-// block, Start-Process, Invoke-Expression or a shell it starts, is judged
-// as the Bash rule judges it (gitContent). It returns a deny, or ok false.
-func (s *setup) psGit(line string, depth int) (Decision, bool) {
+// psUnit is one statement of a PowerShell line, those of the command lines
+// it nests included, in the order they run: the git commands it runs, and
+// whether it can read files other than through git.
+type psUnit struct {
+	calls []psGitCall
+	reads bool
+}
+
+// psLine is what the gate reads in a whole PowerShell line, the command
+// lines nested in it included: a nested line shares the session of the
+// line around it, so a location change or an environment assignment in
+// either counts for both.
+type psLine struct {
+	units []psUnit
+	moved bool
+	env   []string
+}
+
+// collect reads line, nested depth deep, into p. It returns a deny for a
+// line that cannot be read, or one that runs git in a way the gate cannot
+// follow.
+func (s *setup) collect(p *psLine, line string, depth int) (Decision, bool) {
 	if depth > maxDepth {
 		return deny(ReasonGitContent, "%s; it could run git printing content, and git history cannot be vetted. %s",
 			whyTooDeep, hintPSPlain), true
@@ -456,29 +475,51 @@ func (s *setup) psGit(line string, depth int) (Decision, bool) {
 		return deny(ReasonInternalError, "the PowerShell command holds more than %d words, or groups nested more than %d deep, "+
 			"too many to judge", maxPSWords, maxPSGroups), true
 	}
-	moved := slices.ContainsFunc(stmts, func(st psStmt) bool {
-		return len(st.words) > 0 && psMovers[psName(st.words[0])]
-	})
-	env := psEnv(stmts)
-	changed := ""
-	seen := map[string]bool{}
-	for i, st := range stmts {
-		// git's own reads are judged by the git rule, as for Bash.
-		if changed != "" && len(st.words) > 0 && psName(st.words[0]) != "git" {
-			return deny(ReasonGitContent,
-				"%s changes the working tree, and a later command in the line can read files; the read would be judged "+
-					"against the tree as it was before. %s", changed, hintChange), true
-		}
+	p.env = append(p.env, psEnv(stmts)...)
+	for _, st := range stmts {
 		f := s.psStatement(st)
 		if f.opaque != "" {
 			return deny(ReasonGitContent, "git may run %s; git history cannot be vetted. %s", f.opaque, hintPSPlain), true
 		}
+		name := ""
+		if len(st.words) > 0 {
+			name = psName(st.words[0])
+		}
+		if psMovers[name] || f.moves {
+			p.moved = true
+		}
+		// git's own reads are judged by the git rule, as for Bash.
+		p.units = append(p.units, psUnit{calls: f.calls, reads: len(st.words) > 0 && name != "git"})
 		for _, n := range f.nested {
-			if d, ok := s.psGit(n, depth+1); ok {
+			if d, ok := s.collect(p, n, depth+1); ok {
 				return d, true
 			}
 		}
-		for _, c := range f.calls {
+	}
+	return Decision{}, false
+}
+
+// psGit decides rule 2 for a PowerShell line, and the rule against a
+// command that changes the working tree before another reads it: each git
+// command the line runs, directly, through the call operator, a script
+// block, Start-Process, Invoke-Expression or a shell it starts, is judged
+// as the Bash rule judges it (gitContent), with the location changes and
+// environment assignments of the whole line, nested lines included. It
+// returns a deny, or ok false.
+func (s *setup) psGit(line string) (Decision, bool) {
+	var p psLine
+	if d, ok := s.collect(&p, line, 0); ok {
+		return d, true
+	}
+	changed := ""
+	seen := map[string]bool{}
+	for _, u := range p.units {
+		if changed != "" && u.reads {
+			return deny(ReasonGitContent,
+				"%s changes the working tree, and a later command in the line can read files; the read would be judged "+
+					"against the tree as it was before. %s", changed, hintChange), true
+		}
+		for _, c := range u.calls {
 			// The same git command is judged once.
 			var key strings.Builder
 			fmt.Fprint(&key, c.moved)
@@ -489,10 +530,10 @@ func (s *setup) psGit(line string, depth int) (Decision, bool) {
 				continue
 			}
 			seen[key.String()] = true
-			if g := s.psJudge(c, env, moved); g != nil {
+			if g := s.psJudge(c, p.env, p.moved); g != nil {
 				return deny(ReasonGitContent, "%s", g.message()), true
 			}
-			if changed == "" && i < len(stmts)-1 {
+			if changed == "" {
 				changed = s.psChanges(c)
 			}
 		}
@@ -697,6 +738,8 @@ func psStartProcess(args []psWord) (f psFound) {
 			parts = append(parts, w.text)
 		}
 		f.nested = append(f.nested, strings.Join(parts, " "))
+		// The line it runs starts in that directory.
+		f.moves = moved
 	}
 	return f
 }
