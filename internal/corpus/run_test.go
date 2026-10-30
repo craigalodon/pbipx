@@ -1,6 +1,7 @@
 package corpus
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -227,5 +228,21 @@ func TestCommandArgs(t *testing.T) {
 		if got := CommandArgs(&cs, &Prepared{Root: "/r"}); !slices.Equal(got, tt.want) {
 			t.Errorf("%s: args = %q, want %q", tt.id, got, tt.want)
 		}
+	}
+}
+
+// TestStdinFor checks that {root} in a gate event is written as JSON string
+// content, so a Windows path keeps the event valid JSON, and that any
+// other stdin gets the root as it is.
+func TestStdinFor(t *testing.T) {
+	root := `C:\Users\example\"repo"`
+	ev := Case{Spec: Spec{Command: commandGate}, HasStdin: true, Stdin: []byte(`{"cwd": "{root}"}`)}
+	var got struct{ Cwd string }
+	if err := json.Unmarshal(ev.StdinFor(root), &got); err != nil || got.Cwd != root {
+		t.Errorf("gate stdin: cwd = %q, %v; want %q", got.Cwd, err, root)
+	}
+	text := Case{Spec: Spec{Command: commandScanText}, HasStdin: true, Stdin: []byte("in {root}\n")}
+	if got := string(text.StdinFor(root)); got != "in "+root+"\n" {
+		t.Errorf("scan-text stdin = %q", got)
 	}
 }

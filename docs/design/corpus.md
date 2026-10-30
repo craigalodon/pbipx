@@ -48,6 +48,8 @@ A runner, one per implementation, does this for each case:
    <path> HEAD`), as Claude Code adds one under `.claude/worktrees/`: it
    holds the committed files, deleted ones included.
 4. Replace `{root}` in `args` and `stdin` with the root's absolute path.
+   In a `gate` case's `stdin`, a JSON event, the path is written as JSON
+   string content: a Windows path's backslashes are escaped.
 5. Run the command in the root, with `CI`, `PRE_COMMIT` and
    `PBIPX_NO_REVEAL` unset and standard output not a terminal, unless `env`
    sets them.

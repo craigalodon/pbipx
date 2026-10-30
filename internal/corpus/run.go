@@ -290,6 +290,30 @@ func CommandArgs(cs *Case, p *Prepared) []string {
 	return args
 }
 
+// StdinFor is the case's stdin with {root} replaced by root. A gate case's
+// stdin is a JSON event, and {root} stands inside its strings, so root is
+// written as JSON string content: a Windows path's backslashes are
+// escaped. Any other stdin gets root as it is.
+func (cs *Case) StdinFor(root string) []byte {
+	repl := []byte(root)
+	if cs.Spec.Command == commandGate {
+		repl = jsonStringContent(root)
+	}
+	return bytes.ReplaceAll(cs.Stdin, []byte(rootPlaceholder), repl)
+}
+
+// jsonStringContent is s encoded as a JSON string, without the quotes.
+func jsonStringContent(s string) []byte {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(s); err != nil {
+		return []byte(s) // a string always encodes
+	}
+	b := bytes.TrimSuffix(buf.Bytes(), []byte("\n"))
+	return b[1 : len(b)-1]
+}
+
 // Outcome is what one run of the binary produced.
 type Outcome struct {
 	Exit   int
@@ -301,7 +325,7 @@ type Outcome struct {
 func Execute(cs *Case, binary string, p *Prepared) (Outcome, error) {
 	var stdin []byte
 	if cs.HasStdin {
-		stdin = bytes.ReplaceAll(cs.Stdin, []byte(rootPlaceholder), []byte(p.Root))
+		stdin = cs.StdinFor(p.Root)
 	}
 	out, err := runBinary(binary, p.Root, CommandArgs(cs, p), CommandEnv(os.Environ(), &cs.Spec, p.ConfigDir), stdin)
 	if err != nil {
