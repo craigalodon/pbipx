@@ -407,6 +407,9 @@ func (s *Store) Recorded(r Repository) (digests []string, ok bool, err error) {
 func readRecord(path string) (digests []string, found bool, err error) {
 	data, err := os.ReadFile(path) //nolint:gosec // G304: the path is a hash under the store's own directory
 	if errors.Is(err, fs.ErrNotExist) {
+		if notDirAbove(path) {
+			return nil, false, errNotDir
+		}
 		return nil, false, nil
 	}
 	if err != nil {
@@ -435,6 +438,31 @@ func readRecord(path string) (digests []string, found bool, err error) {
 		return r.Digests, true, nil
 	}
 	return nil, false, ErrBadRecord
+}
+
+// errNotDir is a record path under a file: the store is not what it should
+// be, which is an error, not a missing record.
+var errNotDir = errors.New("a directory of the approval store is a file")
+
+// notDirAbove reports whether the nearest existing directory above path is
+// not a directory. On Windows, reading a path under a file fails as not
+// existing, where elsewhere it fails as "not a directory"; both mean the
+// store is broken, not that there is no record.
+func notDirAbove(path string) bool {
+	for dir := filepath.Dir(path); ; {
+		st, err := os.Stat(dir)
+		if err == nil {
+			return !st.IsDir()
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			return false
+		}
+		up := filepath.Dir(dir)
+		if up == dir {
+			return false
+		}
+		dir = up
+	}
 }
 
 // Status checks the policy file at policyPath against the approvals of r.
