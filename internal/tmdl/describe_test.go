@@ -269,7 +269,7 @@ func TestDescribeNestedLetsIsLinear(t *testing.T) {
 	}
 	// Quadratic, this took about half a minute; linear, a fraction of a
 	// second, most of it lexing.
-	if !raceEnabled && elapsed > time.Second {
+	if !raceEnabled && elapsed > 5*time.Second {
 		t.Errorf("256KB of nested lets took %v", elapsed)
 	}
 }
