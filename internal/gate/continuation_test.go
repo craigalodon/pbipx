@@ -75,6 +75,18 @@ func TestShellFedScriptJoins(t *testing.T) {
 		{"echo -e of a continued line into bash", sh(`echo -e 'git log \\\n-p' | bash`), git},
 		{"printf of a plain line into bash", sh(`printf '%s\n' 'git log --oneline -1' | bash`), ""},
 		{"printf with %d into bash", sh(`printf '%d\n' 1 | bash`), git},
+		// echo -e and %b keep \' and \" as written; only printf's format
+		// reads them. Any escape the gate does not read exactly is a
+		// script built at run time.
+		{`echo -e with \" into bash`, sh(`echo -e 'echo \"; git log -p; echo \"' | bash`), git},
+		{`echo -e with \' into bash`, sh(`echo -e "echo \\' ; git log -p ; echo \\'" | bash`), git},
+		{`printf %b with \" into bash`, sh(`printf '%b\n' 'echo \"; git log -p; echo \"' | bash`), git},
+		{`echo -e with \x into bash`, sh(`echo -e 'git log \x2dp' | bash`), git},
+		{`echo -e with \0NNN into bash`, sh(`echo -e 'git log \055p' | bash`), git},
+		{`printf format with \x into bash`, sh(`printf 'git log \x2dp\n' | bash`), git},
+		{`printf %b with \0NNN into bash`, sh(`printf '%b\n' 'git log -\0160' | bash`), git},
+		{`echo -ne with \x into bash`, sh(`echo -ne 'git log -\x70' | bash`), git},
+		{`printf format with \" into bash`, sh(`printf 'echo \"hi\"\n' | bash`), ""},
 	})
 }
 

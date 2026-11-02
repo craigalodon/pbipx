@@ -6,9 +6,10 @@ import "strings"
 // reading it from a pipe sees it. echo joins its words with spaces and
 // ends the line, its escapes read with -e; printf repeats its format over
 // its arguments, with %s and %b (whose argument's escapes are read), %%
-// and the format's own escapes. ok is false for anything else (another
-// conversion, printf -v, which prints nothing to the pipe): the text
-// cannot be told.
+// and the format's own escapes. ok is false for anything the gate cannot
+// read exactly (another conversion, printf -v which prints nothing, or an
+// escape outside its tables): the text cannot be told, and the caller
+// takes the script as built at run time.
 func printed(name string, args []string) (string, bool) {
 	if name == "echo" {
 		escapes, newline := false, true
@@ -27,7 +28,11 @@ func printed(name string, args []string) (string, bool) {
 		}
 		text := strings.Join(args, " ")
 		if escapes {
-			text = unescape(text)
+			t, ok := unescape(text, ebEscapes)
+			if !ok {
+				return "", false
+			}
+			text = t
 		}
 		if newline {
 			text += "\n"
@@ -48,7 +53,11 @@ func printed(name string, args []string) (string, bool) {
 			c := format[i]
 			switch {
 			case c == '\\' && i+1 < len(format):
-				b.WriteString(unescape(format[i : i+2]))
+				rep, ok := fmtEscapes[format[i:i+2]]
+				if !ok {
+					return "", false
+				}
+				b.WriteString(rep)
 				i++
 			case c == '%' && i+1 < len(format):
 				i++
@@ -65,7 +74,11 @@ func printed(name string, args []string) (string, bool) {
 				case 's':
 					b.WriteString(arg)
 				case 'b':
-					b.WriteString(unescape(arg))
+					t, ok := unescape(arg, ebEscapes)
+					if !ok {
+						return "", false
+					}
+					b.WriteString(t)
 				default:
 					return "", false
 				}
@@ -81,10 +94,38 @@ func printed(name string, args []string) (string, bool) {
 	return b.String(), true
 }
 
-// unescape reads the backslash escapes echo -e and printf's format read:
-// \n, \t, \\ and the like; any other is kept as written.
-func unescape(s string) string {
-	r := strings.NewReplacer(`\\`, `\`, `\n`, "\n", `\t`, "\t", `\r`, "\r", `\a`, "\a", `\b`, "\b",
-		`\f`, "\f", `\v`, "\v", `\'`, "'", `\"`, `"`)
-	return r.Replace(s)
+// fmtEscapes are the backslash escapes printf's format string reads, as
+// bash's printf does: the simple letter escapes, and \" and \', which the
+// format reads (an echo -e or %b argument keeps those two as written).
+var fmtEscapes = map[string]string{
+	`\\`: `\`, `\a`: "\a", `\b`: "\b", `\f`: "\f", `\n`: "\n", `\r`: "\r", `\t`: "\t", `\v`: "\v",
+	`\"`: `"`, `\'`: "'",
+}
+
+// ebEscapes are the backslash escapes echo -e and a printf %b argument
+// read as a single letter. \x, \0NNN, \u, \U, \c and \e are not here: the
+// gate does not decode them, so a script that uses one is taken to be
+// built at run time rather than read wrong.
+var ebEscapes = map[string]string{
+	`\\`: `\`, `\a`: "\a", `\b`: "\b", `\f`: "\f", `\n`: "\n", `\r`: "\r", `\t`: "\t", `\v`: "\v",
+}
+
+// unescape reads s with the escape table esc. ok is false when a
+// backslash starts an escape the table does not hold exactly: the text
+// cannot be told as bash reads it.
+func unescape(s string, esc map[string]string) (string, bool) {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] != '\\' || i+1 >= len(s) {
+			b.WriteByte(s[i])
+			continue
+		}
+		rep, ok := esc[s[i:i+2]]
+		if !ok {
+			return "", false
+		}
+		b.WriteString(rep)
+		i++
+	}
+	return b.String(), true
 }
