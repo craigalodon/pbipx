@@ -32,6 +32,8 @@ func TestShellContinuations(t *testing.T) {
 			sh("git commit -m \"$(cat <<EOF\nA wrapped \\\nline\nEOF\n)\""), ""},
 		// The join read as bash reads it.
 		{"& continued into &&, then git log -p", sh("true &\\\n& git log -p"), git},
+		{"$ continued into $( in arithmetic", sh("echo $(( $\\\n(rg Doe) ))"), gate.ReasonFinding},
+		{"$ continued into $( in double quotes", sh("echo \"$\\\n(rg Doe)\""), gate.ReasonFinding},
 		{"$ continued into $(", sh("echo $\\\n(git log -p)"), git},
 		{"a name continued into a reader", sh("ca\\\nt " + leakVisual), gate.ReasonFinding},
 		{"a body line continued into the delimiter, then a command", sh("cat <<E\nx \\\nE\ngit log -p\nE"), unread},

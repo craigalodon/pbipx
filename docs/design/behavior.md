@@ -671,8 +671,10 @@ path, is denied with `event-error`: the call cannot be judged.
     or a pipeline continued after `|` reads as one line. In an unquoted
     here-document body the lines are joined too, as bash joins them
     (`RUN apt-get update && \<newline>  apt-get install ...` in a
-    Dockerfile written with `cat <<EOF`). The gate reads the line once to
-    find the joins and again with them removed; each join removed must
+    Dockerfile written with `cat <<EOF`), and in arithmetic, double quotes
+    and a here-document delimiter (`$((\<newline>`, `"$\<newline>(...)"`).
+    The gate reads the line once to find where no join is made, removes
+    every other backslash-newline, and reads it again; each join removed must
     fall where the second reading reads code, not inside single quotes,
     `$'...'`, a comment or the body of a here-document with a quoted
     delimiter (a join that splits `<<` makes the text after it such a

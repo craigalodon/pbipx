@@ -718,14 +718,14 @@ func (t *tokenizer) endCommand() {
 // A backslash-newline outside single quotes, comments and quoted
 // here-document bodies is removed before bash reads the line, wherever it
 // is: "&&\<newline>x" is "&&x", "&\<newline>&" is "&&" and
-// "$\<newline>(" is "$(". The tokenizer reads the line once and notes
-// each such join where it meets one; when there are any, the line is read
-// again with them removed, as bash reads it.
+// "$\<newline>(" is "$(". The tokenizer reads the line once to mark where
+// no join is made (lineJoins); when there are joins elsewhere, the line is
+// read again with them removed, as bash reads it.
 func tokenize(line string) (cmds []simple, ok bool) {
 	rs := []rune(line)
 	t := &tokenizer{rs: rs, sc: newScan()}
 	_, ok = t.run(0, false)
-	if joins := t.sc.memo.joins; len(joins) > 0 {
+	if joins := lineJoins(rs, t.sc.memo.notCode); len(joins) > 0 {
 		joined := make([]rune, 0, len(rs))
 		doubt := t.sc.memo.joinDoubt
 		// Where each join was, in the joined line: between joined[j-1]
@@ -746,7 +746,7 @@ func tokenize(line string) (cmds []simple, ok bool) {
 		}
 		t = &tokenizer{rs: joined, sc: newScan()}
 		_, ok = t.run(0, false)
-		if len(t.sc.memo.joins) > 0 {
+		if len(lineJoins(joined, t.sc.memo.notCode)) > 0 {
 			doubt = cmp.Or(doubt, whyRejoin)
 		}
 		// Each join removed must be where the joined line is code: one
@@ -767,6 +767,26 @@ func tokenize(line string) (cmds []simple, ok bool) {
 		return nil, false
 	}
 	return t.finish(), true
+}
+
+// lineJoins are the backslashes of the backslash-newlines bash removes in
+// rs, by address: every one outside the text a reading of rs marked as no
+// code (notCode: single quotes, $'...', comments, quoted here-document
+// bodies), wherever else it is (arithmetic, double quotes, ${...},
+// backticks included). A backslash escapes the character after it, so
+// \\ before a newline is no join.
+func lineJoins(rs []rune, notCode map[*rune]bool) map[*rune]bool {
+	joins := map[*rune]bool{}
+	for k := 0; k+1 < len(rs); k++ {
+		if notCode[&rs[k]] || rs[k] != '\\' {
+			continue
+		}
+		if rs[k+1] == '\n' {
+			joins[&rs[k]] = true
+		}
+		k++
+	}
+	return joins
 }
 
 // lineScan is what the readers of one line share: how deeply the text read is
