@@ -1,0 +1,7 @@
+description = "git commit -m given an unquoted variable: the shell splits its value into words, which could be options that print content (--dry-run -v), so it is not a message. Plants no value"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []
+known       = "predecessor"
