@@ -1004,6 +1004,79 @@ var shells = map[string]bool{
 	"yash": true, "fish": true, "rbash": true, "pdksh": true, "posh": true, "tcsh": true, "csh": true,
 }
 
+// interpreter is how the gate reads a script interpreter's command line:
+// the options that give it its program as text (code), or name a module
+// or file it runs (runs), each with the program attached or as the next
+// word, and the other options that take the next word as a value.
+type interpreter struct {
+	code, runs, values []string
+}
+
+// interpreters are the script interpreters that read their program from
+// their input when given no program: no script operand and no code
+// option, or "-" as the script.
+var interpreters = map[string]interpreter{
+	"python":  {code: []string{"-c"}, runs: []string{"-m"}, values: []string{"-W", "-X", "-Q"}},
+	"python2": {code: []string{"-c"}, runs: []string{"-m"}, values: []string{"-W", "-X", "-Q"}},
+	"python3": {code: []string{"-c"}, runs: []string{"-m"}, values: []string{"-W", "-X"}},
+	"pypy":    {code: []string{"-c"}, runs: []string{"-m"}, values: []string{"-W", "-X"}},
+	"pypy3":   {code: []string{"-c"}, runs: []string{"-m"}, values: []string{"-W", "-X"}},
+	"node": {code: []string{"-e", "--eval", "-p", "--print"},
+		values: []string{"-r", "--require", "--import", "--input-type", "--loader", "--experimental-loader", "--title"}},
+	"nodejs": {code: []string{"-e", "--eval", "-p", "--print"},
+		values: []string{"-r", "--require", "--import", "--input-type", "--loader", "--experimental-loader", "--title"}},
+	"perl":    {code: []string{"-e", "-E"}, values: []string{"-I", "-M", "-m", "-x"}},
+	"ruby":    {code: []string{"-e"}, values: []string{"-r", "-I", "-C", "-E", "--encoding"}},
+	"php":     {code: []string{"-r", "-R", "-B", "-E"}, runs: []string{"-f"}, values: []string{"-d", "-c", "-z"}},
+	"Rscript": {code: []string{"-e"}},
+	"lua":     {code: []string{"-e"}, values: []string{"-l"}},
+	"luajit":  {code: []string{"-e"}, values: []string{"-l", "-b", "-j", "-O"}},
+	"tclsh":   {},
+}
+
+// readsProgram reports whether interpreter name, given rest, reads its
+// program from its input: "-" as the script, or no script operand, no
+// code option and no module. A request for the version or help reads
+// nothing.
+func readsProgram(name string, rest []string) bool {
+	in, ok := interpreters[name]
+	if !ok || (len(rest) > 0 && versionOnly(rest)) {
+		return false
+	}
+	matches := func(a string, opts []string) (bool, bool) {
+		for _, o := range opts {
+			switch {
+			case a == o:
+				return true, false
+			case strings.HasPrefix(a, o+"="), !strings.HasPrefix(o, "--") && strings.HasPrefix(a, o) && len(a) > len(o):
+				return true, true
+			}
+		}
+		return false, false
+	}
+	for i := 0; i < len(rest); i++ {
+		a := rest[i]
+		switch {
+		case a == "-":
+			return true
+		case a == "--":
+			return i+1 >= len(rest) || rest[i+1] == "-"
+		case !strings.HasPrefix(a, "-"):
+			return false // the script
+		}
+		if ok, _ := matches(a, in.code); ok {
+			return false
+		}
+		if ok, _ := matches(a, in.runs); ok {
+			return false
+		}
+		if ok, attached := matches(a, in.values); ok && !attached {
+			i++
+		}
+	}
+	return true
+}
+
 // stripKeywords drops the reserved words and grouping tokens a command
 // starts with, and `function NAME`. A for, select or case runs nothing of
 // its own: nil.

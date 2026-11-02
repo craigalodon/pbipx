@@ -175,6 +175,8 @@ func TestMessagesNameTheTrigger(t *testing.T) {
 		{"git notes add with a message option's value unknown", sh(`git notes add -Fm "$X"`), gate.ReasonGitContent,
 			[]string{"git notes is given, before --, an argument the gate cannot expand"},
 			hintGitExpand + " `git notes add -F - <<'EOF'` takes the message from a here-document."},
+		{"git merge with a message option's value unknown", sh(`git merge -Fm "$X" topic`), gate.ReasonGitContent,
+			[]string{"git merge is given, before --, an argument the gate cannot expand"}, "substitutions."},
 		{"git stash with an argument unknown", sh(`git stash $X`), gate.ReasonGitContent,
 			[]string{"git stash is given, before --, an argument the gate cannot expand"}, hintGitExpand},
 

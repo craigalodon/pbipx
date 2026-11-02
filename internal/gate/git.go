@@ -318,11 +318,12 @@ func (o gitOptions) cluster(a, next string) (c gitCluster, ok bool) {
 }
 
 // gitExpandHint ends a git refusal for an argument the gate cannot expand:
-// for a subcommand that reads a message from a file (-F), it adds how to
-// give one the gate can read. stash has no -F.
+// for a subcommand that reads its message from standard input with -F -,
+// it adds how to give one the gate can read. merge reads no message from
+// "-", and stash has no -F.
 func gitExpandHint(sub string) string {
 	switch sub {
-	case "commit", "merge", "tag":
+	case "commit", "tag":
 		return hintGitExpand + " `git " + sub + " -F - <<'EOF'` takes the message from a here-document."
 	case "notes":
 		return hintGitExpand + " `git notes add -F - <<'EOF'` takes the message from a here-document."
@@ -382,8 +383,9 @@ func gitMessageText(c simple) gitMessage {
 		wd := c.words[w]
 		m.words[w] = isMsg && !wd.splits && !wd.globs() && !slices.ContainsFunc(wd.parts, runsInBraces)
 	}
-	if stdin {
-		// -F - reads standard input: a here-document or a here-string.
+	if stdin && inv.sub != "merge" {
+		// -F - reads standard input: a here-document or a here-string. git
+		// merge takes "-" for a file name.
 		m.docs = true
 		for i, wd := range c.words {
 			if wd.here && !wd.splits && !slices.ContainsFunc(wd.parts, runsInBraces) {

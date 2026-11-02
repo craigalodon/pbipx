@@ -481,6 +481,33 @@ func (w *walker) line(line string, st *cwdState, depth int) {
 	w.commands(line, splitCommands(line), st, depth)
 }
 
+// programShown reports whether an interpreter reading its program from its
+// input (readsProgram) is fed a program the line shows as written: a
+// here-document whose body is known (quoted, or with no expansion) or a
+// known here-string, and nothing else on its input. Its text is then
+// tested for a root's name as any other word of the line.
+func programShown(c simple, v view) bool {
+	if c.pipeIn {
+		return false
+	}
+	shown := false
+	for _, doc := range c.docs {
+		if !docKnown(doc) {
+			return false
+		}
+		shown = true
+	}
+	for _, xw := range v.words {
+		switch {
+		case xw.here && xw.known:
+			shown = true
+		case xw.here, xw.redirect && xw.input:
+			return false
+		}
+	}
+	return shown
+}
+
 // shellReadsScript reports whether v is a shell that reads its script from
 // its input: no -c string.
 func shellReadsScript(v view) bool {
@@ -565,6 +592,10 @@ func (w *walker) setReach(why, hint string) {
 const (
 	whyTooDeep     = "a command line is nested more than 4 deep, too deep to follow"
 	whyPipedScript = "a shell reads its script from a pipe whose content is built at run time"
+	// whyPipedProgram is the trigger for a script interpreter reading its
+	// program from its input.
+	whyPipedProgram = "a script interpreter (python, node, perl and the like) reads its program from its input, " +
+		"which is built at run time"
 )
 
 // The hints a refusal ends with: one short thing to do instead.
@@ -644,6 +675,11 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 		} else {
 			w.fedScript(c, v, depth)
 		}
+	}
+	if readsProgram(v.name, v.rest) && !programShown(c, v) {
+		// python3, node, perl ... reading their program from a pipe, a
+		// file or a process substitution run what the gate cannot read.
+		w.setReach(whyPipedProgram, hintPlain)
 	}
 	switch v.name {
 	case "source", ".":

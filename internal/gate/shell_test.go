@@ -502,6 +502,35 @@ func TestShellTreeChangeThenRead(t *testing.T) {
 	})
 }
 
+// TestShellInterpreterStdin: a script interpreter reading its program from
+// its input runs a script built at run time, as a shell reading a pipe
+// does: it touches every root.
+func TestShellInterpreterStdin(t *testing.T) {
+	isolateSearch(t)
+	runBoth(t, []both{
+		{"a commit message run by python3",
+			sh("git commit -q --allow-empty -m \"$(cat <<'EOF'\nprint(open(\"pbip/x\").read())\nEOF\n)\" && git log -1 --format=%B | python3"),
+			"", gate.ReasonFinding},
+		{"a -F - message run by python3",
+			sh("git commit -q --allow-empty -F - <<'EOF'\nprint(open(\"pbip/x\").read())\nEOF\ngit log -1 --format=%B | python3"),
+			"", gate.ReasonFinding},
+		{"python3 - from a pipe", shIn("sql", "git log -1 --format=%B | python3 -"), "", gate.ReasonFinding},
+		{"node from a pipe", shIn("sql", "cat clean.sql | node"), "", gate.ReasonFinding},
+		{"perl from a file", shIn("sql", "perl < clean.sql"), "", gate.ReasonFinding},
+		{"ruby from a process substitution", shIn("sql", "ruby < <(git log -1 --format=%B)"), "", gate.ReasonFinding},
+		{"python3 with options, from a pipe", shIn("sql", "echo x | python3 -u -W ignore"), "", gate.ReasonFinding},
+		{"python3 of a here-document with an expansion", shIn("sql", "python3 <<EOF\n$X\nEOF"), "", gate.ReasonFinding},
+
+		{"python3 of a script", shIn("sql", "python3 build.py"), "", ""},
+		{"python3 -c", shIn("sql", "python3 -c 'print(1)'"), "", ""},
+		{"python3 -m", shIn("sql", "echo x | python3 -m json.tool"), "", ""},
+		{"node -e", shIn("sql", "node -e 'console.log(1)'"), "", ""},
+		{"perl -ne over a pipe", shIn("sql", "echo x | perl -ne 'print'"), "", ""},
+		{"python3 --version", shIn("sql", "python3 --version"), "", ""},
+		{"python3 of a quoted here-document", shIn("sql", "python3 - <<'EOF'\nprint(1)\nEOF"), "", ""},
+	})
+}
+
 func TestShellFdAndSearchers(t *testing.T) {
 	runBoth(t, []both{
 		{"fd -x", sh("fd -e json -x cat"), "", gate.ReasonFinding},
@@ -673,6 +702,8 @@ func TestShellGitMessageText(t *testing.T) {
 		// A here-string read by -F - is the message.
 		{"-F- of a here-string naming the root", sh(`git commit -F- <<<"Leave pbip alone"`), "", ""},
 		{"--file=- of a here-string naming the root", sh(`git commit --file=- <<< 'Leave pbip alone'`), "", ""},
+		{"merge -F - of a here-document naming the root (merge reads no message from -)",
+			sh("git merge -F - topic <<'EOF'\nLeave pbip alone\nEOF"), "", gate.ReasonFinding},
 		{"a here-string to git without -F -", sh(`git commit -F msg.txt <<<"pbip"`), "", gate.ReasonFinding},
 		{"-m of a here-document naming the root",
 			sh("git commit -m \"$(cat <<'EOF'\nNote a check\n\nThis leaves pbip/ alone.\nEOF\n)\""), "", ""},

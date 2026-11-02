@@ -903,7 +903,8 @@ path, is denied with `event-error`: the call cannot be judged.
      one command is `cat` with no argument reading a here-document
      (`git commit -m "$(cat <<'EOF' ...)"`), that here-document's body;
      and the here-documents of git reading its message from standard
-     input (`-F -`, `--file=-`, `--file -`), and its here-strings
+     input (`-F -`, `--file=-`, `--file -` for `commit`, `tag` and `notes
+     add`; `git merge` reads a file named `-`), and its here-strings
      (`git commit -F- <<<"..."`). A message word that is several words
      (above), or that holds a `${...}` running a command
      (`"${X:-$(cat f)}"`), is not message text. Only git run under no
@@ -916,6 +917,16 @@ path, is denied with `event-error`: the call cannot be judged.
      program may read as code keeps the test: `python3 -c "open('pbip/x')"`,
      `node -e`, `perl -e`, an awk program, and a here-document fed to an
      interpreter (`python3 - <<'EOF' ...`, `cat <<'EOF' | python3`).
+     A message is still run if something feeds it to an interpreter
+     (`git log -1 --format=%B | python3`): a script interpreter
+     (`python`, `python3`, `node`, `perl`, `ruby`, `php`, `Rscript`,
+     `lua`, `tclsh` and kin) reading its program from its input, given no
+     script operand, no code option (`-c`, `-e`, `-r` ...) and no module
+     (`-m`), or `-` as the script, runs a program built at run time, as a
+     shell reading a pipe does, and touches every protected root. Its
+     input is shown only when it is a quoted here-document, or one or a
+     here-string with no expansion, and no pipe: that text is tested as
+     above.
      **Known over-block:** `echo pbip` and `printf` naming a root still
      scan the tree, since their output can feed a pipe into an
      interpreter.
@@ -1224,12 +1235,12 @@ run `pbipx scan` at a terminal."; for a search, "Name the files to search
 explicitly, or exclude the protected folders."; for git, "Limit the paths
 (`-- src`) or use --stat."; for git given an argument the gate cannot
 expand, "Write git's arguments out in full, without variables or command
-substitutions.", followed for `commit`, `merge` and `tag`, which read a
-message from a file with `-F`, by "`git <subcommand> -F - <<'EOF'` takes
-the message from a here-document." (for `notes`, "`git notes add -F -
-<<'EOF'`"; `stash` has no `-F`); for a PowerShell command, which the gate
-cannot read
-whatever the working directory, "Use the Read tool for a single file, or
+substitutions.", followed for `commit` and `tag`, which read a message
+from standard input with `-F -`, by "`git <subcommand> -F - <<'EOF'`
+takes the message from a here-document." (for `notes`, "`git notes add
+-F - <<'EOF'`"; `git merge -F -` reads a file named `-`, and `stash` has
+no `-F`); for a PowerShell command, which the gate cannot read whatever
+the working directory, "Use the Read tool for a single file, or
 the Bash tool with the paths written out."; and for `agent-settings`,
 "Show the person the exact change, for them to make at a terminal."
 
