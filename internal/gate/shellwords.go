@@ -195,6 +195,71 @@ func (w word) globs() bool {
 	return slices.ContainsFunc(w.parts, func(p part) bool { return p.kind == litPart && !p.quoted && hasGlob(p.text) })
 }
 
+// braces reports whether the word holds a brace expression bash expands
+// into several words: an unquoted {...} with an unquoted comma at its top
+// level ({a,b}, x{,.bak}), or a sequence {1..3}, {a..e}, {1..9..2}. The
+// gate does not expand one; the word is unknown, and splits. An expansion
+// ($X, ${X}) is never one, nor is {} or a group's { and }.
+func (w word) braces() bool {
+	var rs []rune
+	var free []bool // unquoted literal text
+	for _, p := range w.parts {
+		text := p.raw
+		if p.kind == litPart {
+			text = p.text
+		}
+		for _, r := range text {
+			rs = append(rs, r)
+			free = append(free, p.kind == litPart && !p.quoted)
+		}
+	}
+	for i := range rs {
+		if rs[i] != '{' || !free[i] {
+			continue
+		}
+		depth, comma := 0, false
+		for j := i; j < len(rs); j++ {
+			if !free[j] {
+				continue
+			}
+			switch rs[j] {
+			case '{':
+				depth++
+			case ',':
+				comma = comma || depth == 1
+			case '}':
+				depth--
+			}
+			if depth == 0 {
+				if comma || braceSequence(string(rs[i+1:j])) {
+					return true
+				}
+				break
+			}
+		}
+	}
+	return false
+}
+
+// braceSequence reports whether s, the inside of {...}, is a sequence:
+// two integers or two single characters, and an optional integer step,
+// separated by "..".
+func braceSequence(s string) bool {
+	parts := strings.Split(s, "..")
+	if len(parts) != 2 && len(parts) != 3 {
+		return false
+	}
+	isInt := func(x string) bool {
+		x = strings.TrimPrefix(x, "-")
+		x = strings.TrimPrefix(x, "+")
+		_, err := strconv.Atoi(x)
+		return x != "" && err == nil
+	}
+	ends := (isInt(parts[0]) && isInt(parts[1])) ||
+		(len([]rune(parts[0])) == 1 && len([]rune(parts[1])) == 1)
+	return ends && (len(parts) == 2 || isInt(parts[2]))
+}
+
 // dropWord forgets the word being read.
 func (t *tokenizer) dropWord() {
 	t.raw.Reset()
@@ -210,10 +275,12 @@ func (t *tokenizer) endWord() {
 		splits := slices.ContainsFunc(t.parts, func(p part) bool {
 			return (p.kind == paramPart || p.kind == opaquePart) && (!p.inDouble || splitsQuoted(p.raw))
 		})
-		t.cur.words = append(t.cur.words, word{
+		w := word{
 			text: t.raw.String(), parts: t.parts, quoted: t.quoted, splits: splits,
 			redirect: t.redirect, input: t.redirect && t.input, here: t.redirect && t.here,
-		})
+		}
+		w.splits = w.splits || w.braces()
+		t.cur.words = append(t.cur.words, w)
 		t.redirect, t.input, t.here = false, false, false
 	}
 	t.raw.Reset()

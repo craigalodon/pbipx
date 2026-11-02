@@ -514,6 +514,25 @@ func (s *setup) psGit(line string) (Decision, bool) {
 	if d, ok := s.collect(&p, line, 0); ok {
 		return d, true
 	}
+	// git config setting a key that a git command anywhere in the line
+	// reads, as for Bash.
+	configured := false
+	for _, u := range p.units {
+		for _, c := range u.calls {
+			argv, unknown, _ := psArgv(c, nil)
+			configured = configured || configWrite(argv, unknown)
+		}
+	}
+	if configured {
+		for _, u := range p.units {
+			for _, c := range u.calls {
+				argv, _, _ := psArgv(c, nil)
+				if sub := afterConfig(argv); sub != "" {
+					return deny(ReasonGitContent, "%s", gitDenial{sub, whyAfterConfig, hintAfterConfig}.message()), true
+				}
+			}
+		}
+	}
 	changed := ""
 	seen := map[string]bool{}
 	for _, u := range p.units {

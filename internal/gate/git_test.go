@@ -207,6 +207,90 @@ func TestShellGitHistory(t *testing.T) {
 	})
 }
 
+// TestShellGitHistoryGaps: history holds the leak, committed then deleted,
+// and the working tree is clean.
+func TestShellGitHistoryGaps(t *testing.T) {
+	root, _ := historyRepo(t)
+	sh := func(cmd string) gate.Event { return gate.Event{Tool: gate.Shell, Command: cmd} }
+	ps := func(cmd string) gate.Event { return gate.Event{Tool: gate.PowerShell, Command: cmd} }
+	git := gate.ReasonGitContent
+	run(t, root, []decideCase{
+		// commit --amend prints HEAD^ against the index: the commit that
+		// deleted the leak shows it.
+		{"commit --amend --dry-run -v", sh("git commit --amend --dry-run -v"), git},
+		{"commit --amend --dry-run -v, PowerShell", ps("git commit --amend --dry-run -v"), git},
+		{"commit --dry-run -v, no amend", sh("git commit --dry-run -v"), ""},
+		{"commit --amend --dry-run, no -v", sh("git commit --amend --dry-run"), ""},
+
+		// Brace expansion makes one word several.
+		{"log of a brace list", sh("git log {-p,-2}"), git},
+		{"show limited to a brace list", sh("git show HEAD~1 -- {pbip,README.md}"), git},
+		{"diff limited to a brace list", sh("git diff HEAD~1 -- {README.md,pbip}"), git},
+		{"commit of a brace list", sh("git commit {--amend,--dry-run,-v}"), git},
+		{"log of a brace sequence", sh("git log -{1..2}"), git},
+		{"log of a nested brace list", sh("git log {--oneline,{-p,-1}}"), git},
+		{"log of a quoted brace list", sh("git log --oneline '{-p,-2}'"), ""},
+		{"log with a reflog selector", sh("git log --oneline HEAD@{1}"), ""},
+		{"log, one line each", sh("git log --oneline -2"), ""},
+	})
+}
+
+// TestShellGitCommitVerboseConfig: commit.verbose turns on the diff of a
+// dry run as -v does. The leak is committed, then deleted from the work
+// tree and not committed: the diff shows it, the tree is clean.
+func TestShellGitCommitVerboseConfig(t *testing.T) {
+	root := newRepo(t, leakyFiles())
+	if err := os.Remove(filepath.Join(root, filepath.FromSlash(leakVisual))); err != nil {
+		t.Fatal(err)
+	}
+	sh := func(cmd string) gate.Event { return gate.Event{Tool: gate.Shell, Command: cmd} }
+	git := gate.ReasonGitContent
+	run(t, root, []decideCase{
+		{"commit -a --dry-run, no commit.verbose", sh("git commit -a --dry-run"), ""},
+		{"commit -a --dry-run -v", sh("git commit -a --dry-run -v"), git},
+	})
+	for _, value := range []string{"true", "1", "2", "yes"} {
+		gitIn(t, root, "config", "commit.verbose", value)
+		run(t, root, []decideCase{
+			{"commit -a --dry-run, commit.verbose " + value, sh("git commit -a --dry-run"), git},
+			{"commit -a --dry-run --no-verbose, commit.verbose " + value, sh("git commit -a --dry-run --no-verbose"), ""},
+		})
+	}
+	gitIn(t, root, "config", "commit.verbose", "false")
+	run(t, root, []decideCase{{"commit -a --dry-run, commit.verbose false", sh("git commit -a --dry-run"), ""}})
+
+	// A key set in the same line is read by git after the gate looked.
+	ps := func(cmd string) gate.Event { return gate.Event{Tool: gate.PowerShell, Command: cmd} }
+	run(t, root, []decideCase{
+		{"commit.verbose set in the line", sh("git config commit.verbose true && git commit -a --dry-run"), git},
+		{"commit.verbose set in a later substitution",
+			sh(`git commit -a --dry-run -m "$(git config commit.verbose 1)"`), git},
+		{"commit.verbose set in the line, PowerShell", ps("git config commit.verbose true; git commit -a --dry-run"), git},
+		{"commit.verbose unset in the line", sh("git config --unset commit.verbose && git commit -a --dry-run"), git},
+		{"a key from a variable", sh(`git config "$K" true && git status`), git},
+		{"an alias set in the line", sh("git config alias.st 'status -v' && git status"), git},
+		{"an identity set in the line", sh("git config user.email pat@example.com && git commit -m msg"), ""},
+		{"an identity set in the line, PowerShell", ps("git config user.name 'Example, Pat'; git commit -m msg"), ""},
+		{"a key read in the line", sh("git config --get commit.verbose && git commit -a --dry-run"), ""},
+		{"a key read with get", sh("git config get commit.verbose && git status"), ""},
+		{"a key set, then push", sh("git config commit.verbose true && git push"), ""},
+	})
+
+	// A submodule's changes shown as a patch are files the name-only
+	// check does not list.
+	run(t, root, []decideCase{
+		{"diff of a path away", sh("git diff -- README.md"), ""},
+		{"diff --submodule=diff", sh("git diff --submodule=diff -- README.md"), git},
+		{"diff --submodule=short", sh("git diff --submodule=short -- README.md"), ""},
+	})
+	gitIn(t, root, "config", "diff.submodule", "diff")
+	run(t, root, []decideCase{
+		{"diff, diff.submodule diff", sh("git diff -- README.md"), git},
+		{"diff --submodule=log, diff.submodule diff", sh("git diff --submodule=log -- README.md"), ""},
+		{"diff --stat, diff.submodule diff", sh("git diff --stat -- README.md"), ""},
+	})
+}
+
 func TestShellGitStashShowPatch(t *testing.T) {
 	root := newRepo(t, cleanFiles())
 	gitIn(t, root, "config", "stash.showPatch", "true")

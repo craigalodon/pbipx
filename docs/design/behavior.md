@@ -611,6 +611,15 @@ path, is denied with `event-error`: the call cannot be judged.
     `${PWD}` (the working directory as the line leaves it) and `$OLDPWD`
     are expanded; any other expansion (`$X`, `${X:-y}`, `$1`, `$(...)`,
     backticks) leaves its word unknown;
+  - brace expansion is not modelled: a word holding an unquoted brace
+    expression (a `{...}` with a comma at its top level, `{a,b}` or
+    `x{,.bak}`, nested ones included, or a sequence `{1..3}`, `{a..e}`,
+    `{1..9..2}`) is several words the gate does not expand, so it is
+    unknown, as a variable is, for every rule: git denies it before
+    `--` and as a pathspec, and a reader given one reaches every root.
+    `{}`, `HEAD@{1}`, `${...}`, a quoted brace and the grouping `{` and
+    `}` are not brace expressions. (Decided 2026-11-02.) The
+    predecessor reads such a word literally;
   - a here-document (`<<WORD`, `<<-WORD`) is read as bash reads it: its
     body runs from the line after the operator to the line that is the
     delimiter (leading tabs removed for `<<-`), or to the end of the line
@@ -1125,6 +1134,12 @@ path, is denied with `event-error`: the call cannot be judged.
   reaches only what its words show; this is the same limit as for Bash
   (threat model). A script it runs (`.\x.ps1`, `pwsh -File`) and a
   function or alias defined in an earlier call are not read.
+  **Known limitation:** Windows PowerShell 5.1, and PowerShell 7 with
+  `$PSNativeCommandArgumentPassing` set to `Legacy`, do not escape a `"`
+  inside an argument passed to a program, so a message given as `-m
+  "$m"`, where `$m` holds a `"`, can reach git as several arguments. The
+  gate takes a double-quoted message as one argument, as current
+  PowerShell passes it.
 - **LSP** (pbipx only; Claude Code's code intelligence tool). Its input is
   not documented, so the adapter takes every string, at any depth of
   `tool_input`, under a key whose name holds `path`, `file` or `uri` (case
@@ -1574,7 +1589,42 @@ behavior (2026-10-29).
     `REV:dir` as `dir/path`.
   - `status -v` (the staged diff) and `-vv` (and the unstaged one), and
     `commit --dry-run -v` (both): `git diff --cached` and `git diff` in
-    name-only form.
+    name-only form. `--short`, `--porcelain` and `--long` imply
+    `--dry-run`. With no `-v`, `--verbose` or `--no-verbose` given, git
+    commit reads `commit.verbose` (a boolean or a level): the gate asks
+    `git config --get --type=bool commit.verbose`, and anything but unset
+    or false counts as `-v`. With `--amend`, git prints the index
+    against HEAD's parent, so `git diff --cached HEAD^` is judged in
+    name-only form too; a root commit has no parent, that run fails, and
+    the command is denied.
+  - a diff shown with `--submodule=diff`, or with no `--submodule` given
+    and `diff.submodule` set to `diff`, prints the changes inside each
+    submodule, whose files the name-only form does not list: denied when
+    the command would print a patch. (Decided 2026-11-02.)
+  - git config set in the same line: a key that is not known to be
+    harmless (as for `-c`; `user.*`, `color.*` and the like are), set or
+    unset by `git config` anywhere in the line, a nested line or a
+    PowerShell statement included, or a key that cannot be told, denies
+    every other git command in the line but those that print no file
+    content whatever their options. Git reads the key when it runs, after
+    the gate read the configuration (`git config commit.verbose true &&
+    git commit -a --dry-run`). `git config --get`, `--list`, `get` and
+    `list` only read.
+
+  The configuration keys checked for turning content on in a command
+  the gate allows: `commit.verbose` and `stash.showPatch` (read, above),
+  `diff.submodule` (above), `diff.relative` (the name-only form adds
+  `--no-relative`), `log.diffMerges` (it applies only with a merge option,
+  judged above), `status.*`, `grep.*` (the name-only run of `grep` uses
+  the same configuration), `diff.renames` and `diff.noprefix` (they change
+  names, which the name-only form reads with the same configuration),
+  and `format.*` (`format-patch` is always denied). Keys that run a
+  program (`diff.external`, a diff driver's `command` or `textconv`,
+  `core.pager` and `pager.*`, `gpg.program`, `core.fsmonitor`,
+  `core.hooksPath`, filters) are not judged from the repository's
+  configuration: a program they name is not read, as a script a command
+  runs is not (threat model). Set with `-c` or in the same line, they
+  deny as above.
   - `stash show` takes no pathspec: every word not starting with `-`,
     before or after `--`, names the stash (a number `n` is
     `refs/stash@{n}`, none is `refs/stash@{0}`). With at most one such

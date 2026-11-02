@@ -66,6 +66,15 @@ func (s *setup) shell(line string) Decision {
 			return deny(ReasonGitContent, "%s", g.message())
 		}
 	}
+	// git config setting a key a git command anywhere in the line reads:
+	// the gate read the configuration as it is before the line runs.
+	if slices.ContainsFunc(w.views, func(v view) bool { return configWrite(v.argv, unknownArgs(v)) }) {
+		for _, v := range w.views {
+			if sub := afterConfig(v.argv); sub != "" {
+				return deny(ReasonGitContent, "%s", gitDenial{sub, whyAfterConfig, hintAfterConfig}.message())
+			}
+		}
+	}
 	// A command that changes the working tree, then one that reads: the
 	// read would be judged against the tree as it is before the change.
 	if w.readAfterChange {
@@ -1320,6 +1329,11 @@ func (s *setup) expandWord(w word, st cwdState) xword {
 		}
 	}
 	xw.text, xw.pattern = text.String(), pattern.String()
+	if w.braces() {
+		// Brace expansion makes it several words, which the gate does
+		// not expand.
+		xw.known = false
+	}
 	if quotedGlob && filepath.Separator == '\\' {
 		// Windows has no glob escape: a quoted glob character would match.
 		xw.glob = false
@@ -1874,13 +1888,8 @@ func policyApprove(args []string) bool {
 	return slices.ContainsFunc(args[i+1:], func(a string) bool { return strings.HasPrefix(a, "approve") })
 }
 
-// gitRule decides rule 2 for v, from each spelling of its working
-// directory; from an unknown one, as if from each protected root, where
-// every relative pathspec touches the root. An argument that cannot be
-// told (an expansion) could be any pathspec, revision, option or
-// directory: a subcommand that prints content is then unprovable
-// (gitContent).
-func (s *setup) gitRule(v view) *gitDenial {
+// unknownArgs are the words of git's arguments in v that cannot be told.
+func unknownArgs(v view) []string {
 	var unknown []string
 	if v.name == "git" {
 		for i, k := range v.restKnown {
@@ -1889,6 +1898,17 @@ func (s *setup) gitRule(v view) *gitDenial {
 			}
 		}
 	}
+	return unknown
+}
+
+// gitRule decides rule 2 for v, from each spelling of its working
+// directory; from an unknown one, as if from each protected root, where
+// every relative pathspec touches the root. An argument that cannot be
+// told (an expansion) could be any pathspec, revision, option or
+// directory: a subcommand that prints content is then unprovable
+// (gitContent).
+func (s *setup) gitRule(v view) *gitDenial {
+	unknown := unknownArgs(v)
 	dirs := v.cwd.dirs
 	if !v.cwd.known() {
 		dirs = []string{s.repo.Root}

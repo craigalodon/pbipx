@@ -554,6 +554,23 @@ func TestShellInterpreterStdin(t *testing.T) {
 	})
 }
 
+// TestShellBraceExpansion: a word with an unquoted brace expression is
+// several words the gate does not expand: unknown, as a variable is.
+func TestShellBraceExpansion(t *testing.T) {
+	isolateSearch(t)
+	runBoth(t, []both{
+		{"a reader of a brace list", shIn("sql", "cat clean{.sql,.txt}"), "", gate.ReasonFinding},
+		{"a reader of a brace sequence", shIn("sql", "head -n {1..2} clean.sql"), "", gate.ReasonFinding},
+		{"a reader of a quoted brace list", shIn("sql", "cat 'clean{.sql,.txt}'"), "", ""},
+		{"echo of a brace list", sh("echo {a,b}"), "", ""},
+		{"mkdir of a brace list", sh("mkdir -p build/{a,b}"), "", ""},
+		{"find -exec with {}", shIn("sql", `find . -name '*.sql' -exec cat {} \;`), "", ""},
+		{"xargs -I{}", shIn("sql", "ls | xargs -I{} echo {}"), "", ""},
+		{"a group", shIn("sql", "{ cat clean.sql; }"), "", ""},
+		{"a variable in braces", shIn("sql", `F=clean.sql; cat "${F}"`), "", gate.ReasonFinding},
+	})
+}
+
 func TestShellFdAndSearchers(t *testing.T) {
 	runBoth(t, []both{
 		{"fd -x", sh("fd -e json -x cat"), "", gate.ReasonFinding},

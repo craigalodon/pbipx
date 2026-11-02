@@ -661,6 +661,81 @@ func safeConfig(kv string) bool {
 	return false
 }
 
+// gitConfigReads are git config's options that only read; its get and list
+// subcommands, given first, only read too.
+var gitConfigReads = []string{
+	"--get", "--get-all", "--get-regexp", "--get-urlmatch", "--get-color", "--get-colorbool",
+	"--list", "-l",
+}
+
+// configWrite reports whether argv (wrappers and assignments included)
+// runs git config to set or unset a key that is not known to be harmless
+// (safeConfig): such a key, set earlier in the line, can change what a
+// later git command prints (commit.verbose, stash.showPatch,
+// diff.submodule, an alias), while the gate reads the configuration as it
+// is before the line runs. A word that cannot be told (unknown) makes the
+// key unknown. Reading the configuration is no write.
+func configWrite(argv, unknown []string) bool {
+	name, rest := program(argv)
+	if name != "git" {
+		return false
+	}
+	inv, ok := parseGit(rest, "")
+	if !ok || inv.sub != "config" {
+		return false
+	}
+	if slices.ContainsFunc(inv.rest, func(a string) bool { return slices.Contains(gitConfigReads, a) }) {
+		return false
+	}
+	var pos []string
+	for _, a := range inv.rest {
+		if slices.Contains(unknown, a) {
+			return true
+		}
+		if !strings.HasPrefix(a, "-") {
+			pos = append(pos, a)
+		}
+	}
+	switch {
+	case len(pos) > 0 && (pos[0] == "get" || pos[0] == "list"):
+		return false
+	case len(pos) > 0 && (pos[0] == "set" || pos[0] == "unset"):
+		pos = pos[1:]
+	}
+	switch len(pos) {
+	case 0:
+		// --edit, --remove-section and the like.
+		return true
+	case 1:
+		return !safeConfig(pos[0] + "=\x00")
+	}
+	return !safeConfig(pos[0] + "=" + pos[1])
+}
+
+// afterConfig is why a git command (argv) is denied when the line it is
+// in sets a key with git config (configWrite): any git command but git
+// config itself and those that print no file content whatever their
+// options; "" otherwise.
+func afterConfig(argv []string) string {
+	name, rest := program(argv)
+	if name != "git" {
+		return ""
+	}
+	inv, ok := parseGit(rest, "")
+	if !ok || inv.sub == "config" || gitNeverContent[inv.sub] {
+		return ""
+	}
+	return inv.sub
+}
+
+// whyAfterConfig is the refusal for a git command after git config in the
+// same line, which follows the subcommand.
+const whyAfterConfig = "runs in a line that sets a git configuration key that can change what it prints " +
+	"(commit.verbose, stash.showPatch, an alias), and the gate reads the configuration as it is before the line runs"
+
+// hintAfterConfig is what to do instead.
+const hintAfterConfig = "Run git config on its own, then the git command as a separate call."
+
 // safePager reports whether a pager setting only passes git's output on.
 func safePager(v string) bool { return v == "" || v == "cat" }
 
@@ -960,7 +1035,32 @@ func (s *setup) gitContent(args, unknown []string, shapes []argShape) *gitDenial
 				hintGit}
 		}
 	}
+	if len(c.runs) > 0 && !c.runs[0].grep && s.submoduleDiff(inv) {
+		return &gitDenial{inv.sub, "shows the changes inside submodules (--submodule=diff, or diff.submodule set to diff), " +
+			"whose files the name-only check does not list", "Use --submodule=short, or --stat."}
+	}
 	return nil
+}
+
+// submoduleDiff reports whether a diff git prints shows the changes inside
+// submodules as a patch: --submodule=diff, or, with no --submodule given,
+// diff.submodule set to diff. The name-only check lists the submodule, not
+// the files in it. A failed lookup counts.
+func (s *setup) submoduleDiff(inv gitInvocation) bool {
+	given := ""
+	for _, a := range inv.args {
+		if a == "--submodule" || strings.HasPrefix(a, "--submodule=") {
+			given = strings.TrimPrefix(strings.TrimPrefix(a, "--submodule"), "=")
+			if given == "" {
+				given = "log"
+			}
+		}
+	}
+	if given != "" {
+		return given == "diff"
+	}
+	v, err := s.git().configValue(inv.dir, "diff.submodule", "")
+	return !errors.Is(err, errNotSet) && (err != nil || v == "diff")
 }
 
 // git is the decision's git session.
@@ -1317,10 +1417,19 @@ func (s *setup) gitSpecs(inv gitInvocation) gitCheck {
 		if hasShort(inv.args, 'p', "--patch", "mFCcSt") || hasFlag(inv.args, []string{"--interactive"}) {
 			return bySpecs(after())
 		}
-		if hasFlag(inv.args, []string{"--dry-run"}) {
-			// The dry run prints the diff that would be committed: with -a,
-			// -o or -i, unstaged changes too.
-			return s.verboseCheck(inv, verbosity(inv.args, "mFCcSt"), true)
+		if hasFlag(inv.args, []string{"--dry-run", "--short", "--porcelain", "--long"}) {
+			// The dry run (which --short, --porcelain and --long imply)
+			// prints the diff that would be committed: with -a, -o or -i,
+			// unstaged changes too.
+			v := s.commitVerbosity(inv)
+			c := s.verboseCheck(inv, v, true)
+			if v > 0 && hasFlag(inv.args, []string{"--amend"}) {
+				// Amending commits the index on HEAD's parent: the diff is
+				// from there. A root commit has none, and that run fails,
+				// which denies.
+				c.runs = append(c.runs, nameRun{argv: slices.Concat(inv.globals, []string{"diff", "--cached", "HEAD^"}, gitNameOnly)})
+			}
+			return c
 		}
 		return noContent()
 	case "rebase", "am":
@@ -1808,6 +1917,21 @@ func verbosity(args []string, withValue string) int {
 		}
 	}
 	return n
+}
+
+// commitVerbosity is how verbose git commit is: -v counted, or with no
+// -v, --verbose or --no-verbose given, commit.verbose (a boolean or a
+// level), as git reads it. A value git cannot read as a boolean, or a
+// failed lookup, counts as verbose.
+func (s *setup) commitVerbosity(inv gitInvocation) int {
+	if hasFlag(inv.args, []string{"--verbose", "--no-verbose"}) || hasShort(inv.args, 'v', "", "mFCcSt") {
+		return verbosity(inv.args, "mFCcSt")
+	}
+	v, err := s.git().configValue(inv.dir, "commit.verbose", "bool")
+	if errors.Is(err, errNotSet) || (err == nil && v == "false") {
+		return 0
+	}
+	return 1
 }
 
 // verboseCheck judges git status -v, which prints the staged diff (and
