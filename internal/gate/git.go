@@ -5,6 +5,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 )
@@ -565,6 +566,10 @@ type gitInvocation struct {
 	// unknown is true when an argument cannot be told (gitContent): no
 	// query that could find the command prints nothing is made with it.
 	unknown bool
+	// headCommits is set, for a git command after a change in the line
+	// (contentAfter), when nothing in the line can point HEAD at anything
+	// but a commit: HEAD and the revisions relative to it are commits.
+	headCommits bool
 
 	// place is where dir is (locate). For gitHere, top is the root of the
 	// work tree git runs in ("" inside a git directory), and prefix is
@@ -1817,6 +1822,9 @@ func (s *setup) kindOf(inv gitInvocation, a string) (revKind, string) {
 	if p, ok := revPath(a); ok {
 		return revBlobPath, p
 	}
+	if inv.headCommits && !inv.elsewhere && headRelative(a) {
+		return revCommit, ""
+	}
 	if inv.elsewhere || inv.unknown || inv.place != gitHere {
 		return revUnplaceable, ""
 	}
@@ -2128,12 +2136,22 @@ func listsOnly(args []string, changes string, long []string) bool {
 	return len(positional(args)) == 0 || hasShort(args, 'l', "--list", "")
 }
 
-// contentCapable reports whether the git command argv, run from dir, could
-// print file content given its arguments: what rule 2 would check (its
-// content as gitSpecs reads it), whatever the files in it. A subcommand
-// that prints none whatever its options, or a git command whose arguments
-// turn none on (git commit -m msg, git status, git log --oneline), is not.
-func (s *setup) contentCapable(argv []string, dir string) bool {
+// contentAfter reports whether the git command argv, run from dir after
+// the git commands before (each an argv) changed the repository, could
+// print file content the gate cannot place: what rule 2 checks, with
+// what git holds taken to have changed (a stash looked up now may not
+// exist yet, so nothing is taken to be absent, and no name-only query is
+// trusted). A subcommand that prints none whatever its options, or a git
+// command whose arguments turn none on (git commit -m msg, git status, git
+// log --oneline), prints none. Nor does:
+//   - a summary of HEAD or a revision relative to it (git show --stat
+//     HEAD~1) when headCommits, as nothing in the line can point HEAD at
+//     anything but a commit;
+//   - a command whose pathspecs provably avoid every root (specsProof);
+//   - the working-tree diff (worktreeDiff) after changes that can only
+//     shrink it (shrinksDiff): it reads the working tree and the index,
+//     not HEAD, and was judged before the line.
+func (s *setup) contentAfter(argv []string, dir string, before [][]string, headCommits bool) bool {
 	name, rest := program(argv)
 	if name != "git" {
 		return false
@@ -2150,11 +2168,118 @@ func (s *setup) contentCapable(argv []string, dir string) bool {
 		return false
 	}
 	s.locate(&inv)
-	// What git holds will have changed: a stash looked up now may not
-	// exist yet, so nothing is taken to be absent.
 	inv.unknown = true
-	return s.gitSpecs(inv).content
+	inv.headCommits = headCommits
+	c := s.gitSpecs(inv)
+	switch {
+	case !c.content:
+		return false
+	case c.deny:
+		return true
+	case s.specsProof(inv):
+		return false
+	case worktreeDiff(inv) && !slices.ContainsFunc(before, func(b []string) bool { return !shrinksDiff(b) }):
+		return false
+	}
+	return true
 }
+
+// specsProof reports whether inv, a git command that prints only what its
+// pathspecs limit it to (diff, log, whatchanged, grep and the diff
+// plumbing), is given pathspecs after "--" that provably avoid every root
+// (specsAvoid): no glob or magic, each one outside every root, a nested
+// repository's included. Options that print beyond the pathspecs
+// (--full-diff, -L, --no-index, --pathspec-from-file) or a submodule's
+// diff leave it unproven.
+func (s *setup) specsProof(inv gitInvocation) bool {
+	switch inv.sub {
+	case "diff", "log", "whatchanged", "grep", "diff-index", "diff-tree", "diff-files":
+	default:
+		return false
+	}
+	if !inv.dashdash || len(inv.specs) == 0 || inv.elsewhere || inv.oddSpecs || inv.place != gitHere {
+		return false
+	}
+	if hasFlag(inv.args, []string{"--full-diff", "--no-index", "--pathspec-from-file", "--follow"}) ||
+		slices.ContainsFunc(inv.args, func(a string) bool { return strings.HasPrefix(a, "-L") }) {
+		return false
+	}
+	if inv.sub != "grep" && s.submoduleDiff(inv) {
+		return false
+	}
+	return s.specsAvoid(inv, s.parseSpecs(inv, inv.specs)) == ""
+}
+
+// worktreeDiff reports whether inv is git diff of the working tree against
+// the index: no revision, no --cached or --staged, no --no-index.
+func worktreeDiff(inv gitInvocation) bool {
+	return inv.sub == "diff" && len(positional(inv.args)) == 0 &&
+		!hasFlag(inv.args, []string{"--cached", "--staged", "--no-index", "--merge-base"})
+}
+
+// shrinksDiff reports whether the git command argv can only take entries
+// out of the working-tree diff, or leaves the working tree and the index
+// as they are: git add (not -N, -p, -i, -e, --renormalize or --chmod),
+// which makes the index match the working tree, git stash or git stash
+// push and save (not -p or --staged), which make both match HEAD, and
+// fetch, tag, push, remote and branch, which move refs only.
+func shrinksDiff(argv []string) bool {
+	name, rest := program(argv)
+	if name != "git" {
+		return false
+	}
+	inv, ok := parseGit(rest, "")
+	if !ok || inv.ambiguous {
+		return false
+	}
+	switch inv.sub {
+	case "add", "stage":
+		return !hasFlag(inv.args, []string{"--intent-to-add", "--patch", "--interactive", "--edit", "--renormalize", "--chmod"}) &&
+			!slices.ContainsFunc([]byte("Npie"), func(c byte) bool { return hasShort(inv.args, c, "", "") })
+	case "stash":
+		pos := positional(inv.args)
+		if len(pos) > 0 && pos[0] != "push" && pos[0] != "save" {
+			return false
+		}
+		return !hasFlag(inv.args, []string{"--patch", "--staged"}) &&
+			!slices.ContainsFunc([]byte("pS"), func(c byte) bool { return hasShort(inv.args, c, "", "m") })
+	case "fetch", "tag", "push", "remote", "branch":
+		return true
+	}
+	return gitReadOnly(inv)
+}
+
+// headMayLeaveCommits reports whether the git command argv could point
+// HEAD at something other than a commit: git symbolic-ref, update-ref or
+// replace not just reading, a subcommand that is not git's own (an alias),
+// or an ambiguous abbreviation. hub counts as git.
+func headMayLeaveCommits(argv []string) bool {
+	name, rest := program(argv)
+	if name != "git" && name != "hub" {
+		return false
+	}
+	inv, ok := parseGit(rest, "")
+	switch {
+	case !ok:
+		return false
+	case !gitBuiltins[inv.sub] || inv.ambiguous:
+		return true
+	case inv.sub == "symbolic-ref" || inv.sub == "update-ref" || inv.sub == "replace":
+		return !gitReadOnly(inv)
+	}
+	return false
+}
+
+// headRelative reports whether a names HEAD, or a commit relative to it
+// (HEAD~2, @^, HEAD^2~1), or a range of those (HEAD~1..HEAD, ..@).
+func headRelative(a string) bool {
+	if left, right, ok := cutRange(a); ok {
+		return (left == "" || headRelative(left)) && (right == "" || headRelative(right)) && left+right != ""
+	}
+	return headRevision.MatchString(a)
+}
+
+var headRevision = regexp.MustCompile(`^(HEAD|@)([~^][0-9]*)*$`)
 
 // shortFormat reports whether git status (status true) or git commit's
 // dry run prints the short or porcelain format, or NUL-terminated output,

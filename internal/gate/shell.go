@@ -1,6 +1,7 @@
 package gate
 
 import (
+	"cmp"
 	"io/fs"
 	"os"
 	"path"
@@ -92,16 +93,25 @@ func (s *setup) shell(line string) Decision {
 	// A git command not known to be read-only (gitReadOnly), then one that could
 	// print file content: the second was judged against the repository
 	// as it was before the first (in an unordered line, anywhere).
-	if w.indexChanged != "" {
+	if len(w.changes) > 0 {
 		unordered := w.loopy || w.anywhere != ""
+		headCommits := !slices.ContainsFunc(w.views, func(v view) bool { return headMayLeaveCommits(v.argv) })
 		for _, v := range w.views {
-			if v.name != "git" || v.seq == w.indexSeq || (!unordered && v.seq < w.indexSeq) {
+			if v.name != "git" {
 				continue
 			}
-			if s.contentCapable(v.argv, s.viewDir(v)) {
+			var before [][]string
+			label := ""
+			for _, c := range w.changes {
+				if c.seq != v.seq && (unordered || c.seq < v.seq) {
+					before = append(before, c.argv)
+					label = cmp.Or(label, c.label)
+				}
+			}
+			if len(before) > 0 && s.contentAfter(v.argv, s.viewDir(v), before, headCommits) {
 				return deny(ReasonGitContent, "%s can change the index, HEAD or a ref, and a later git command in the line "+
 					"could print file content; it would be judged against the repository as it was before. %s",
-					w.indexChanged, hintChange)
+					label, hintChange)
 			}
 		}
 	}
@@ -1078,6 +1088,14 @@ type view struct {
 
 // walker reads a command line, the lines nested in it, and the working
 // directory each command runs in.
+// changeAt is a git command in the line that changes the repository: its
+// seq, its words and its label for a message.
+type changeAt struct {
+	seq   int
+	argv  []string
+	label string
+}
+
 type walker struct {
 	s     *setup
 	views []view
@@ -1113,11 +1131,10 @@ type walker struct {
 	anywhere string
 	inProc   int
 	loopy    bool
-	// indexChanged names the first git command that changes the index or
-	// HEAD (indexChange), and indexSeq is its seq.
-	indexChanged string
-	indexSeq     int
-	seq          int
+	// changes are the git (and gh and hub) commands not known to be
+	// read-only (indexChange), in the order they run.
+	changes []changeAt
+	seq     int
 	// tooMany is set when the line holds more than maxCommands commands.
 	tooMany bool
 	// tooManyWords is set when brace expansion makes more words than
@@ -1507,9 +1524,9 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 	// git commands run in order: this one after its substitutions.
 	w.seq++
 	w.views[idx].seq = w.seq
-	if !w.probe && (v.name == "git" || v.name == "gh" || v.name == "hub") && w.indexChanged == "" {
+	if !w.probe && (v.name == "git" || v.name == "gh" || v.name == "hub") {
 		if change := s.indexChange(v); change != "" {
-			w.indexChanged, w.indexSeq = change, w.seq
+			w.changes = append(w.changes, changeAt{seq: w.seq, argv: v.argv, label: change})
 		}
 	}
 

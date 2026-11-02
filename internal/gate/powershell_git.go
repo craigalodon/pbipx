@@ -1,6 +1,7 @@
 package gate
 
 import (
+	"cmp"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -539,6 +540,7 @@ func (s *setup) psGit(line string) (Decision, bool) {
 		}
 	}
 	changed, indexChanged := "", ""
+	var before [][]string
 	seen := map[string]bool{}
 	for _, u := range p.units {
 		if changed != "" && u.reads {
@@ -561,7 +563,9 @@ func (s *setup) psGit(line string) (Decision, bool) {
 				return deny(ReasonGitContent, "%s", g.message()), true
 			}
 			argv, _, _ := psArgv(c, nil, false)
-			if indexChanged != "" && s.contentCapable(argv, s.cwd) {
+			// HEAD is not taken to stay a commit: the statements are not
+			// all read first.
+			if indexChanged != "" && s.contentAfter(argv, s.cwd, before, false) {
 				return deny(ReasonGitContent, "%s can change the index, HEAD or a ref, and a later git command in the line "+
 					"could print file content; it would be judged against the repository as it was before. %s",
 					indexChanged, hintChange), true
@@ -569,8 +573,9 @@ func (s *setup) psGit(line string) (Decision, bool) {
 			if changed == "" {
 				changed = s.psChanges(c)
 			}
-			if indexChanged == "" {
-				indexChanged = s.indexChangeOf(argv, s.cwd)
+			if change := s.indexChangeOf(argv, s.cwd); change != "" {
+				indexChanged = cmp.Or(indexChanged, change)
+				before = append(before, argv)
 			}
 		}
 	}
