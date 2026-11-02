@@ -3,6 +3,7 @@ package gate
 import (
 	"cmp"
 	"fmt"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -248,11 +249,52 @@ func (t *tokenizer) flushLit() {
 }
 
 func (t *tokenizer) expansion(kind partKind, text, raw string) {
+	if arithContext(raw) {
+		// In double quotes too: "${a[x]}" evaluates x.
+		t.sc.arithmetic()
+	}
 	t.inWord = true
 	t.raw.WriteString(raw)
 	t.flushLit()
 	t.parts = append(t.parts, part{kind: kind, text: text, raw: raw, inDouble: t.inDouble})
 }
+
+// arithContext reports whether the expansion raw evaluates arithmetic that
+// can name a variable (whose value is evaluated in turn): $((...)) or
+// $[...] with a name or an expansion in it, a subscript ${a[...]} or a
+// substring offset ${a:...} (not a default, ${a:-x}) with one.
+func arithContext(raw string) bool {
+	named := func(s string) bool {
+		return strings.ContainsFunc(s, func(r rune) bool { return r == '_' || r == '$' || unicode.IsLetter(r) })
+	}
+	switch {
+	case strings.HasPrefix(raw, "$((") || strings.HasPrefix(raw, "$["):
+		return named(raw[2:])
+	case strings.HasPrefix(raw, "${"):
+		inner := strings.TrimSuffix(raw[2:], "}")
+		inner = strings.TrimLeft(inner, "#!")
+		k := 0
+		for k < len(inner) && (isNameRune(rune(inner[k])) || k == 0 && strings.ContainsRune("@*#?$!-", rune(inner[k]))) {
+			k++
+			if k == 1 && !isNameRune(rune(inner[0])) {
+				break
+			}
+		}
+		rest := inner[k:]
+		switch {
+		case strings.HasPrefix(rest, "["):
+			end := strings.IndexByte(rest, ']')
+			return end > 0 && named(rest[1:end])
+		case strings.HasPrefix(rest, ":") && len(rest) > 1 && !strings.ContainsRune("-=?+", rune(rest[1])):
+			return named(rest[1:])
+		}
+	}
+	return false
+}
+
+// subscriptAssign matches an assignment to an array element, NAME[...]=
+// or NAME[...]+=, and a compound assignment's [...]= element.
+var subscriptAssign = regexp.MustCompile(`^(?:[A-Za-z_][A-Za-z0-9_]*)?\[([^\]]*)\]\+?=`)
 
 // splitsQuoted reports whether the expansion raw yields several words even
 // inside double quotes: "$@", "${@:2}", "${a[@]}", "${!p@}", "${!a[@]}".
@@ -543,6 +585,13 @@ func (t *tokenizer) dropWord() {
 
 func (t *tokenizer) endWord() {
 	t.flushLit()
+	if t.inWord && !t.redirect && !t.quoted {
+		// An array element's subscript is arithmetic: b[x]=1, a=([x]=1).
+		if m := subscriptAssign.FindStringSubmatch(t.raw.String()); m != nil &&
+			strings.ContainsFunc(m[1], func(r rune) bool { return r == '_' || r == '$' || unicode.IsLetter(r) }) {
+			t.sc.arithmetic()
+		}
+	}
 	if t.inWord {
 		w := word{
 			text: t.raw.String(), parts: t.parts, quoted: t.quoted, splits: wordSplits(t.parts),
@@ -747,6 +796,17 @@ type scanMemo struct {
 	// single quotes and $'...', a comment, a quoted here-document body
 	// with its delimiter line.
 	notCode map[*rune]bool
+	// namedArith is set when the line holds arithmetic that can name a
+	// variable, anywhere (arithContext, an array element's subscript).
+	namedArith bool
+}
+
+// arithmetic records that the line evaluates arithmetic that can name a
+// variable.
+func (sc lineScan) arithmetic() {
+	if sc.memo != nil {
+		sc.memo.namedArith = true
+	}
 }
 
 type scanKey struct {
@@ -1106,6 +1166,13 @@ func (t *tokenizer) finish() []simple {
 	// and the walker denies it.
 	if t.cases > 0 || t.casePattern || len(t.parens) > 0 {
 		t.doubt(whyUnclosed)
+	}
+	if t.sc.memo != nil && t.sc.memo.namedArith {
+		// Arithmetic anywhere in the line, a case pattern's included:
+		// each command is taken to evaluate (evaluates).
+		for i := range t.cmds {
+			t.cmds[i].arith = true
+		}
 	}
 	if t.uncertain != "" {
 		if len(t.cmds) == 0 {

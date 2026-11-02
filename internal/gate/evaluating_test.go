@@ -24,3 +24,26 @@ func TestShellEvaluatingBuiltins(t *testing.T) {
 		{"[[ -eq of literals", sh(`[[ 1 -eq 1 ]] && echo y`), ""},
 	})
 }
+
+// TestShellArithmeticContexts: every arithmetic context evaluates a
+// variable whose value holds code; with quoted code in the line, it is
+// code built at run time.
+func TestShellArithmeticContexts(t *testing.T) {
+	root, _ := historyRepo(t)
+	sh := func(cmd string) gate.Event { return gate.Event{Tool: gate.Shell, Command: cmd} }
+	git := gate.ReasonGitContent
+	set := `x='a[$(git log -p >&2)]'; `
+	run(t, root, []decideCase{
+		{"a subscript in an expansion", sh(set + `echo ${y[x]}`), git},
+		{"a subscript in a named array", sh(set + `echo ${arr[x]}`), git},
+		{"a subscript with an expansion", sh(set + `echo ${b[$x]}`), git},
+		{"a substring offset", sh(set + `echo ${PWD:x:1}`), git},
+		{"a positional offset", sh(set + `echo ${@:x}`), git},
+		{"$(( in a case word", sh(set + `case 1 in $((x))) ;; esac`), git},
+		{"an assignment's subscript", sh(set + `b[x]=1`), git},
+		{"a compound assignment's subscript", sh(set + `a=([x]=1)`), git},
+		{"another assignment's subscript", sh(set + `m[x]=1`), git},
+		{"a literal subscript", sh(`a[0]=1; echo ${a[0]} ${PWD:1:2}`), ""},
+		{"quoted code with no arithmetic", sh(`git commit -m 'use $(foo)'`), ""},
+	})
+}
