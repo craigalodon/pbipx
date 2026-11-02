@@ -162,6 +162,11 @@ func (s *setup) shell(line string) Decision {
 			}
 		}
 	}
+	// A command that may write files, then git printing the working tree
+	// (F1): the tree it prints is scanned as for Grep.
+	if w.worktreeAfterWrite() {
+		w.setReach(whyWorktreeAfterWrite, hintChange)
+	}
 	// 3 and 4: a command that can reach a protected root scans the tree.
 	if t := w.reaches(); t.set() {
 		return s.tree(t)
@@ -1086,8 +1091,6 @@ type view struct {
 	cache *spellCache
 }
 
-// walker reads a command line, the lines nested in it, and the working
-// directory each command runs in.
 // changeAt is a git command in the line that changes the repository: its
 // seq, its words and its label for a message.
 type changeAt struct {
@@ -1096,6 +1099,8 @@ type changeAt struct {
 	label string
 }
 
+// walker reads a command line, the lines nested in it, and the working
+// directory each command runs in.
 type walker struct {
 	s     *setup
 	views []view
