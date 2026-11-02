@@ -347,8 +347,10 @@ func gitMessageText(c simple) gitMessage {
 			args = append(args, wd.text)
 		}
 	}
-	name, rest := program(args)
-	if name != "git" || !isSuffix(args, rest) {
+	// Under a wrapper (xargs, say) git's input or its words may be other
+	// than the line shows.
+	name, rest, under := command(args)
+	if name != "git" || len(under) > 0 || !isSuffix(args, rest) {
 		return m
 	}
 	inv, ok := parseGit(rest, "")

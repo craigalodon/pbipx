@@ -693,6 +693,8 @@ func TestShellGitMessageText(t *testing.T) {
 			sh("git commit -m \"$(cat <<EOF\n$(cat pbip/x)\nEOF\n)\""), "", gate.ReasonFinding},
 		{"a here-document read by another program in the message",
 			sh("git commit -m \"$(python3 <<'EOF'\nopen('pbip/x')\nEOF\n)\""), "", gate.ReasonFinding},
+		{"git under xargs, reading a here-document", sh("xargs git commit -F - <<'EOF'\npbip\nEOF"), "", gate.ReasonFinding},
+		{"git under a wrapper, a message naming the root", sh(`nice git commit -m "Leave pbip alone"`), "", gate.ReasonFinding},
 		{"a here-document to git without -F -", sh("git commit -F msg.txt <<'EOF'\npbip\nEOF"), "", gate.ReasonFinding},
 		{"another command after the commit", sh(`git commit -m "Leave pbip alone" && cat pbip/x`), "", gate.ReasonFinding},
 		{"python3 -c naming the root", sh(`python3 -c "open('pbip/x')"`), "", gate.ReasonFinding},

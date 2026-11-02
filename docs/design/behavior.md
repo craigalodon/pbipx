@@ -882,7 +882,9 @@ path, is denied with `event-error`: the call cannot be judged.
      one command is `cat` with no argument reading a here-document
      (`git commit -m "$(cat <<'EOF' ...)"`), that here-document's body;
      and the here-documents of git reading its message from standard
-     input (`-F -`, `--file=-`, `--file -`). The command substitutions an
+     input (`-F -`, `--file=-`, `--file -`). Only git run under no
+     wrapper counts: under `xargs`, say, its input and words are not what
+     the line shows. The command substitutions an
      unquoted such body runs are still read as nested lines, and so is any
      other substitution in a message (`git commit -m "$(cat pbip/x)"`
      scans). Every other word of the command (a pathspec after `--`, the
