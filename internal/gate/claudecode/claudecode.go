@@ -19,6 +19,7 @@ import (
 	"io"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/craigalodon/pbipx/internal/gate"
 )
@@ -175,12 +176,43 @@ func ParseEvent(data []byte) (gate.Event, error) {
 // gate.Decide and renders the decision. It returns ExitAllow or ExitDeny,
 // and never anything else; a panic anywhere below is a deny.
 func Run(stdin io.Reader, stdout, stderr io.Writer, opts gate.Options) (code int) {
+	return runWithin(stdin, stdout, stderr, opts, Watchdog, decide)
+}
+
+// Watchdog is how long the gate decides before it denies, whatever the
+// decision code is doing: a hook that times out lets the call proceed, so
+// a hang becomes a deny well before the hook timeout pbipx init sets (300
+// seconds).
+const Watchdog = 120 * time.Second
+
+// runWithin is Run with the decision made by decideFn, which is denied
+// with internal-error when it panics or takes longer than limit. Past the
+// limit the decision goes on, discarded, until the process exits.
+func runWithin(stdin io.Reader, stdout, stderr io.Writer, opts gate.Options, limit time.Duration,
+	decideFn func(io.Reader, gate.Options) gate.Decision,
+) (code int) {
 	defer func() {
 		if recover() != nil {
 			code = Render(Deny(ReasonInternalError, "the gate failed"), stdout, stderr)
 		}
 	}()
-	return Render(decide(stdin, opts), stdout, stderr)
+	done := make(chan gate.Decision, 1)
+	go func() {
+		defer func() {
+			if recover() != nil {
+				done <- Deny(ReasonInternalError, "the gate failed")
+			}
+		}()
+		done <- decideFn(stdin, opts)
+	}()
+	timer := time.NewTimer(limit)
+	defer timer.Stop()
+	select {
+	case d := <-done:
+		return Render(d, stdout, stderr)
+	case <-timer.C:
+		return Render(Deny(ReasonInternalError, "the gate took too long to decide"), stdout, stderr)
+	}
 }
 
 func decide(stdin io.Reader, opts gate.Options) gate.Decision {

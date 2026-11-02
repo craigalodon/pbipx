@@ -716,6 +716,11 @@ func TestShellBounded(t *testing.T) {
 		"deep **":              "cat " + strings.Repeat("**/", 2000) + "x",
 		"many **":              "cat " + strings.Repeat("**/*/", 30) + "x " + strings.Repeat("pbip/**/*/**/x ", 1000),
 		"unbalanced":           "'" + strings.Repeat("cat x; ", 140<<10),
+		"a brace sequence near the integer limit": "echo {9223372036854775806..9223372036854775807..5} >/dev/null; cat pbip/x",
+		"a brace sequence over the integer range": "echo {-9223372036854775808..9223372036854775807} >/dev/null; cat pbip/x",
+		"a brace step at the integer limit":       "echo {1..2..-9223372036854775808} >/dev/null; cat pbip/x",
+		"a brace end past the integer range":      "echo {1..99999999999999999999} >/dev/null; cat pbip/x",
+		"many brace words":                        strings.Repeat("{a,b,c,d}{e,f,g,h}{i,j,k,l} ", 40<<10),
 	} {
 		t.Run(name, func(t *testing.T) {
 			if len(cmd) > 1<<20+16 {
@@ -726,8 +731,11 @@ func TestShellBounded(t *testing.T) {
 			if el := time.Since(start); el > slowdown*2*time.Second {
 				t.Errorf("took %v", el)
 			}
-			if name == "many commands" {
+			switch {
+			case name == "many commands", name == "many brace words":
 				check(t, d, gate.ReasonInternalError)
+			case strings.HasPrefix(name, "a brace"):
+				check(t, d, gate.ReasonFinding)
 			}
 		})
 	}

@@ -500,7 +500,11 @@ The event is JSON on stdin. Every failure denies:
 - the policy of an adopted repository the call touches fails to load. It
   is loaded before anything is classified, so a broken policy denies every
   call there, not only calls near a protected root;
-- any other error.
+- any other error;
+- the decision takes longer than 120 seconds: a watchdog started when the
+  gate begins deciding writes the deny (`internal-error`) and exits 2
+  whatever the decision is doing, well before the hook's own timeout,
+  past which Claude Code lets the call proceed.
 
 **Divergence (policy integrity).** In pbipx, the first check after the
 policy loads, before the baseline or the tool is looked at, is its approval
@@ -621,9 +625,12 @@ path, is denied with `event-error`: the call cannot be judged.
     {-p,-2}` is `git log -p -2`, and `git add src/{a,b}.go` adds two
     files. Any other brace is literal, as in bash: `{a}`, `{}`, `{a..}`,
     `HEAD@{1}`, `${...}`, a quoted brace and the grouping `{` and `}`.
-    Past 64 words, or in a word of more than 4,096 characters, the word
-    is unknown, as a variable is, and a refusal for it says it is a brace
-    expansion. (Decided 2026-11-02.) The predecessor reads such a word
+    Past 64 words, with an end or a step outside the 64-bit integers, or
+    in a word of more than 4,096 characters, the word is unknown, as a
+    variable is, and a refusal for it says it is a brace expansion. A
+    line whose brace expansion makes more than 20,000 words in all is
+    denied with `internal-error`, as one with too many commands is.
+    (Decided 2026-11-02.) The predecessor reads such a word
     literally;
   - a here-document (`<<WORD`, `<<-WORD`) is read as bash reads it: its
     body runs from the line after the operator to the line that is the

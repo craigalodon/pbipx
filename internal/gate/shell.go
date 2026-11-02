@@ -39,6 +39,9 @@ func (s *setup) shell(line string) Decision {
 	if w.tooMany {
 		return deny(ReasonInternalError, "the command line holds more than %d commands, too many to judge", maxCommands)
 	}
+	if w.tooManyWords {
+		return deny(ReasonInternalError, "brace expansion in the command line makes more than %d words, too many to judge", maxBraceLine)
+	}
 
 	// Before anything else: changing Claude Code's settings in the
 	// repository, or approving the policy. Even the tool alone could
@@ -553,7 +556,10 @@ type walker struct {
 	loopy    bool
 	// tooMany is set when the line holds more than maxCommands commands.
 	tooMany bool
-	ctl     *controls
+	// tooManyWords is set when brace expansion makes more words than
+	// maxBraceLine in a line.
+	tooManyWords bool
+	ctl          *controls
 	// probe is set for a walk that judges nothing and only finds the
 	// paths the line touches (adopt.go), with a setup that has no
 	// repository; probed are the paths find, fd, xargs and parallel read
@@ -578,6 +584,10 @@ func (w *walker) commands(line string, cmds []simple, st *cwdState, depth int) {
 	for i, c := range cmds {
 		if len(w.views) >= maxCommands {
 			w.tooMany = true
+			return
+		}
+		if c.overflow {
+			w.tooManyWords = true
 			return
 		}
 		if !c.pipeIn {

@@ -95,6 +95,9 @@ type simple struct {
 	fallback bool
 	// funcDef is true for the name of a function definition, name().
 	funcDef bool
+	// overflow is set when brace expansion in the line made more words
+	// than the gate judges (maxBraceLine).
+	overflow bool
 	// procSub is true for a command inside a process substitution,
 	// <(...) or >(...), which starts before or alongside the command it
 	// is given to.
@@ -156,6 +159,8 @@ type tokenizer struct {
 	// parens are the open parentheses, each true for a process
 	// substitution, <(...) or >(...).
 	parens []bool
+	// braceWords counts the words brace expansion made in the line.
+	braceWords int
 }
 
 // pendingDoc is a here-document whose body is still to be read.
@@ -214,6 +219,10 @@ const maxBraceWords = 64
 // maxBraceRunes is the longest word, in runes and expansions, the gate
 // brace-expands: past it, a word holding a brace is unknown.
 const maxBraceRunes = 4096
+
+// maxBraceLine bounds the words brace expansion makes in one command
+// line; past it the line is denied as too large to judge.
+const maxBraceLine = 20000
 
 // btok is one piece of a word for brace expansion: a literal rune, quoted
 // or not, or a whole expansion part, which brace expansion never splits.
@@ -362,31 +371,47 @@ func braceSequence(toks []btok) (seq []string, isSeq, fits bool) {
 	if len(ends) != 2 && len(ends) != 3 {
 		return nil, false, false
 	}
-	step := 1
+	// Every number is an int64; past that range the word is not
+	// expanded. Counts are taken in uint64, which cannot overflow for two
+	// int64 ends, and the walk runs a counted number of steps.
+	step := uint64(1)
 	if len(ends) == 3 {
-		n, err := strconv.Atoi(ends[2])
-		if err != nil {
+		if !isInteger(ends[2]) {
 			return nil, false, false
 		}
-		step = max(n, -n, 1)
+		n, err := strconv.ParseInt(ends[2], 10, 64)
+		if err != nil {
+			return nil, true, false
+		}
+		step = max(absInt64(n), 1)
 	}
-	count := func(lo, hi int) int { return (max(lo, hi)-min(lo, hi))/step + 1 }
-	walk := func(lo, hi int, f func(int)) {
+	span := func(lo, hi int64) (uint64, bool) {
 		if lo <= hi {
-			for v := lo; v <= hi; v += step {
-				f(v)
-			}
-			return
+			return uint64(hi) - uint64(lo), true //nolint:gosec // G115: two's complement difference of int64 ends fits a uint64
 		}
-		for v := lo; v >= hi; v -= step {
-			f(v)
-		}
+		return uint64(lo) - uint64(hi), false //nolint:gosec // G115: as above
 	}
-	lo, errLo := strconv.Atoi(ends[0])
-	hi, errHi := strconv.Atoi(ends[1])
+	walk := func(lo, hi int64, f func(int64)) bool {
+		d, up := span(lo, hi)
+		count := d/step + 1
+		if count > maxBraceWords {
+			return false
+		}
+		for k := range count {
+			off := k * step
+			if up {
+				f(int64(uint64(lo) + off)) //nolint:gosec // within [lo, hi]: no overflow
+			} else {
+				f(int64(uint64(lo) - off)) //nolint:gosec // within [hi, lo]: no overflow
+			}
+		}
+		return true
+	}
 	switch {
-	case errLo == nil && errHi == nil:
-		if count(lo, hi) > maxBraceWords {
+	case isInteger(ends[0]) && isInteger(ends[1]):
+		lo, errLo := strconv.ParseInt(ends[0], 10, 64)
+		hi, errHi := strconv.ParseInt(ends[1], 10, 64)
+		if errLo != nil || errHi != nil {
 			return nil, true, false
 		}
 		width := 0
@@ -395,17 +420,32 @@ func braceSequence(toks []btok) (seq []string, isSeq, fits bool) {
 				width = max(len(ends[0]), len(ends[1]))
 			}
 		}
-		walk(lo, hi, func(v int) { seq = append(seq, fmt.Sprintf("%0*d", width, v)) })
-	case isLetter(ends[0]) && isLetter(ends[1]):
-		a, z := int(ends[0][0]), int(ends[1][0])
-		if count(a, z) > maxBraceWords {
+		if !walk(lo, hi, func(v int64) { seq = append(seq, fmt.Sprintf("%0*d", width, v)) }) {
 			return nil, true, false
 		}
-		walk(a, z, func(v int) { seq = append(seq, asciiLetters[v-'A':v-'A'+1]) })
+	case isLetter(ends[0]) && isLetter(ends[1]):
+		a, z := int64(ends[0][0]), int64(ends[1][0])
+		if !walk(a, z, func(v int64) { seq = append(seq, asciiLetters[v-'A':v-'A'+1]) }) {
+			return nil, true, false
+		}
 	default:
 		return nil, false, false
 	}
 	return seq, true, true
+}
+
+// isInteger reports whether s is an optional sign and decimal digits.
+func isInteger(s string) bool {
+	s = strings.TrimLeft(s, "+-")
+	return s != "" && strings.Trim(s, "0123456789") == ""
+}
+
+// absInt64 is |n| as a uint64, MinInt64's included.
+func absInt64(n int64) uint64 {
+	if n < 0 {
+		return uint64(-(n + 1)) + 1 //nolint:gosec // -(n+1) is non-negative
+	}
+	return uint64(n)
 }
 
 // asciiLetters are the characters from A to z, in order, which a sequence
@@ -458,11 +498,16 @@ func (t *tokenizer) endWord() {
 		words, ok := [][]btok{toks}, true
 		switch {
 		case !slices.ContainsFunc(toks, func(b btok) bool { return b.is('{') }):
-		case len(toks) > maxBraceRunes:
+		case len(toks) > maxBraceRunes || t.braceWords > maxBraceLine:
 			// Too long to expand in bounded time.
 			ok = false
 		default:
 			words, ok = braceExpand(toks)
+			t.braceWords += len(words)
+		}
+		if t.braceWords > maxBraceLine {
+			// Past the line's budget: the line is denied (simple.overflow).
+			t.cur.overflow = true
 		}
 		switch {
 		case !ok:
