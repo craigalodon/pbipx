@@ -269,6 +269,42 @@ func TestShellGitUnknownWords(t *testing.T) {
 		{"commit -m of a substitution", sh("git commit -m \"$(cat <<'EOF'\nA message\nEOF\n)\""), ""},
 		{"commit --message= of a variable", sh(`git commit --message="$MSG"`), ""},
 		{"stash push -m of a variable", sh(`git stash push -m "$MSG"`), ""},
+		// -m clustered after short options that take no value.
+		{"commit -am of a substitution", sh("git commit -am \"$(cat <<'EOF'\nA message\nEOF\n)\""), ""},
+		{"commit -sm of a substitution", sh("git commit -sm \"$(cat <<'EOF'\nA message\nEOF\n)\""), ""},
+		{"commit -asm of a variable", sh(`git commit -asm "$MSG"`), ""},
+		{"commit -am with a variable attached", sh(`git commit -am"$MSG"`), ""},
+		{"commit -a -s -m of a variable", sh(`git commit -a -s -m "$MSG"`), ""},
+		{"commit --amend -m of a variable", sh(`git commit --amend -m "$MSG"`), ""},
+		{"commit --no-verify --message of a variable", sh(`git commit --no-verify --message "$MSG"`), ""},
+		{"commit --author apart, then -m", sh(`git commit --author "Example, Pat <pat@example.com>" -m "$MSG"`), ""},
+		{"merge -nm of a variable", sh(`git merge -nm "$MSG" topic`), ""},
+		{"stash -um of a variable", sh(`git stash -um "$MSG"`), ""},
+		{"stash push -Sm of a variable", sh(`git stash push -Sm "$MSG"`), ""},
+		{"notes add -fm of a variable", sh(`git notes add -fm "$MSG" HEAD`), ""},
+		// m is the value of the letter before it: the next word is not a
+		// message.
+		{"commit -Fm of a variable", sh(`git commit -Fm "$X"`), git},
+		{"commit -cm of a variable", sh(`git commit -cm "$X"`), git},
+		{"commit -Cm of a variable", sh(`git commit -Cm "$X"`), git},
+		{"commit -tm of a variable", sh(`git commit -tm "$X"`), git},
+		{"commit -Sm of a variable", sh(`git commit -Sm "$X"`), git},
+		{"commit -um of a variable", sh(`git commit -um "$X"`), git},
+		{"commit -aFm with a variable attached", sh(`git commit -aFm"$X"`), git},
+		{"merge -sm of a variable", sh(`git merge -sm "$X" topic`), git},
+		{"merge -Xm of a variable", sh(`git merge -Xm "$X" topic`), git},
+		{"merge -Sm of a variable", sh(`git merge -Sm "$X" topic`), git},
+		// -m that is itself the value of the option before it.
+		{"commit -F -m of a variable", sh(`git commit --dry-run -F -m "$X"`), git},
+		{"commit --author -m of a variable", sh(`git commit --dry-run --author -m "$X"`), git},
+		{"commit, an unknown letter before -m", sh(`git commit -Q -m "$X"`), git},
+		{"commit, an abbreviated long option before -m", sh(`git commit --dry --auth -m "$X"`), git},
+		// The cluster is still read for the options it holds.
+		{"commit -pm of a substitution", sh("git commit -pm \"$(cat <<'EOF'\nA message\nEOF\n)\""), git},
+		{"stash push -pm of a variable", sh(`git stash push -pm "$MSG"`), git},
+		// Only stash push and notes add or append take a message.
+		{"stash list -m of a variable", sh(`git stash list -m "$X"`), git},
+		{"notes show -m of a variable", sh(`git notes show -m "$X"`), git},
 		{"add of a variable", sh("git add $X"), git},
 		{"stash of a variable", sh("git stash $X"), git},
 		// After "--" it is a pathspec, never an option.

@@ -733,8 +733,23 @@ path, is denied with `event-error`: the call cannot be judged.
        `help`, `gc`): `git log $(echo -p)`, `git log --oneline $REV`,
        `git status $X`, `git add $X` and `git config --get $K` are denied.
        A message is never an option: the value of `-m` or `--message` for
-       `commit`, `merge`, `stash`, `notes` and `tag`
-       (`git commit -m "$(cat <<'EOF' ...)"`) is judged as usual. After
+       `commit`, `merge`, `tag`, `stash push` (or `stash` given options
+       alone) and `notes add` or `append`, given apart (`git commit -m
+       "$(cat <<'EOF' ...)"`), attached (`-m"$MSG"`, `--message="$MSG"`)
+       or after a cluster of short options that take no value (`git
+       commit -am "$(...)"`, `-sm`, `-am"$MSG"`), is judged as usual. The
+       options are read as git reads them, from the gate's table of each
+       subcommand's options: an `m` after a letter that takes a value is
+       that value, attached or apart (commit's `-c`, `-C`, `-F`, `-t`;
+       `-S` and `-u` take one only attached; merge's `-s`, `-X`, `-F` and
+       `-S`; notes' `-F`, `-c`, `-C`; tag's `-u`, `-F` and `-n`), so `git
+       commit -Fm "$X"` is denied, and so is a `-m` that is itself the
+       value of the option before it (`-F -m "$X"`, `--author -m "$X"`).
+       After a letter or a long option the gate does not know (an
+       abbreviation such as `--auth` included), given without `=`, no
+       later word is a message. A cluster is still read for the options it
+       holds, so `git commit -pm "$(...)"` and `git stash push -pm ...`
+       are denied as interactive hunks. After
        `--` it is a pathspec, and a subcommand that prints content is
        denied without asking git anything with the word unexpanded (the
        stash lookup included), while one that does not

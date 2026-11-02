@@ -124,17 +124,12 @@ var gitNeverContent = map[string]bool{
 
 // unknownOption reports whether one of args, sub's words before "--", is
 // one that cannot be told (unknown) and could be an option: any but a
-// message, the value of -m or --message given apart or attached, for a
-// subcommand whose -m takes one (git commit -m "$(cat <<EOF ...)").
+// message (gitMessageArgs), for a subcommand whose -m takes one (git
+// commit -m "$(cat <<EOF ...)", git commit -am "$MSG").
 func unknownOption(sub string, args, unknown []string) bool {
-	takesMessage := gitMessageSubs[sub]
+	msg, _ := gitMessageArgs(sub, args)
 	for i, a := range args {
-		if !slices.Contains(unknown, a) {
-			continue
-		}
-		message := strings.HasPrefix(a, "--message=") || (strings.HasPrefix(a, "-m") && !strings.HasPrefix(a, "--")) ||
-			(i > 0 && (args[i-1] == "-m" || args[i-1] == "--message"))
-		if !takesMessage || !message {
+		if !msg[i] && slices.Contains(unknown, a) {
 			return true
 		}
 	}
@@ -143,6 +138,171 @@ func unknownOption(sub string, args, unknown []string) bool {
 
 // gitMessageSubs are the subcommands whose -m and --message take a message.
 var gitMessageSubs = map[string]bool{"commit": true, "merge": true, "stash": true, "notes": true, "tag": true}
+
+// gitOptions are a subcommand's options, as far as the gate reads them to
+// tell a message from an option: the short options that take no value
+// (plain), that take one attached or as the next word (value, m among
+// them), and that take one only attached (optional); and the long options
+// known to take no value (long) and to take the next word as their value
+// unless given with "=" (longValue). An option in none of these could take
+// the next word or not: the words after it cannot be read.
+type gitOptions struct {
+	plain, value, optional string
+	long, longValue        map[string]bool
+}
+
+// gitMessageOptions are the options of each subcommand in gitMessageSubs,
+// from git's documentation.
+var gitMessageOptions = map[string]gitOptions{
+	"commit": {plain: "apsneiovqz", value: "cCFmt", optional: "Su", longValue: setOf(
+		"--file", "--message", "--template", "--reuse-message", "--reedit-message", "--fixup",
+		"--squash", "--author", "--date", "--cleanup", "--trailer", "--pathspec-from-file"), long: setOf(
+		"--all", "--patch", "--interactive", "--signoff", "--no-signoff", "--verbose", "--no-verbose",
+		"--quiet", "--dry-run", "--short", "--branch", "--porcelain", "--long", "--null", "--amend",
+		"--no-edit", "--edit", "--reset-author", "--allow-empty", "--allow-empty-message", "--no-verify",
+		"--verify", "--include", "--only", "--status", "--no-status", "--gpg-sign", "--no-gpg-sign",
+		"--no-post-rewrite", "--untracked-files", "--ahead-behind", "--no-ahead-behind",
+		"--pathspec-file-nul")},
+	"merge": {plain: "nevq", value: "sXFm", optional: "S", longValue: setOf(
+		"--file", "--message", "--strategy", "--strategy-option", "--into-name", "--cleanup"), long: setOf(
+		"--commit", "--no-commit", "--edit", "--no-edit", "--ff", "--no-ff", "--ff-only", "--stat",
+		"--no-stat", "--summary", "--no-summary", "--log", "--no-log", "--squash", "--no-squash",
+		"--signoff", "--no-signoff", "--verify", "--no-verify", "--verify-signatures",
+		"--no-verify-signatures", "--quiet", "--verbose", "--progress", "--no-progress",
+		"--allow-unrelated-histories", "--rerere-autoupdate", "--no-rerere-autoupdate", "--autostash",
+		"--no-autostash", "--overwrite-ignore", "--no-overwrite-ignore", "--gpg-sign", "--no-gpg-sign")},
+	"stash": {plain: "pSkuaq", value: "m", longValue: setOf("--message", "--pathspec-from-file"), long: setOf(
+		"--patch", "--staged", "--keep-index", "--no-keep-index", "--include-untracked",
+		"--no-include-untracked", "--all", "--quiet", "--pathspec-file-nul")},
+	"notes": {plain: "f", value: "FmcC", longValue: setOf(
+		"--file", "--message", "--reuse-message", "--reedit-message"), long: setOf(
+		"--force", "--allow-empty", "--stripspace", "--no-stripspace", "--separator", "--no-separator")},
+	"tag": {plain: "asfe", value: "umF", optional: "n", longValue: setOf(
+		"--file", "--message", "--local-user", "--cleanup"), long: setOf(
+		"--annotate", "--sign", "--no-sign", "--force", "--edit", "--no-edit")},
+}
+
+func setOf(names ...string) map[string]bool {
+	m := make(map[string]bool, len(names))
+	for _, n := range names {
+		m[n] = true
+	}
+	return m
+}
+
+// gitMessageArgs reads args, sub's words before "--", as git reads them,
+// and marks each that is a message, or holds one attached: the word after
+// -m or --message, a word -m<text> or --message=<text>, and the same after
+// a cluster of short options that take no value (-am, -am<text>). An m
+// after a letter that takes a value is that value (-Fm), and a -m that is
+// itself the value of the option before it (-F -m, --author -m) starts no
+// message. After an option the gate does not know (an abbreviation
+// included) given without "=", whether the next word is its value cannot
+// be told, so no later word is a message. stdin is set when -F or --file reads the
+// message from standard input ("-"). Only commit, merge, tag, stash push
+// (or stash given options alone) and notes add and append take a message.
+func gitMessageArgs(sub string, args []string) (msg []bool, stdin bool) {
+	msg = make([]bool, len(args))
+	if !gitMessageSubs[sub] {
+		return msg, false
+	}
+	opts := gitMessageOptions[sub]
+	start := 0
+	switch sub {
+	case "stash":
+		if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+			if args[0] != "push" {
+				return msg, false
+			}
+			start = 1
+		}
+	case "notes":
+		if len(args) == 0 || (args[0] != "add" && args[0] != "append") {
+			return msg, false
+		}
+		start = 1
+	}
+	for i := start; i < len(args); i++ {
+		a := args[i]
+		next := ""
+		if i+1 < len(args) {
+			next = args[i+1]
+		}
+		name, value, hasValue := strings.Cut(a, "=")
+		switch {
+		case strings.HasPrefix(a, "--"):
+			switch {
+			case !opts.longValue[name] && !opts.long[name]:
+				if !hasValue {
+					return msg, stdin
+				}
+				// With "=" it takes no other word.
+			case opts.long[name]:
+			case name == "--message":
+				if hasValue {
+					msg[i] = true
+				} else if i+1 < len(args) {
+					msg[i+1] = true
+				}
+			case name == "--file":
+				stdin = stdin || (hasValue && value == "-") || (!hasValue && next == "-")
+			}
+			if opts.longValue[name] && !hasValue {
+				i++
+			}
+		case len(a) > 1 && a[0] == '-':
+			c, ok := opts.cluster(a, next)
+			if !ok {
+				return msg, stdin
+			}
+			msg[i] = c.attached
+			stdin = stdin || c.stdin
+			if c.nextMsg && i+1 < len(args) {
+				msg[i+1] = true
+			}
+			if c.nextValue {
+				i++
+			}
+		}
+	}
+	return msg, stdin
+}
+
+// gitCluster is what a cluster of short options says of the message:
+// whether it holds one attached (-am<text>), whether the next word is a
+// value (nextValue), the message among them (nextMsg), and whether -F
+// reads the message from standard input.
+type gitCluster struct {
+	attached, nextMsg, nextValue, stdin bool
+}
+
+// cluster reads a, a cluster of short options, followed by the word next.
+// ok is false when a holds a letter the gate does not know.
+func (o gitOptions) cluster(a, next string) (c gitCluster, ok bool) {
+	for j := 1; j < len(a); j++ {
+		letter, rest := a[j], a[j+1:]
+		switch {
+		case strings.IndexByte(o.plain, letter) >= 0:
+			continue
+		case strings.IndexByte(o.optional, letter) >= 0:
+			// The rest of the cluster is its value.
+			return c, true
+		case strings.IndexByte(o.value, letter) >= 0:
+			value := rest
+			if rest == "" {
+				value = next
+				c.nextValue = true
+			}
+			c.attached = letter == 'm' && rest != ""
+			c.nextMsg = letter == 'm' && rest == ""
+			c.stdin = letter == 'F' && value == "-"
+			return c, true
+		default:
+			return c, false
+		}
+	}
+	return c, true
+}
 
 // whyUnknownSpec is why git given an argument that cannot be told is
 // denied when that argument could be a pathspec, a revision or a
