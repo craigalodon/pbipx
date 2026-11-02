@@ -2022,21 +2022,12 @@ func verbosity(args []string, withValue string) int {
 	return n
 }
 
-// gitIndexChangers are git's subcommands that change the index or HEAD
-// (as well as those that change the working tree, gitTreeChangers), each
-// with the first words that make it not do so.
-var gitIndexChangers = map[string][]string{
-	"add": nil, "rm": nil, "mv": nil, "commit": nil, "cherry-pick": nil, "revert": nil,
-	"update-index": nil, "read-tree": nil, "reset": nil, "restore": nil, "update-ref": nil,
-	"merge": nil, "rebase": nil, "pull": nil, "am": nil, "checkout": nil, "switch": nil,
-	"stash": {"list", "show"}, "notes": {"list", "show"}, "apply": nil,
-}
-
-// indexChangeOf names the git command argv runs when it changes the index
-// or HEAD: git's own changers (gitIndexChangers; apply only with --index,
-// --cached or --3way, else as a tree change), every tree change
-// (gitChangesTree), and a subcommand that is not git's own. "" otherwise;
-// creating a branch at HEAD changes nothing a later command prints.
+// indexChangeOf names the git command argv runs when it may change what a
+// later git command prints: the index, HEAD, any ref, the configuration,
+// the objects or the working tree. Every git command does, but those known
+// to be read-only (gitReadOnly); a subcommand that is not git's own (an
+// alias) or an ambiguous abbreviation does too. "" otherwise; creating a
+// branch at HEAD changes nothing a later command prints.
 func (s *setup) indexChangeOf(argv []string, dir string) string {
 	name, rest := program(argv)
 	if name != "git" {
@@ -2048,45 +2039,93 @@ func (s *setup) indexChangeOf(argv []string, dir string) string {
 		return ""
 	case !gitBuiltins[inv.sub] || inv.ambiguous:
 		return gitLabel(inv.sub)
-	case s.branchOnly(inv):
-		return ""
-	case gitChangesTree(inv.sub, inv.rest):
-		return "git " + inv.sub
-	case headMoves(inv):
-		return "git " + inv.sub
-	}
-	except, ok := gitIndexChangers[inv.sub]
-	if !ok {
-		return ""
-	}
-	if inv.sub == "apply" && !hasFlag(inv.args, []string{"--index", "--cached", "--3way"}) {
-		return ""
-	}
-	if len(inv.args) > 0 && slices.Contains(except, inv.args[0]) {
+	case s.branchOnly(inv), gitReadOnly(inv):
 		return ""
 	}
 	return "git " + inv.sub
 }
 
-// headMoves reports whether inv can point HEAD, or the branch it is on, at
-// other content, other than through gitIndexChangers: git symbolic-ref
-// setting or deleting a ref (one name alone, with -q or --short, reads),
-// git replace but --list (no argument lists too), git fetch with
-// --update-head-ok (-u), and git branch forcing or renaming a branch (-f,
-// --force, -C, -M), which may be the current one.
-func headMoves(inv gitInvocation) bool {
-	pos := positional(inv.args)
+// gitReadsOnly are git's subcommands that change nothing a later git
+// command reads, whatever their options (each "true"), or with the first
+// words after the subcommand they are read-only with ("" for none, an
+// option first included).
+var gitReadsOnly = map[string][]string{
+	"status": nil, "rev-parse": nil, "rev-list": nil, "ls-files": nil, "ls-tree": nil,
+	"ls-remote": nil, "cat-file": nil, "describe": nil, "merge-base": nil, "name-rev": nil,
+	"for-each-ref": nil, "show-ref": nil, "show-branch": nil, "count-objects": nil,
+	"version": nil, "help": nil, "var": nil, "check-ignore": nil, "check-attr": nil,
+	"check-ref-format": nil, "check-mailmap": nil, "blame": nil, "annotate": nil,
+	"cherry": nil, "diff-tree": nil, "diff-index": nil, "diff-files": nil, "verify-commit": nil,
+	"verify-tag": nil, "shortlog": nil, "range-diff": nil,
+	"stash": {"list", "show"}, "notes": {"list", "show"}, "worktree": {"list"},
+	"reflog": {"", "show", "exists"},
+}
+
+// gitReadOnly reports whether inv is known to change nothing a later git
+// command reads (refs, HEAD, the index, the configuration, the objects or
+// the working tree). log, show, diff and whatchanged are read-only but
+// with --output, which writes a file, and git grep but with -O, which runs
+// a program; git config only reads (configWrite);
+// git branch and git tag list with no name, or with --list (-l), and none
+// of their options that create, move or delete one; git remote lists with
+// no subcommand, or show and get-url; git symbolic-ref reads with one name
+// alone and no -d, git replace with nothing or --list (-l). Anything else, including every option the gate does
+// not expect, counts as a change.
+func gitReadOnly(inv gitInvocation) bool {
 	switch inv.sub {
+	case "log", "show", "diff", "whatchanged":
+		return !hasFlag(inv.args, []string{"--output"})
+	case "grep":
+		// -O runs a program on the files found.
+		return !hasShort(inv.args, 'O', "--open-files-in-pager", "efABCm")
+	case "config":
+		return !configWrite(append([]string{"git", "config"}, inv.rest...), nil)
 	case "symbolic-ref":
-		return len(pos) >= 2 || hasShort(inv.args, 'd', "--delete", "")
+		return len(positional(inv.args)) < 2 && !hasShort(inv.args, 'd', "--delete", "")
 	case "replace":
-		return len(inv.args) > 0 && !hasShort(inv.args, 'l', "--list", "") && !hasFlag(inv.args, []string{"--format"})
-	case "fetch":
-		return hasShort(inv.args, 'u', "--update-head-ok", "")
+		return len(inv.args) == 0 || hasShort(inv.args, 'l', "--list", "")
 	case "branch":
-		return hasShort(inv.args, 'f', "--force", "") || hasShort(inv.args, 'C', "", "") || hasShort(inv.args, 'M', "", "")
+		return listsOnly(inv.args, "dDmMcCfut", []string{
+			"--delete", "--move", "--copy", "--force", "--set-upstream-to", "--unset-upstream",
+			"--edit-description", "--track", "--no-track", "--create-reflog", "--recurse-submodules",
+		})
+	case "tag":
+		return listsOnly(inv.args, "dfasumFe", []string{
+			"--delete", "--force", "--annotate", "--sign", "--local-user", "--message", "--file",
+			"--edit", "--create-reflog", "--trailer",
+		})
+	case "remote":
+		pos := positional(inv.args)
+		return len(pos) == 0 || pos[0] == "show" || pos[0] == "get-url"
 	}
-	return false
+	first, ok := gitReadsOnly[inv.sub]
+	if !ok {
+		return false
+	}
+	if first == nil {
+		return true
+	}
+	word := ""
+	if len(inv.args) > 0 {
+		word = inv.args[0]
+	}
+	return slices.Contains(first, word) || (slices.Contains(first, "") && strings.HasPrefix(word, "-"))
+}
+
+// listsOnly reports whether git branch or git tag, given args, lists:
+// none of the short letters in changes (alone or in a cluster) or the long
+// options in long, and no name unless --list (-l) asks to list those
+// matching it.
+func listsOnly(args []string, changes string, long []string) bool {
+	if hasFlag(args, long) {
+		return false
+	}
+	for i := range len(changes) {
+		if hasShort(args, changes[i], "", "") {
+			return false
+		}
+	}
+	return len(positional(args)) == 0 || hasShort(args, 'l', "--list", "")
 }
 
 // contentCapable reports whether the git command argv, run from dir, could

@@ -211,6 +211,7 @@ func TestShellGitHistory(t *testing.T) {
 // and the working tree is clean.
 func TestShellGitHistoryGaps(t *testing.T) {
 	root, _ := historyRepo(t)
+	gitIn(t, root, "tag", "same", "HEAD")
 	sh := func(cmd string) gate.Event { return gate.Event{Tool: gate.Shell, Command: cmd} }
 	ps := func(cmd string) gate.Event { return gate.Event{Tool: gate.PowerShell, Command: cmd} }
 	git := gate.ReasonGitContent
@@ -297,7 +298,26 @@ func TestShellGitHistoryGaps(t *testing.T) {
 		{"branch -f, then diff --cached", sh("git branch -f main HEAD~1 && git diff --cached"), git},
 		{"symbolic-ref read, then diff --cached", sh("git symbolic-ref --short HEAD && git diff --cached"), ""},
 		{"replace -l, then diff --cached", sh("git replace -l && git diff --cached"), ""},
-		{"fetch, then diff --cached", sh("git fetch && git diff --cached"), ""},
+		// Any git command not known to be read-only, then one that could
+		// print content (F12): refs other than HEAD move too.
+		{"fetch, then diff --cached (over-blocked)", sh("git fetch && git diff --cached"), git},
+		{"diff of a tag at HEAD", sh("git diff same"), ""},
+		{"tag -f, then diff of the tag", sh("git tag -f same HEAD~1; git diff same"), git},
+		{"tag -f, then diff of the tag, PowerShell", ps("git tag -f same HEAD~1; git diff same"), git},
+		{"tag listing, then diff, PowerShell", ps("git tag -l; git diff same"), ""},
+		{"tag -f, then log -p of the tag", sh("git tag -f same HEAD~1 && git log -p -1 same"), git},
+		{"push -f to the repository, then diff", sh("git push -f . HEAD~1:refs/tags/same && git diff same"), git},
+		{"update-ref, then diff", sh("git update-ref refs/tags/same HEAD~1 && git diff same"), git},
+		{"remote add and fetch, then diff", sh("git remote add o . && git fetch o && git diff same"), git},
+		{"a subcommand git does not have, then diff", sh("git frob && git diff same"), git},
+		{"branch listing, then diff", sh("git branch && git diff"), ""},
+		{"branch --list, then diff", sh("git branch --list 'x*' && git diff"), ""},
+		{"tag listing, then diff", sh("git tag -l && git diff"), ""},
+		{"status and rev-parse, then diff", sh("git status && git rev-parse HEAD && git diff"), ""},
+		{"config --get, then diff", sh("git config --get user.name; git diff"), ""},
+		{"remote -v, then diff", sh("git remote -v && git diff"), ""},
+		{"fetch, then log --oneline", sh("git fetch && git log --oneline -1 origin/main"), ""},
+		{"log --output, then diff", sh("git log --oneline --output=x.txt && git diff"), git},
 		// gh and hub.
 		{"gh pr checkout, then diff --cached", sh("gh pr checkout 12 && git diff --cached"), git},
 		{"gh pr checkout, then a read", sh("gh pr checkout 12 && cat README.md"), git},

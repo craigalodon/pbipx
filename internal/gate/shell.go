@@ -88,9 +88,9 @@ func (s *setup) shell(line string) Decision {
 				"protected root; remote history cannot be vetted either. Use gh pr diff --name-only, or gh pr view.")
 		}
 	}
-	// A git command that changes the index or HEAD, then one that could
-	// print file content: the second was judged against the index and HEAD
-	// as they were before the first (in an unordered line, anywhere).
+	// A git command not known to be read-only (gitReadOnly), then one that could
+	// print file content: the second was judged against the repository
+	// as it was before the first (in an unordered line, anywhere).
 	if w.indexChanged != "" {
 		unordered := w.loopy || w.anywhere != ""
 		for _, v := range w.views {
@@ -98,8 +98,8 @@ func (s *setup) shell(line string) Decision {
 				continue
 			}
 			if s.contentCapable(v.argv, s.viewDir(v)) {
-				return deny(ReasonGitContent, "%s changes the index or HEAD, and a later git command in the line "+
-					"could print file content; it would be judged against the index and HEAD as they were before it. %s",
+				return deny(ReasonGitContent, "%s can change the index, HEAD or a ref, and a later git command in the line "+
+					"could print file content; it would be judged against the repository as it was before. %s",
 					w.indexChanged, hintChange)
 			}
 		}

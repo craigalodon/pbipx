@@ -562,8 +562,8 @@ func (s *setup) psGit(line string) (Decision, bool) {
 			}
 			argv, _, _ := psArgv(c, nil, false)
 			if indexChanged != "" && s.contentCapable(argv, s.cwd) {
-				return deny(ReasonGitContent, "%s changes the index or HEAD, and a later git command in the line "+
-					"could print file content; it would be judged against the index and HEAD as they were before it. %s",
+				return deny(ReasonGitContent, "%s can change the index, HEAD or a ref, and a later git command in the line "+
+					"could print file content; it would be judged against the repository as it was before. %s",
 					indexChanged, hintChange), true
 			}
 			if changed == "" {
