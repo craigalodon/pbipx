@@ -1,4 +1,4 @@
-description = "git config commit.verbose true makes a later git commit -a --dry-run in the same line print the diff, which shows the deleted file under the protected root; the gate reads the configuration before the line runs, so it denies; the value is only in history and the index, the working tree is clean"
+description = "git config commit.verbose true makes a later git commit -a --dry-run in the same line print the diff, which shows the file under the protected root deleted from the working tree and not staged; the gate reads the configuration before the line runs, so it denies; the value is only in history and the index, not in a file on disk"
 command     = "gate"
 args        = []
 policy      = "default"

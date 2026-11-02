@@ -1,4 +1,4 @@
-description = "git commit --amend --dry-run -v prints the index against HEAD's parent, which the staged and unstaged diffs do not show: here HEAD is the root commit, so the whole index, the protected root included, is printed and the command denies with git-content, not a tree scan"
+description = "git commit --amend --dry-run -v prints the index against HEAD's parent. The corpus makes one commit, so HEAD is the root commit and has no parent: the gate's name-only diff from HEAD^ fails, and the command is denied as one that could not be checked (git-content), not by a tree scan, although the tree holds the finding. The Go tests cover a parent that exists"
 command     = "gate"
 args        = []
 policy      = "default"
