@@ -1999,7 +1999,9 @@ func command(args []string) (name string, rest []string, under []string) {
 		}
 		wr, ok := wrappers[base]
 		if !ok {
-			if !inert[base] && !judged(base) {
+			// hub runs git with its words: its subcommand is git's, not a
+			// program it wraps (hub diff, hub grep).
+			if !inert[base] && !judged(base) && base != "hub" {
 				j := i + 1
 				for j < len(args) && strings.HasPrefix(args[j], "-") {
 					j++

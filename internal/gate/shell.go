@@ -555,7 +555,19 @@ func asGit(v view) view {
 // --name-only.
 func ghPrintsPatch(v view) bool {
 	pos := positional(v.rest)
-	return v.name == "gh" && len(pos) >= 2 && pos[0] == "pr" && pos[1] == "diff" && !slices.Contains(v.rest, "--name-only")
+	return v.name == "gh" && ghSub(pos, "pr", "diff") && !slices.Contains(v.rest, "--name-only")
+}
+
+// ghSub reports whether gh's positional words hold the command group
+// followed by one of subs, after any option values taken for positional
+// words (gh -R owner/repo pr diff).
+func ghSub(pos []string, group string, subs ...string) bool {
+	for i := 0; i+1 < len(pos); i++ {
+		if pos[i] == group && slices.Contains(subs, pos[i+1]) {
+			return true
+		}
+	}
+	return false
 }
 
 // ghTreeChange names the gh or hub command in v that changes the working
@@ -564,9 +576,10 @@ func ghPrintsPatch(v view) bool {
 func (s *setup) ghTreeChange(v view) string {
 	pos := positional(v.rest)
 	switch {
-	case v.name == "gh" && len(pos) >= 2 && (pos[0] == "pr" && (pos[1] == "checkout" || pos[1] == "co") ||
-		pos[0] == "repo" && (pos[1] == "sync" || pos[1] == "clone")):
-		return "gh " + pos[0] + " " + pos[1]
+	case v.name == "gh" && ghSub(pos, "pr", "checkout", "co"):
+		return "gh pr checkout"
+	case v.name == "gh" && ghSub(pos, "repo", "sync", "clone"):
+		return "gh repo sync or clone"
 	case v.name == "hub" && len(pos) >= 1:
 		// hub wraps git: its git subcommands are judged as git's.
 		if change := s.treeChange(view{name: "git", rest: v.rest, cwd: v.cwd}); change != "" {
