@@ -360,6 +360,8 @@ func quotedCode(c simple) bool {
 // evaluates reports whether c makes bash evaluate a string as code: an
 // array subscript or a name that test -v, [[ -v, printf -v, read,
 // mapfile, declare -n (or a subscripted name), let or unset reads, an
+// assignment to a variable declared -i, the operands of [[ -eq and the
+// other arithmetic comparisons, an
 // arithmetic expression that names a variable (whose value is evaluated
 // in turn), or ${x@P} and ${x@E}, which expand a value as a prompt.
 func evaluates(c simple, v view) bool {
@@ -383,15 +385,22 @@ func evaluates(c simple, v view) bool {
 	}
 	subscript := slices.ContainsFunc(v.rest, func(a string) bool { return strings.Contains(a, "[") })
 	switch v.name {
-	case "test", "[", "[[":
+	case "test", "[":
 		return slices.Contains(v.rest, "-v")
+	case "[[":
+		// [[ evaluates the operands of its arithmetic operators.
+		return slices.ContainsFunc(v.rest, func(a string) bool {
+			return slices.Contains([]string{"-v", "-eq", "-ne", "-lt", "-le", "-gt", "-ge"}, a)
+		})
 	case "printf":
 		return slices.Contains(v.rest, "-v")
 	case "read", "mapfile", "readarray", "let":
 		return true
 	case "declare", "typeset", "local", "export", "readonly":
+		// -n reads a value as a name; -i evaluates every assignment to
+		// the variable, anywhere in the line.
 		return subscript || slices.ContainsFunc(v.rest, func(a string) bool {
-			return strings.HasPrefix(a, "-") && strings.Contains(a, "n")
+			return strings.HasPrefix(a, "-") && strings.ContainsAny(a, "ni")
 		})
 	case "unset":
 		return subscript
@@ -1437,6 +1446,9 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 	}
 	if lineSets([]view{v}, promptVars...) {
 		w.setRuntime("a variable whose value bash runs later (PS4, PROMPT_COMMAND, BASH_ENV and the like) is set", hintPlain)
+	}
+	if (v.name == "mapfile" || v.name == "readarray") && hasShort(v.rest, 'C', "--callback", "dnOsuc") {
+		w.setRuntime("mapfile or readarray runs a callback, code given as a string", hintPlain)
 	}
 	if c.procSub {
 		// What it runs, nested lines included, is in the process
