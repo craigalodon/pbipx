@@ -16,11 +16,13 @@ var gitOptionsVersion = [2]int{2, 53}
 
 // TestGitLongOptionsMatchGit compares each list in gitLongOptions with the
 // long options `git <subcommand> -h` prints. An option git lists that the
-// table lacks is a failure on any git: an abbreviation of it would not be
-// expanded. An option the table has that git does not list is a failure
-// on a git at least as new as the tables: it can make an abbreviation git
-// resolves look ambiguous. git config's table is checked by hand, since
-// its -h lists its subcommands' options apart.
+// table lacks is a failure on a git no newer than the tables: an
+// abbreviation of it would not be expanded. On a newer git it is logged,
+// for the tables to catch up, so that a CI runner's git upgrade does not
+// fail unrelated changes. An option the table has that git does not list
+// is a failure on a git at least as new as the tables: it can make an
+// abbreviation git resolves look ambiguous. git config's table is checked
+// by hand, since its -h lists its subcommands' options apart.
 func TestGitLongOptionsMatchGit(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is not on PATH")
@@ -33,6 +35,7 @@ func TestGitLongOptionsMatchGit(t *testing.T) {
 		t.Skip("git init failed")
 	}
 	strict := gitAtLeast(t, env, gitOptionsVersion)
+	newer := gitAtLeast(t, env, [2]int{gitOptionsVersion[0], gitOptionsVersion[1] + 1})
 	long := regexp.MustCompile(`--(\[no-\])?([a-z0-9][a-z0-9-]*)`)
 	for key, opts := range gitLongOptions {
 		if key == "config" {
@@ -55,7 +58,11 @@ func TestGitLongOptionsMatchGit(t *testing.T) {
 		}
 		for name := range listed {
 			if !table[name] && !table[strings.TrimPrefix(name, "no-")] {
-				t.Errorf("git %s: --%s is not in the table", key, name)
+				if newer {
+					t.Logf("git %s: --%s, new in this git, is not in the table", key, name)
+				} else {
+					t.Errorf("git %s: --%s is not in the table", key, name)
+				}
 			}
 		}
 		if !strict {
