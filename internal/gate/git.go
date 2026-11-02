@@ -128,25 +128,39 @@ var gitNeverContent = map[string]bool{
 // commit -m "$(cat <<EOF ...)", git commit -am "$MSG"). A message the
 // shell makes several words (shape(i) for args[i]: git commit -m $MSG,
 // -m "$@", -m *) could hold options too.
-func unknownOption(sub string, args, unknown []string, shape func(int) argShape) bool {
+//
+// why says what the argument is, in fixed words after the subcommand.
+func unknownOption(sub string, args, unknown []string, shape func(int) argShape) (why string) {
 	msg, _ := gitMessageArgs(sub, args)
 	for i, a := range args {
 		sh := shape(i)
 		if msg[i] && sh.glob {
-			return true
+			return "is given, before --, a message word with a glob outside quotes, which the shell expands " +
+				"to the names it matches, and which could be an option that prints content (-p, -v, --cc)"
 		}
 		if (!msg[i] || sh.splits) && slices.Contains(unknown, a) {
-			return true
+			return "is given, before --, an argument the gate cannot expand " + unknownWhat(sh) +
+				", which could be an option that prints content (-p, -v, --cc)"
 		}
 	}
-	return false
+	return ""
+}
+
+// unknownWhat names, in parentheses, what kind of argument the gate
+// cannot expand.
+func unknownWhat(sh argShape) string {
+	if sh.brace {
+		return "(a brace expansion of more than 64 words)"
+	}
+	return "(a variable or a command substitution)"
 }
 
 // argShape is how the shell may turn one argument into several: splits
 // for an expansion it splits into words (unquoted, or "$@" and the like),
-// glob for a glob character outside quotes.
+// glob for a glob character outside quotes, brace for a brace expansion
+// the gate does not expand.
 type argShape struct {
-	splits, glob bool
+	splits, glob, brace bool
 }
 
 // gitMessageSubs are the subcommands whose -m and --message take a message.
@@ -371,7 +385,7 @@ func gitMessageText(c simple) gitMessage {
 		return m
 	}
 	inv, ok := parseGit(rest, "")
-	if !ok || !gitMessageSubs[inv.sub] || !isSuffix(rest, inv.rest) {
+	if !ok || inv.ambiguous || !gitMessageSubs[inv.sub] || len(inv.rest) > len(rest) {
 		return m
 	}
 	start := len(args) - len(inv.rest)
@@ -538,6 +552,9 @@ type gitInvocation struct {
 	// first, in fixed words.
 	unsafe    bool
 	unsafeWhy string
+	// ambiguous is set when a long option abbreviates more than one of
+	// the subcommand's options (expandLong).
+	ambiguous bool
 	// oddSpecs is true when a global option changes how every pathspec
 	// matches (--literal-pathspecs, --glob-pathspecs, --icase-pathspecs).
 	oddSpecs bool
@@ -623,7 +640,7 @@ func (inv gitInvocation) parse(words []string) (gitInvocation, bool) {
 		return inv, false
 	}
 	inv.sub = words[i]
-	inv.rest = words[i+1:]
+	inv.rest, inv.ambiguous = expandLong(inv.sub, words[i+1:])
 	inv.args, inv.specs, inv.dashdash = inv.rest, nil, false
 	if k := slices.Index(inv.rest, "--"); k >= 0 {
 		inv.args, inv.specs, inv.dashdash = inv.rest[:k], inv.rest[k+1:], true
@@ -661,20 +678,42 @@ func safeConfig(kv string) bool {
 	return false
 }
 
-// gitConfigReads are git config's options that only read; its get and list
-// subcommands, given first, only read too.
-var gitConfigReads = []string{
-	"--get", "--get-all", "--get-regexp", "--get-urlmatch", "--get-color", "--get-colorbool",
-	"--list", "-l",
-}
+// git config's options, after expandLong: those that take a value
+// (attached with "=" or as the next word), those that only read, those
+// that write whatever the keys, and the others, which change neither.
+var (
+	gitConfigValue = []string{"--file", "-f", "--blob", "--type", "--default", "--comment", "--value", "--url"}
+	gitConfigReads = []string{
+		"--get", "--get-all", "--get-regexp", "--get-urlmatch", "--get-color", "--get-colorbool",
+		"--list", "-l",
+	}
+	gitConfigWrites = []string{
+		"--add", "--replace-all", "--unset", "--unset-all", "--rename-section", "--remove-section",
+		"--edit", "-e",
+	}
+	gitConfigFlags = []string{
+		"--global", "--system", "--local", "--worktree", "--fixed-value", "--bool", "--int",
+		"--bool-or-int", "--bool-or-str", "--path", "--expiry-date", "--null", "-z", "--name-only",
+		"--includes", "--no-includes", "--show-origin", "--show-scope", "--all", "--regexp",
+		"--show-names", "--append",
+	}
+)
 
 // configWrite reports whether argv (wrappers and assignments included)
-// runs git config to set or unset a key that is not known to be harmless
-// (safeConfig): such a key, set earlier in the line, can change what a
-// later git command prints (commit.verbose, stash.showPatch,
-// diff.submodule, an alias), while the gate reads the configuration as it
-// is before the line runs. A word that cannot be told (unknown) makes the
-// key unknown. Reading the configuration is no write.
+// runs git config to change the configuration in a way not known to be
+// harmless: any write mode (--add, --replace-all, --unset, --rename-section,
+// --remove-section, --edit and the subcommands unset, rename-section,
+// remove-section and edit), or a set of a key that is not known to be
+// harmless (safeConfig), or of more than a key and a value. Such a change,
+// earlier in the line, can change what a later git command prints
+// (commit.verbose, stash.showPatch, diff.submodule, an alias), while the
+// gate reads the configuration as it is before the line runs. git config
+// is read as git reads it: the value of an option that takes one is never
+// an option (--comment --get), a long option is expanded (expandLong),
+// and one that abbreviates more than one option, an option the gate does
+// not know, or a word that cannot be told (unknown) counts as a write.
+// Reading the configuration (--get, --list, get, list, or one key alone)
+// is no write.
 func configWrite(argv, unknown []string) bool {
 	name, rest := program(argv)
 	if name != "git" {
@@ -684,32 +723,60 @@ func configWrite(argv, unknown []string) bool {
 	if !ok || inv.sub != "config" {
 		return false
 	}
-	if slices.ContainsFunc(inv.rest, func(a string) bool { return slices.Contains(gitConfigReads, a) }) {
-		return false
+	if inv.ambiguous {
+		return true
 	}
+	read := false
 	var pos []string
-	for _, a := range inv.rest {
+	for i := 0; i < len(inv.rest); i++ {
+		a := inv.rest[i]
 		if slices.Contains(unknown, a) {
 			return true
 		}
-		if !strings.HasPrefix(a, "-") {
+		opt, _, hasValue := strings.Cut(a, "=")
+		switch {
+		case a == "--":
+			pos = append(pos, inv.rest[i+1:]...)
+			i = len(inv.rest)
+		case slices.Contains(gitConfigValue, opt):
+			if !hasValue {
+				i++
+			}
+		case slices.Contains(gitConfigReads, opt):
+			read = true
+		case slices.Contains(gitConfigWrites, opt):
+			return true
+		case strings.HasPrefix(a, "-") && len(a) > 1:
+			if !slices.Contains(gitConfigFlags, opt) {
+				return true
+			}
+		default:
 			pos = append(pos, a)
 		}
 	}
-	switch {
-	case len(pos) > 0 && (pos[0] == "get" || pos[0] == "list"):
+	sub := ""
+	if !read && len(pos) > 0 && !strings.Contains(pos[0], ".") {
+		sub, pos = pos[0], pos[1:]
+	}
+	switch sub {
+	case "get", "list":
 		return false
-	case len(pos) > 0 && (pos[0] == "set" || pos[0] == "unset"):
-		pos = pos[1:]
-	}
-	switch len(pos) {
-	case 0:
-		// --edit, --remove-section and the like.
+	case "", "set":
+	default:
+		// unset, rename-section, remove-section, edit, or one the gate
+		// does not know.
 		return true
-	case 1:
-		return !safeConfig(pos[0] + "=\x00")
 	}
-	return !safeConfig(pos[0] + "=" + pos[1])
+	switch {
+	case read:
+		return false
+	case len(pos) == 1 && sub == "":
+		// One key alone reads it.
+		return false
+	case len(pos) == 2:
+		return !safeConfig(pos[0] + "=" + pos[1])
+	}
+	return true
 }
 
 // afterConfig is why a git command (argv) is denied when the line it is
@@ -959,19 +1026,29 @@ func (s *setup) gitContent(args, unknown []string, shapes []argShape) *gitDenial
 	if inv.unsafe {
 		return &gitDenial{inv.sub, inv.unsafeWhy, "Drop that global option, or use --stat."}
 	}
+	if inv.ambiguous && !gitNeverContent[inv.sub] {
+		return &gitDenial{inv.sub, "is given an abbreviated long option that could stand for more than one of its options, " +
+			"one of which could print content", "Write each long option out in full."}
+	}
 	inv.unknown = len(unknown) > 0
-	if !gitNeverContent[inv.sub] && unknownOption(inv.sub, inv.args, unknown, func(i int) argShape {
+	shapeOf := func(i int) argShape {
 		fromEnd := len(inv.rest) - i
 		j := len(args) - fromEnd
 		if fromEnd <= given && j >= 0 && j < len(shapes) {
 			return shapes[j]
 		}
 		return argShape{}
-	}) {
+	}
+	if why := unknownOption(inv.sub, inv.args, unknown, shapeOf); why != "" && !gitNeverContent[inv.sub] {
 		// Before "--" a word that cannot be told could be an option that
 		// turns content on: -p, -v, --cc, a stash or reflog subcommand.
-		return &gitDenial{inv.sub, "is given, before --, an argument the gate cannot expand " +
-			"(a variable or a command substitution), which could be an option that prints content (-p, -v, --cc)", gitExpandHint(inv.sub)}
+		return &gitDenial{inv.sub, why, gitExpandHint(inv.sub)}
+	}
+	// What an argument the gate cannot expand is, when it names a path.
+	whySpec := whyUnknownSpec
+	if j := slices.IndexFunc(args, func(a string) bool { return slices.Contains(unknown, a) }); j >= 0 && j < len(shapes) && shapes[j].brace {
+		whySpec = "is given an argument the gate cannot expand " + unknownWhat(shapes[j]) +
+			", which could name a path in a protected root"
 	}
 	s.locate(&inv)
 	switch inv.place {
@@ -984,7 +1061,7 @@ func (s *setup) gitContent(args, unknown []string, shapes []argShape) *gitDenial
 		}
 		if inv.unknown && s.gitSpecs(inv).content {
 			// An argument that cannot be told could name one.
-			return &gitDenial{inv.sub, whyUnknownSpec, gitExpandHint(inv.sub)}
+			return &gitDenial{inv.sub, whySpec, gitExpandHint(inv.sub)}
 		}
 		return nil
 	}
@@ -1002,7 +1079,7 @@ func (s *setup) gitContent(args, unknown []string, shapes []argShape) *gitDenial
 			"Run it from inside the repository, with the directory made first."}
 	case inv.unknown:
 		// Never the name-only query with a word left unexpanded.
-		return &gitDenial{inv.sub, whyUnknownSpec, gitExpandHint(inv.sub)}
+		return &gitDenial{inv.sub, whySpec, gitExpandHint(inv.sub)}
 	case c.bySpecs && inv.oddSpecs:
 		return &gitDenial{inv.sub, "runs with --literal-pathspecs, --glob-pathspecs or --icase-pathspecs, " +
 			"which make every pathspec unprovable", "Drop that global option, or use --stat."}

@@ -611,15 +611,20 @@ path, is denied with `event-error`: the call cannot be judged.
     `${PWD}` (the working directory as the line leaves it) and `$OLDPWD`
     are expanded; any other expansion (`$X`, `${X:-y}`, `$1`, `$(...)`,
     backticks) leaves its word unknown;
-  - brace expansion is not modelled: a word holding an unquoted brace
-    expression (a `{...}` with a comma at its top level, `{a,b}` or
-    `x{,.bak}`, nested ones included, or a sequence `{1..3}`, `{a..e}`,
-    `{1..9..2}`) is several words the gate does not expand, so it is
-    unknown, as a variable is, for every rule: git denies it before
-    `--` and as a pathspec, and a reader given one reaches every root.
-    `{}`, `HEAD@{1}`, `${...}`, a quoted brace and the grouping `{` and
-    `}` are not brace expressions. (Decided 2026-11-02.) The
-    predecessor reads such a word literally;
+  - brace expansion is done as bash does it, before anything else reads
+    the word: an unquoted `{...}` with a comma at its top level gives
+    each alternative (`{a,b}`, `x{,.bak}`, nested ones expanded too), and
+    `{x..y}` or `{x..y..step}` a sequence of integers (zero-padded when
+    an end is: `{01..03}`) or of single letters, each combined with the
+    text before and after it. Every word that results is a word of its
+    own for every rule: `cat {pbip,sql}/x` names the root, `git log
+    {-p,-2}` is `git log -p -2`, and `git add src/{a,b}.go` adds two
+    files. Any other brace is literal, as in bash: `{a}`, `{}`, `{a..}`,
+    `HEAD@{1}`, `${...}`, a quoted brace and the grouping `{` and `}`.
+    Past 64 words, or in a word of more than 4,096 characters, the word
+    is unknown, as a variable is, and a refusal for it says it is a brace
+    expansion. (Decided 2026-11-02.) The predecessor reads such a word
+    literally;
   - a here-document (`<<WORD`, `<<-WORD`) is read as bash reads it: its
     body runs from the line after the operator to the line that is the
     delimiter (leading tabs removed for `<<-`), or to the end of the line
@@ -768,7 +773,9 @@ path, is denied with `event-error`: the call cannot be judged.
        even inside double quotes: `"$@"`, and any `${...}` holding `@`
        (`"${@:2}"`, `"${a[@]}"`, `"${!p@}"`, `"${!a[@]}"`); they are
        taken to split wherever they are (`"$*"` and `"${*}"` are one
-       word). A glob character outside quotes expands to the names it
+       word), and so is `"$a[@]"`, a name followed by a subscript, which
+       zsh (the Bash tool's shell on some systems) expands to every
+       element. A glob character outside quotes expands to the names it
        matches, so a message word holding one is denied as well. So `git
        commit -m $X`, `-am $X`, `-m$X`, `--message=$X`, `-m "$X"$Y`, `-m
        $(cat <<'EOF' ...)`, `-m "$@"`, `-qm "${a[@]}"`, `-m *` and `-m
@@ -860,11 +867,24 @@ path, is denied with `event-error`: the call cannot be judged.
      change in one counts before the command: `git merge -m "$(cat <<'EOF'
      ...)" main` and `git stash push -m "$(cat <<'EOF' ...)"` are allowed,
      and so is `git merge -m "$(cat notes.txt)" topic`, while `cat f
-     "$(git checkout old)"` is denied. A process substitution (`<(...)`,
-     `>(...)`) runs alongside the command and counts as after it, and a
-     substitution in any later command counts as after the change. In a
-     PowerShell line, a subexpression in git's arguments is read as a
-     statement before git's, so it is judged the same way.
+     "$(git checkout old)"` is denied. A substitution in any later command
+     counts as after the change. A process substitution (`<(...)`,
+     `>(...)`) starts before or alongside the command it is given to, and
+     whatever reads it can run after it: a change in one counts before
+     every command of the line, so any read anywhere in the line denies
+     (`{ read; cat f; } < <(git checkout HEAD~1 -- .; echo)`, `cat f
+     <(git checkout HEAD~1 -- .)`); a read in one, with no change in it,
+     is judged where it stands. A loop body runs again after a change in
+     it, and a function runs where it is called: in a line holding a loop
+     (`for`, `while`, `until`, `select`) or a function definition (`f()`,
+     `function f`), and a change anywhere in it, every read in the line
+     counts as after the change. `cat` with no file operand whose only
+     input is one here-document reads no file, so it is not a read here
+     (`git stash pop && git commit -am "$(cat <<'EOF' ...)"`); a `cat`
+     with a file operand still is, and the substitutions an unquoted body
+     runs are commands of their own. In a PowerShell line, a
+     subexpression in git's arguments is read as a statement before
+     git's, so it is judged the same way.
   3. If the working directory is inside a protected root, or the command
      names a root as a whole word, the protected tree is scanned as for Grep.
      In pbipx the tree is scanned too when:
@@ -951,9 +971,12 @@ path, is denied with `event-error`: the call cannot be judged.
      unquoted, or `function name`), runs `alias`, `hash`, `enable`,
      `source`, `.` or `eval`, or assigns or exports `PATH`, anywhere in the
      line or a line nested in it.
-     **Known over-block:** `echo pbip` and `printf` naming a root still
+     **Known over-blocks:** `echo pbip` and `printf` naming a root still
      scan the tree, since their output can feed a pipe into an
-     interpreter.
+     interpreter. Only git's message text is exempt: the text another
+     program takes, such as `gh pr create --body "$(cat <<'EOF' ...)"`,
+     is still tested, and so is git's message under a wrapper (`env
+     GIT_AUTHOR_NAME=x git commit -m "..."`).
 
      In pbipx a command that only lists names is left out of these tests:
      names are schema (principle 1), so it is allowed over a protected
@@ -1249,7 +1272,10 @@ hint of what to do instead:
   (`GREP_OPTIONS`); or an option that reads files the command does not
   name;
 - `git-content` names the subcommand (git's own only) and the file or
-  root, or the reason the content cannot be placed (rule 2);
+  root, or the reason the content cannot be placed (rule 2); for an
+  argument the gate cannot expand, what it is in fixed words: "a
+  variable or a command substitution", "a brace expansion of more than
+  64 words", or "a message word with a glob outside quotes";
 - a read after a tree change names the command that changes the tree.
 
 Programs are named only when they are in the gate's tables (a reader, a
@@ -1600,16 +1626,53 @@ behavior (2026-10-29).
   - a diff shown with `--submodule=diff`, or with no `--submodule` given
     and `diff.submodule` set to `diff`, prints the changes inside each
     submodule, whose files the name-only form does not list: denied when
-    the command would print a patch. (Decided 2026-11-02.)
-  - git config set in the same line: a key that is not known to be
-    harmless (as for `-c`; `user.*`, `color.*` and the like are), set or
-    unset by `git config` anywhere in the line, a nested line or a
-    PowerShell statement included, or a key that cannot be told, denies
+    the command would print a patch. (Decided 2026-11-02.) Set in a
+    user's or the system's configuration, `diff.submodule=diff` makes
+    every `git diff`, `log -p` or `show` that would print a patch deny,
+    in every repository; `--submodule=short` or `--stat` is allowed.
+  - long options abbreviated: the subcommands that read their options
+    with git's parse-options (`commit`, `status`, `stash push`, `save`,
+    `apply` and `pop`, `notes add` and `append`, `merge`, `add`,
+    `checkout`, `switch`, `restore`, `reset`, `rebase`, `am`, `grep`,
+    `cat-file`, `merge-file`, `merge-tree`, `apply` and `config`) take
+    an unambiguous prefix of a long option, or of its `--no-` form, for
+    the option: `git commit --amen --dry --verb` is `--amend --dry-run
+    --verbose`. The gate expands each from its list of the subcommand's
+    long options (git's documented ones) before any rule reads the
+    options; the value of one that takes the next word is not read as an
+    option. A prefix of more than one option denies, and, for a command
+    that can change the working tree, counts as a change. Revision and
+    diff options (`log`, `show`, `diff` and kin) are not abbreviated by
+    git, and are matched in full.
+  - git config changing the configuration in the same line, anywhere in
+    the line, a nested line or a PowerShell statement included, denies
     every other git command in the line but those that print no file
-    content whatever their options. Git reads the key when it runs, after
-    the gate read the configuration (`git config commit.verbose true &&
-    git commit -a --dry-run`). `git config --get`, `--list`, `get` and
-    `list` only read.
+    content whatever their options: git reads the configuration when it
+    runs, after the gate read it (`git config commit.verbose true && git
+    commit -a --dry-run`). `git config` is read as git reads it: the
+    value of an option that takes one (`--comment`, `--file`, `-f`,
+    `--blob`, `--type`, `--default`, `--value`, `--url`) is never an
+    option, and its long options are expanded as above. Any write mode
+    changes it whatever the keys (`--add`, `--replace-all`, `--unset`,
+    `--unset-all`, `--rename-section`, `--remove-section`, `--edit`, and
+    the subcommands `unset`, `rename-section`, `remove-section` and
+    `edit`), and so does an option the gate does not know, an ambiguous
+    abbreviation or a word that cannot be told. A plain set (`git config
+    KEY VALUE`, `git config set KEY VALUE`) of one key known to be
+    harmless (as for `-c`: `user.*`, `color.*` and the like) does not.
+    A read (`--get` and kin, `--list`, `get`, `list`, or one key alone,
+    `git config commit.verbose`) does not.
+  - a variable git reads, set or exported by a command of its own
+    anywhere in the line (`export GIT_PAGER=less; git log`, `GIT_CONFIG_COUNT=1;
+    export GIT_CONFIG_COUNT`, `declare -x`), denies every git command in
+    the line, as an assignment before git does: any `GIT_` variable but
+    the identities, tracing and the like (`GIT_CONFIG_COUNT`,
+    `GIT_CONFIG_KEY_*`, `GIT_CONFIG_VALUE_*`, `GIT_CONFIG_GLOBAL`,
+    `GIT_CONFIG_SYSTEM` and `GIT_CONFIG_PARAMETERS` included), a pager
+    other than `cat`, an editor other than `true`, and `LESSOPEN`. A name
+    exported alone counts with its value unknown. In PowerShell an
+    assignment to `$env:NAME` anywhere in the line already counts for
+    every git command in it.
 
   The configuration keys checked for turning content on in a command
   the gate allows: `commit.verbose` and `stash.showPatch` (read, above),
@@ -1624,7 +1687,10 @@ behavior (2026-10-29).
   `core.hooksPath`, filters) are not judged from the repository's
   configuration: a program they name is not read, as a script a command
   runs is not (threat model). Set with `-c` or in the same line, they
-  deny as above.
+  deny as above. **Known limitation:** the configuration file written
+  directly (`printf ... >> .git/config`) is not judged as `git config`
+  is: it is a write the gate does not read, like a key that runs a
+  program.
   - `stash show` takes no pathspec: every word not starting with `-`,
     before or after `--`, names the stash (a number `n` is
     `refs/stash@{n}`, none is `refs/stash@{0}`). With at most one such

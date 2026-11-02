@@ -1,6 +1,7 @@
 package gate
 
 import (
+	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -50,6 +51,10 @@ type word struct {
 	// backticks, $1) is outside double quotes: the shell splits its value
 	// into words, so the word may become several arguments.
 	splits bool
+	// braceUnknown is set for a word whose brace expansion the gate does
+	// not expand (more than maxBraceWords words): it is unknown, and
+	// splits.
+	braceUnknown bool
 	// redirect is true for a redirection's target, which is not an
 	// argument of the command.
 	redirect bool
@@ -90,6 +95,10 @@ type simple struct {
 	fallback bool
 	// funcDef is true for the name of a function definition, name().
 	funcDef bool
+	// procSub is true for a command inside a process substitution,
+	// <(...) or >(...), which starts before or alongside the command it
+	// is given to.
+	procSub bool
 }
 
 // args is the command's words without redirection targets.
@@ -144,6 +153,9 @@ type tokenizer struct {
 	// pending are the here-documents whose bodies start after the next
 	// newline.
 	pending []pendingDoc
+	// parens are the open parentheses, each true for a process
+	// substitution, <(...) or >(...).
+	parens []bool
 }
 
 // pendingDoc is a here-document whose body is still to be read.
@@ -195,69 +207,233 @@ func (w word) globs() bool {
 	return slices.ContainsFunc(w.parts, func(p part) bool { return p.kind == litPart && !p.quoted && hasGlob(p.text) })
 }
 
-// braces reports whether the word holds a brace expression bash expands
-// into several words: an unquoted {...} with an unquoted comma at its top
-// level ({a,b}, x{,.bak}), or a sequence {1..3}, {a..e}, {1..9..2}. The
-// gate does not expand one; the word is unknown, and splits. An expansion
-// ($X, ${X}) is never one, nor is {} or a group's { and }.
-func (w word) braces() bool {
-	var rs []rune
-	var free []bool // unquoted literal text
-	for _, p := range w.parts {
-		text := p.raw
-		if p.kind == litPart {
-			text = p.text
-		}
-		for _, r := range text {
-			rs = append(rs, r)
-			free = append(free, p.kind == litPart && !p.quoted)
-		}
-	}
-	for i := range rs {
-		if rs[i] != '{' || !free[i] {
+// maxBraceWords is the most words the gate expands one word into by brace
+// expansion. Past it, the word is unknown.
+const maxBraceWords = 64
+
+// maxBraceRunes is the longest word, in runes and expansions, the gate
+// brace-expands: past it, a word holding a brace is unknown.
+const maxBraceRunes = 4096
+
+// btok is one piece of a word for brace expansion: a literal rune, quoted
+// or not, or a whole expansion part, which brace expansion never splits.
+type btok struct {
+	r      rune
+	quoted bool
+	exp    *part
+}
+
+// is reports whether t is the unquoted literal rune r.
+func (t btok) is(r rune) bool { return t.exp == nil && !t.quoted && t.r == r }
+
+// braceToks are a word's parts as brace-expansion pieces.
+func braceToks(parts []part) []btok {
+	var toks []btok
+	for i := range parts {
+		p := &parts[i]
+		if p.kind != litPart {
+			toks = append(toks, btok{exp: p})
 			continue
 		}
-		depth, comma := 0, false
-		for j := i; j < len(rs); j++ {
-			if !free[j] {
+		for _, r := range p.text {
+			toks = append(toks, btok{r: r, quoted: p.quoted})
+		}
+	}
+	return toks
+}
+
+// braceParts rebuilds a word's parts and text from brace-expansion pieces.
+func braceParts(toks []btok) ([]part, string) {
+	var parts []part
+	var text, lit strings.Builder
+	quoted, open := false, false
+	flush := func() {
+		if open {
+			parts = append(parts, part{kind: litPart, text: lit.String(), quoted: quoted})
+		}
+		lit.Reset()
+		open = false
+	}
+	for _, t := range toks {
+		if t.exp != nil {
+			flush()
+			parts = append(parts, *t.exp)
+			text.WriteString(t.exp.raw)
+			continue
+		}
+		if open && quoted != t.quoted {
+			flush()
+		}
+		open, quoted = true, t.quoted
+		lit.WriteRune(t.r)
+		text.WriteRune(t.r)
+	}
+	flush()
+	return parts, text.String()
+}
+
+// braceExpand expands toks as bash's brace expansion does: an unquoted
+// {...} with an unquoted comma at its top level gives each of its
+// alternatives ({a,b}, x{,.bak}, nested ones expanded too), and {x..y} or
+// {x..y..step} a sequence of integers (zero-padded when an end is) or of
+// single letters. Any other brace is literal ({a}, {}, {a..}, a group's
+// { and }). ok is false past maxBraceWords words.
+func braceExpand(toks []btok) (out [][]btok, ok bool) {
+	for i := range toks {
+		if !toks[i].is('{') {
+			continue
+		}
+		depth, end := 0, -1
+		var commas []int
+	scan:
+		for k := i; k < len(toks); k++ {
+			switch {
+			case toks[k].is('{'):
+				depth++
+			case toks[k].is('}'):
+				depth--
+				if depth == 0 {
+					end = k
+					break scan
+				}
+			case toks[k].is(',') && depth == 1:
+				commas = append(commas, k)
+			}
+		}
+		if end < 0 {
+			return [][]btok{toks}, true
+		}
+		var alts [][]btok
+		if len(commas) > 0 {
+			start := i + 1
+			for _, c := range append(commas, end) {
+				alts = append(alts, toks[start:c])
+				start = c + 1
+			}
+		} else {
+			seq, isSeq, fits := braceSequence(toks[i+1 : end])
+			if !isSeq {
 				continue
 			}
-			switch rs[j] {
-			case '{':
-				depth++
-			case ',':
-				comma = comma || depth == 1
-			case '}':
-				depth--
+			if !fits {
+				return nil, false
 			}
-			if depth == 0 {
-				if comma || braceSequence(string(rs[i+1:j])) {
-					return true
+			for _, s := range seq {
+				var a []btok
+				for _, r := range s {
+					a = append(a, btok{r: r})
 				}
-				break
+				alts = append(alts, a)
 			}
+		}
+		rest, ok := braceExpand(toks[end+1:])
+		if !ok {
+			return nil, false
+		}
+		for _, a := range alts {
+			inner, ok := braceExpand(a)
+			if !ok || len(out)+len(inner)*len(rest) > maxBraceWords {
+				return nil, false
+			}
+			for _, x := range inner {
+				for _, r := range rest {
+					out = append(out, slices.Concat(toks[:i], x, r))
+				}
+			}
+		}
+		return out, true
+	}
+	return [][]btok{toks}, true
+}
+
+// braceSequence reads toks, the inside of {...}, as a sequence: two
+// integers or two single letters, and an optional integer step, separated
+// by "..". isSeq is false when it is not one, and fits false when it has
+// more than maxBraceWords elements.
+func braceSequence(toks []btok) (seq []string, isSeq, fits bool) {
+	var b strings.Builder
+	for _, t := range toks {
+		if t.exp != nil || t.quoted {
+			return nil, false, false
+		}
+		b.WriteRune(t.r)
+	}
+	ends := strings.Split(b.String(), "..")
+	if len(ends) != 2 && len(ends) != 3 {
+		return nil, false, false
+	}
+	step := 1
+	if len(ends) == 3 {
+		n, err := strconv.Atoi(ends[2])
+		if err != nil {
+			return nil, false, false
+		}
+		step = max(n, -n, 1)
+	}
+	count := func(lo, hi int) int { return (max(lo, hi)-min(lo, hi))/step + 1 }
+	walk := func(lo, hi int, f func(int)) {
+		if lo <= hi {
+			for v := lo; v <= hi; v += step {
+				f(v)
+			}
+			return
+		}
+		for v := lo; v >= hi; v -= step {
+			f(v)
+		}
+	}
+	lo, errLo := strconv.Atoi(ends[0])
+	hi, errHi := strconv.Atoi(ends[1])
+	switch {
+	case errLo == nil && errHi == nil:
+		if count(lo, hi) > maxBraceWords {
+			return nil, true, false
+		}
+		width := 0
+		for _, e := range ends[:2] {
+			if digits := strings.TrimLeft(e, "+-"); len(digits) > 1 && digits[0] == '0' {
+				width = max(len(ends[0]), len(ends[1]))
+			}
+		}
+		walk(lo, hi, func(v int) { seq = append(seq, fmt.Sprintf("%0*d", width, v)) })
+	case isLetter(ends[0]) && isLetter(ends[1]):
+		a, z := int(ends[0][0]), int(ends[1][0])
+		if count(a, z) > maxBraceWords {
+			return nil, true, false
+		}
+		walk(a, z, func(v int) { seq = append(seq, asciiLetters[v-'A':v-'A'+1]) })
+	default:
+		return nil, false, false
+	}
+	return seq, true, true
+}
+
+// asciiLetters are the characters from A to z, in order, which a sequence
+// of letters runs through.
+const asciiLetters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz"
+
+// isLetter reports whether s is one ASCII letter.
+func isLetter(s string) bool {
+	return len(s) == 1 && ('a' <= s[0] && s[0] <= 'z' || 'A' <= s[0] && s[0] <= 'Z')
+}
+
+// wordSplits reports whether parts hold an expansion the shell splits into
+// words: one outside double quotes, one that splits inside them too
+// (splitsQuoted), or zsh's "$a[@]", a name followed by a subscript.
+func wordSplits(parts []part) bool {
+	for i, p := range parts {
+		if p.kind != paramPart && p.kind != opaquePart {
+			continue
+		}
+		if !p.inDouble || splitsQuoted(p.raw) {
+			return true
+		}
+		if p.kind == paramPart && !strings.HasPrefix(p.raw, "${") && i+1 < len(parts) &&
+			parts[i+1].kind == litPart && strings.HasPrefix(parts[i+1].text, "[") {
+			return true
 		}
 	}
 	return false
-}
-
-// braceSequence reports whether s, the inside of {...}, is a sequence:
-// two integers or two single characters, and an optional integer step,
-// separated by "..".
-func braceSequence(s string) bool {
-	parts := strings.Split(s, "..")
-	if len(parts) != 2 && len(parts) != 3 {
-		return false
-	}
-	isInt := func(x string) bool {
-		x = strings.TrimPrefix(x, "-")
-		x = strings.TrimPrefix(x, "+")
-		_, err := strconv.Atoi(x)
-		return x != "" && err == nil
-	}
-	ends := (isInt(parts[0]) && isInt(parts[1])) ||
-		(len([]rune(parts[0])) == 1 && len([]rune(parts[1])) == 1)
-	return ends && (len(parts) == 2 || isInt(parts[2]))
 }
 
 // dropWord forgets the word being read.
@@ -272,15 +448,36 @@ func (t *tokenizer) dropWord() {
 func (t *tokenizer) endWord() {
 	t.flushLit()
 	if t.inWord {
-		splits := slices.ContainsFunc(t.parts, func(p part) bool {
-			return (p.kind == paramPart || p.kind == opaquePart) && (!p.inDouble || splitsQuoted(p.raw))
-		})
 		w := word{
-			text: t.raw.String(), parts: t.parts, quoted: t.quoted, splits: splits,
+			text: t.raw.String(), parts: t.parts, quoted: t.quoted, splits: wordSplits(t.parts),
 			redirect: t.redirect, input: t.redirect && t.input, here: t.redirect && t.here,
 		}
-		w.splits = w.splits || w.braces()
-		t.cur.words = append(t.cur.words, w)
+		// Brace expansion makes the word several, each a word of its own;
+		// past maxBraceWords it is one the gate does not expand.
+		toks := braceToks(t.parts)
+		words, ok := [][]btok{toks}, true
+		switch {
+		case !slices.ContainsFunc(toks, func(b btok) bool { return b.is('{') }):
+		case len(toks) > maxBraceRunes:
+			// Too long to expand in bounded time.
+			ok = false
+		default:
+			words, ok = braceExpand(toks)
+		}
+		switch {
+		case !ok:
+			w.splits, w.braceUnknown = true, true
+			t.cur.words = append(t.cur.words, w)
+		case len(words) == 1 && len(words[0]) == len(toks):
+			t.cur.words = append(t.cur.words, w)
+		default:
+			for _, toks := range words {
+				x := w
+				x.parts, x.text = braceParts(toks)
+				x.splits = wordSplits(x.parts)
+				t.cur.words = append(t.cur.words, x)
+			}
+		}
 		t.redirect, t.input, t.here = false, false, false
 	}
 	t.raw.Reset()
@@ -316,6 +513,7 @@ func (t *tokenizer) endCommand() {
 	t.endWord()
 	if len(t.cur.words) > 0 || len(t.cur.subs) > 0 || len(t.cur.docs) > 0 {
 		t.cur.pipeIn = t.pipe
+		t.cur.procSub = slices.Contains(t.parens, true)
 		t.cmds = append(t.cmds, t.cur)
 		t.pipe = false
 	}
@@ -338,12 +536,20 @@ func tokenize(line string) (cmds []simple, ok bool) {
 			if len(t.pending) > 0 {
 				i = t.bodies(i+1) - 1
 			}
-		case '(', ')':
-			if c == '(' && t.definesFunction(i) {
+		case '(':
+			// <(...) and >(...): a redirection with no target yet.
+			proc := t.redirect && !t.inWord
+			if t.definesFunction(i) {
 				t.endWord()
 				t.cur.funcDef = true
 			}
 			t.endCommand()
+			t.parens = append(t.parens, proc)
+		case ')':
+			t.endCommand()
+			if len(t.parens) > 0 {
+				t.parens = t.parens[:len(t.parens)-1]
+			}
 		case ';':
 			t.endCommand()
 			t.pipe = false

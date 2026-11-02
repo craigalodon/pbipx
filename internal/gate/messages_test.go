@@ -177,6 +177,12 @@ func TestMessagesNameTheTrigger(t *testing.T) {
 			hintGitExpand + " `git notes add -F - <<'EOF'` takes the message from a here-document."},
 		{"git merge with a message option's value unknown", sh(`git merge -Fm "$X" topic`), gate.ReasonGitContent,
 			[]string{"git merge is given, before --, an argument the gate cannot expand"}, "substitutions."},
+		{"git commit with a glob message", sh(`git commit -m *`), gate.ReasonGitContent,
+			[]string{"git commit is given, before --, a message word with a glob outside quotes"}, ""},
+		{"git log with a large brace expansion", sh(`git log --oneline x{1..100}`), gate.ReasonGitContent,
+			[]string{"git log is given, before --, an argument the gate cannot expand (a brace expansion of more than 64 words)"}, ""},
+		{"git diff with a large brace expansion after --", sh(`git diff -- x{1..100}`), gate.ReasonGitContent,
+			[]string{"git diff is given an argument the gate cannot expand (a brace expansion of more than 64 words)"}, ""},
 		{"git stash with an argument unknown", sh(`git stash $X`), gate.ReasonGitContent,
 			[]string{"git stash is given, before --, an argument the gate cannot expand"}, hintGitExpand},
 

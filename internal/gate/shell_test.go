@@ -499,6 +499,44 @@ func TestShellTreeChangeThenRead(t *testing.T) {
 			gate.ReasonGitContent, gate.ReasonGitContent},
 		{"a change in a substitution, then the command reads", shIn("sql", `cat clean.sql "$(git checkout old)"`),
 			gate.ReasonGitContent, gate.ReasonGitContent},
+
+		// A process substitution starts before, or alongside, the command
+		// it is in: a change in one counts before every command.
+		{"a shell reading a process substitution that changes the tree",
+			shIn("sql", "bash -c 'read; cat clean.sql' < <(git checkout -q HEAD~1 -- .; echo)"),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a group reading a process substitution that changes the tree",
+			shIn("sql", "{ read; cat clean.sql; } < <(git checkout -q HEAD~1 -- .; echo)"),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a loop reading a process substitution that changes the tree",
+			shIn("sql", "while read; do cat clean.sql; done < <(git checkout -q HEAD~1 -- .; echo)"),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a reader racing a process substitution", shIn("sql", "cat clean.sql <(git checkout HEAD~1 -- .)"),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a process substitution with no change", shIn("sql", "diff <(git show HEAD:README.md) clean.sql"), "", ""},
+
+		// A loop runs its body again, and a function runs where it is
+		// called: with a change in the line, every read counts as after it.
+		{"a read before a change in a loop",
+			shIn("sql", "for i in 1 2; do cat clean.sql; git checkout HEAD~1 -- .; done"),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a function reading, called after a change",
+			shIn("sql", "f() { cat clean.sql; }; git checkout HEAD~1 -- .; f"),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a loop with no read, then a change", sh("for f in a b; do echo $f; done && git switch main"), "", ""},
+		{"a change, then a loop with no read", sh("git switch main && for f in a b; do echo $f; done"), "", ""},
+
+		// cat of a here-document alone reads no file.
+		{"stash pop, then a commit with a here-document message",
+			shIn("sql", "git stash pop && git commit -am \"$(cat <<'EOF'\nA message\nEOF\n)\""), "", ""},
+		{"checkout, then a merge with a here-document message",
+			shIn("sql", "git checkout main && git merge -m \"$(cat <<'EOF'\nA message\nEOF\n)\" feature"), "", ""},
+		{"checkout, then cat of a here-document", shIn("sql", "git checkout main && cat <<'EOF'\nx\nEOF"), "", ""},
+		{"checkout, then cat of a file and a here-document", shIn("sql", "git checkout main && cat clean.sql - <<'EOF'\nx\nEOF"),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"checkout, then a here-document whose substitution reads",
+			shIn("sql", "git checkout main && git commit -m \"$(cat <<EOF\n$(cat clean.sql)\nEOF\n)\""),
+			gate.ReasonGitContent, gate.ReasonGitContent},
 	})
 }
 
@@ -555,12 +593,24 @@ func TestShellInterpreterStdin(t *testing.T) {
 }
 
 // TestShellBraceExpansion: a word with an unquoted brace expression is
-// several words the gate does not expand: unknown, as a variable is.
+// expanded as bash expands it, each word judged on its own; past 64 words
+// it is unknown, as a variable is.
 func TestShellBraceExpansion(t *testing.T) {
 	isolateSearch(t)
 	runBoth(t, []both{
-		{"a reader of a brace list", shIn("sql", "cat clean{.sql,.txt}"), "", gate.ReasonFinding},
-		{"a reader of a brace sequence", shIn("sql", "head -n {1..2} clean.sql"), "", gate.ReasonFinding},
+		{"a reader of a brace list", shIn("sql", "cat clean{.sql,.txt}"), "", ""},
+		{"a reader of a brace sequence", shIn("sql", "head -n {1..2} clean.sql"), "", ""},
+		{"a reader of a brace list naming the root", sh("cat {pbip,sql}/x"), "", gate.ReasonFinding},
+		{"a reader of a prefix and a brace list naming the root", sh("cat p{bip,x}/A.Report/x"), "", gate.ReasonFinding},
+		{"a reader of a nested brace list naming the root", sh("cat {sql,{pb,x}ip}/x"), "", gate.ReasonFinding},
+		{"a reader of a letter sequence naming the root", sh("cat pbi{o..q}/x"), "", gate.ReasonFinding},
+		{"a reader of zero-padded numbers", shIn("sql", "cat clean{01..02}.sql"), "", ""},
+		{"a reader of a stepped sequence", shIn("sql", "cat clean{1..9..4}.sql"), "", ""},
+		{"a reader of more brace words than the gate expands", shIn("sql", "cat clean{1..100}.sql"), "", gate.ReasonFinding},
+		{"a reader of an invalid brace", shIn("sql", "cat {clean.sql}"), "", ""},
+		{"git add of a brace list", sh("git add src/{a,b}.go"), "", ""},
+		{"git diff of a brace list", sh("git diff -- src/{a,b}.go"), "", ""},
+		{"cat of a brace list", sh("cat src/{a,b}.go"), "", ""},
 		{"a reader of a quoted brace list", shIn("sql", "cat 'clean{.sql,.txt}'"), "", ""},
 		{"echo of a brace list", sh("echo {a,b}"), "", ""},
 		{"mkdir of a brace list", sh("mkdir -p build/{a,b}"), "", ""},

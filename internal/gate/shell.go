@@ -5,6 +5,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -66,6 +67,17 @@ func (s *setup) shell(line string) Decision {
 			return deny(ReasonGitContent, "%s", g.message())
 		}
 	}
+	// A variable git reads, set or exported by a command of its own in the
+	// line, as an assignment before git is.
+	if lineEnvUnsafe(w.views) {
+		for _, v := range w.views {
+			if v.name == "git" {
+				return deny(ReasonGitContent, "%s", gitDenial{"git", "runs in a line that sets or exports a variable " +
+					"(a GIT_ variable, a pager, an editor or LESSOPEN) that can change what it prints",
+					"Drop the assignment, or run it as a separate call."}.message())
+			}
+		}
+	}
 	// git config setting a key a git command anywhere in the line reads:
 	// the gate read the configuration as it is before the line runs.
 	if slices.ContainsFunc(w.views, func(v view) bool { return configWrite(v.argv, unknownArgs(v)) }) {
@@ -77,6 +89,15 @@ func (s *setup) shell(line string) Decision {
 	}
 	// A command that changes the working tree, then one that reads: the
 	// read would be judged against the tree as it is before the change.
+	// A change in a process substitution, or any change in a line with a
+	// loop or a function: a read anywhere in the line can run after it.
+	anywhere := w.anywhere
+	if anywhere == "" && w.loopy {
+		anywhere = w.changed
+	}
+	if anywhere != "" && !w.readAfterChange && slices.ContainsFunc(w.views, w.reads) {
+		w.readAfterChange, w.changed = true, anywhere
+	}
 	if w.readAfterChange {
 		return deny(ReasonGitContent,
 			"%s changes the working tree, and a later command in the line reads files; the read would be judged "+
@@ -167,6 +188,41 @@ func redefines(c simple, v view) bool {
 	return false
 }
 
+// funcDefinition matches a shell function definition, name(), anywhere in
+// a line (in quotes too, which only makes the gate stricter).
+var funcDefinition = regexp.MustCompile(`(^|[\s;&|(){}])[A-Za-z_][\w.:-]*\s*\(\s*\)`)
+
+// lineEnvUnsafe reports whether a command of the line sets or exports a
+// variable git reads that is not known to be harmless (unsafeEnv): a
+// command of assignments alone, or export, declare, typeset, local or
+// readonly of one (a name alone, exported with its value unknown).
+func lineEnvUnsafe(views []view) bool {
+	var set []string
+	for _, v := range views {
+		switch {
+		case len(v.argv) > 0 && !slices.ContainsFunc(v.argv, func(a string) bool { return !isAssignment(a) }):
+			set = append(set, v.argv...)
+		case v.name == "export" || v.name == "declare" || v.name == "typeset" || v.name == "local" || v.name == "readonly":
+			for _, a := range v.rest {
+				switch {
+				case isAssignment(a):
+					set = append(set, a)
+				case isName(a):
+					set = append(set, a+"=\x00")
+				}
+			}
+		}
+	}
+	return unsafeEnv(set)
+}
+
+// isTreeChanger reports whether sub is one of git's subcommands that can
+// change the working tree (gitTreeChangers).
+func isTreeChanger(sub string) bool {
+	_, ok := gitTreeChangers[sub]
+	return ok
+}
+
 // treeChange names the command v runs when it changes the working tree
 // with content the gate has not seen: a git command that checks out,
 // merges, applies or restores (gitTreeChangers; any git subcommand that is
@@ -186,6 +242,11 @@ func (s *setup) treeChange(v view) string {
 		}
 		if !gitBuiltins[inv.sub] {
 			return "git"
+		}
+		if inv.ambiguous && isTreeChanger(inv.sub) {
+			// An abbreviated option the gate cannot place could be one
+			// that makes it change the tree.
+			return "git " + inv.sub
 		}
 		if s.branchOnly(inv) {
 			return ""
@@ -341,6 +402,11 @@ var silent = map[string]bool{
 // git's own reads are judged by rule 2.
 func (w *walker) reads(v view) bool {
 	s := w.s
+	if v.name == "cat" && len(v.rest) == 0 && len(v.under) == 0 && v.docOnly {
+		// cat of a here-document alone reads no file; the substitutions
+		// an unquoted one runs are commands of their own.
+		return false
+	}
 	if judged(v.name) && v.name != "git" {
 		return true
 	}
@@ -447,6 +513,9 @@ type view struct {
 	under     []string
 	cwd       cwdState
 	pipeIn    bool
+	// docOnly is set when its only input is one here-document: no pipe,
+	// no other input redirection, no here-string.
+	docOnly bool
 	// cache holds the decision's expanded words and its glob budget.
 	cache *spellCache
 }
@@ -473,6 +542,15 @@ type walker struct {
 	// lines that are cat reading a here-document that is git's message.
 	redefines bool
 	message   map[int]bool
+	// anywhere names a change after which every read in the line counts,
+	// wherever it is: one in a process substitution, which starts before
+	// or alongside the command it is given to, and any change in a line
+	// with a loop or a function, which can run a read again after it.
+	// inProc counts the process substitutions being walked, and loopy is
+	// set for a line with a loop or a function definition.
+	anywhere string
+	inProc   int
+	loopy    bool
 	// tooMany is set when the line holds more than maxCommands commands.
 	tooMany bool
 	ctl     *controls
@@ -492,6 +570,9 @@ func (w *walker) commands(line string, cmds []simple, st *cwdState, depth int) {
 		return
 	}
 	w.lines = append(w.lines, line)
+	if funcDefinition.MatchString(line) {
+		w.loopy = true
+	}
 	var lister *view // a find or fd whose output this pipeline carries
 	var prev *simple // the command before, in this pipeline
 	for i, c := range cmds {
@@ -677,7 +758,6 @@ const (
 	hintVet      = "Ask a person to cover the file in the policy (.pbipx.toml), or leave it out of the call."
 	hintUnread   = "Check that the file can be read, or ask a person to run `pbipx scan` at a terminal."
 	hintLocal    = "Leave Power BI Desktop's .pbi folders out of the call; Desktop keeps them on its own."
-	hintSetting  = "Ask a person to make the change at a terminal."
 )
 
 // simple records one simple command run from st, reads what it nests, and
@@ -689,6 +769,15 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 	w.views = append(w.views, v)
 	if redefines(c, v) {
 		w.redefines = true
+	}
+	if c.procSub {
+		// What it runs, nested lines included, is in the process
+		// substitution too.
+		w.inProc++
+		defer func() { w.inProc-- }()
+	}
+	if len(c.words) > 0 && !c.words[0].quoted && slices.Contains([]string{"for", "while", "until", "select", "do", "function"}, c.words[0].text) {
+		w.loopy = true
 	}
 
 	// The command substitutions in its words and here-documents run
@@ -725,8 +814,15 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 	if !w.probe && w.changed != "" && !w.readAfterChange && w.reads(v) {
 		w.readAfterChange = true
 	}
-	if !w.probe && w.changed == "" {
-		w.changed = s.treeChange(v)
+	if !w.probe && (w.changed == "" || w.anywhere == "") {
+		if change := s.treeChange(v); change != "" {
+			if w.changed == "" {
+				w.changed = change
+			}
+			if w.anywhere == "" && w.inProc > 0 {
+				w.anywhere = change
+			}
+		}
 	}
 
 	known := func() bool { return !slices.Contains(v.restKnown, false) }
@@ -821,6 +917,7 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 // viewOf is the simple command c, run from st, as the rules see it.
 func (s *setup) viewOf(c simple, st cwdState) view {
 	v := view{cwd: st.clone(), pipeIn: c.pipeIn}
+	v.docOnly = len(c.docs) == 1 && !c.pipeIn && !slices.ContainsFunc(c.words, func(wd word) bool { return wd.redirect && wd.input })
 	var args []string
 	var known []bool
 	var shapes []argShape
@@ -832,7 +929,7 @@ func (s *setup) viewOf(c simple, st cwdState) view {
 		if !xw.redirect {
 			args = append(args, xw.text)
 			known = append(known, xw.known)
-			shapes = append(shapes, argShape{splits: wd.splits, glob: wd.globs()})
+			shapes = append(shapes, argShape{splits: wd.splits, glob: wd.globs(), brace: wd.braceUnknown})
 		}
 	}
 	v.argv = stripKeywords(args)
@@ -1329,7 +1426,7 @@ func (s *setup) expandWord(w word, st cwdState) xword {
 		}
 	}
 	xw.text, xw.pattern = text.String(), pattern.String()
-	if w.braces() {
+	if w.braceUnknown {
 		// Brace expansion makes it several words, which the gate does
 		// not expand.
 		xw.known = false

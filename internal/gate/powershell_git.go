@@ -891,6 +891,8 @@ func (s *setup) psChanges(c psGitCall) string {
 		return ""
 	case slices.Contains(unknown, inv.sub) || !gitBuiltins[inv.sub]:
 		return "git"
+	case inv.ambiguous && isTreeChanger(inv.sub):
+		return "git " + inv.sub
 	case s.branchOnly(inv):
 		return ""
 	case gitChangesTree(inv.sub, inv.rest):

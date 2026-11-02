@@ -227,11 +227,60 @@ func TestShellGitHistoryGaps(t *testing.T) {
 		{"show limited to a brace list", sh("git show HEAD~1 -- {pbip,README.md}"), git},
 		{"diff limited to a brace list", sh("git diff HEAD~1 -- {README.md,pbip}"), git},
 		{"commit of a brace list", sh("git commit {--amend,--dry-run,-v}"), git},
-		{"log of a brace sequence", sh("git log -{1..2}"), git},
+		{"log of a brace sequence", sh("git log -{1..2}"), ""},
+		{"log of a brace list with a patch flag", sh("git log -{p,1}"), git},
 		{"log of a nested brace list", sh("git log {--oneline,{-p,-1}}"), git},
 		{"log of a quoted brace list", sh("git log --oneline '{-p,-2}'"), ""},
 		{"log with a reflog selector", sh("git log --oneline HEAD@{1}"), ""},
 		{"log, one line each", sh("git log --oneline -2"), ""},
+		{"log of a brace list away from the roots", sh("git log -p -- {README.md,notes}"), ""},
+		{"log of more brace words than the gate expands", sh("git log --oneline x{1..100}"), git},
+		{"log of an invalid brace", sh("git log --oneline {a}"), ""},
+	})
+}
+
+// TestShellGitAbbreviations: git's parse-options takes an unambiguous
+// prefix of a long option. The leak is in history only.
+func TestShellGitAbbreviations(t *testing.T) {
+	root, _ := historyRepo(t)
+	sh := func(cmd string) gate.Event { return gate.Event{Tool: gate.Shell, Command: cmd} }
+	ps := func(cmd string) gate.Event { return gate.Event{Tool: gate.PowerShell, Command: cmd} }
+	git := gate.ReasonGitContent
+	run(t, root, []decideCase{
+		{"--amen", sh("git commit --amen --dry-run -v"), git},
+		{"--am", sh("git commit --am --dry-run -v"), git},
+		{"--dry", sh("git commit --amend --dry -v"), git},
+		{"--verb", sh("git commit --amend --dry-run --verb"), git},
+		{"--verb, PowerShell", ps("git commit --amend --dry-run --verb"), git},
+		{"an ambiguous abbreviation", sh("git commit --dry-run --ver"), git},
+		{"rebase --show-cur", sh("git rebase --show-cur"), git},
+		{"am --show", sh("git am --show"), git},
+		{"reset --har, then a read", sh("git reset --har HEAD~1 && cat README.md"), git},
+		{"stash push --pat", sh("git stash push --pat"), git},
+		{"grep --open", sh("git grep --open x -- README.md"), git},
+		{"--author's value is not an option", sh("git commit --author --verb -m msg"), ""},
+		{"--amend with a message", sh("git commit --amend -m msg"), ""},
+		{"--no-verify with a message", sh("git commit --no-verify -m msg"), ""},
+		{"--mess", sh(`git commit --allow-empty --mess "$MSG"`), ""},
+		{"--no-verb", sh("git commit --amend --dry-run -v --no-verb"), ""},
+	})
+
+	// The finding staged: the staged diff shows it.
+	staged := newRepo(t, cleanFiles())
+	write(t, staged, leakVisual, slicer("student", "full_name", "Doe, Jane"))
+	gitIn(t, staged, "add", leakVisual)
+	if err := os.Remove(filepath.Join(staged, filepath.FromSlash(leakVisual))); err != nil {
+		t.Fatal(err)
+	}
+	run(t, staged, []decideCase{
+		{"status --verb", sh("git status --verb"), git},
+		{"status --verbo", sh("git status --verbo"), git},
+		{"status --verb, PowerShell", ps("git status --verb"), git},
+		{"commit --dry -v", sh("git commit --dry -v"), git},
+		{"commit --dry-r -v", sh("git commit --dry-r -v"), git},
+		{"commit --dry-run --verb", sh("git commit --dry-run --verb"), git},
+		{"status --short", sh("git status --short"), ""},
+		{"status --no-verb", sh("git status --verbose --no-verb"), ""},
 	})
 }
 
@@ -263,8 +312,31 @@ func TestShellGitCommitVerboseConfig(t *testing.T) {
 	ps := func(cmd string) gate.Event { return gate.Event{Tool: gate.PowerShell, Command: cmd} }
 	run(t, root, []decideCase{
 		{"commit.verbose set in the line", sh("git config commit.verbose true && git commit -a --dry-run"), git},
-		{"commit.verbose set in a later substitution",
+		{"commit.verbose set in the commit's own message substitution",
 			sh(`git commit -a --dry-run -m "$(git config commit.verbose 1)"`), git},
+		// Options that take a value, and read options in value position.
+		{"--comment's value is --get", sh("git config --comment --get commit.verbose true; git commit -a --dry-run"), git},
+		{"set --comment's value is -l", sh("git config set --comment -l commit.verbose true; git commit -a --dry-run"), git},
+		{"--comment's value is a harmless key", sh("git config --comment user.name commit.verbose true && git commit -a --dry-run"), git},
+		{"--comm abbreviated", sh("git config --comm --get commit.verbose true; git commit -a --dry-run"), git},
+		{"--file's value", sh("git config --file .git/config commit.verbose true && git commit -a --dry-run"), git},
+		// A write mode, whatever the keys.
+		{"--rename-section", sh("git config color.verbose true && git config --rename-section color commit && git commit -a --dry-run"), git},
+		{"--add of a harmless key", sh("git config --add user.name x && git status"), git},
+		{"rename-section", sh("git config rename-section color commit && git status"), git},
+		{"--edit", sh("git config --edit && git status"), git},
+		{"a harmless key with a pattern", sh("git config user.name x y && git status"), git},
+		// Reads.
+		{"a read of one key", sh("git config commit.verbose && git commit -a --dry-run"), ""},
+		{"--get-regexp", sh("git config --get-regexp 'commit.*' && git status"), ""},
+		{"--list", sh("git config --list && git status"), ""},
+		{"a harmless key with a --comment", sh("git config --comment 'a note' user.name x && git status"), ""},
+		// The environment, set earlier in the line.
+		{"export GIT_PAGER", sh("export GIT_PAGER=less; git log --oneline"), git},
+		{"an assignment, then export", sh("GIT_CONFIG_COUNT=1; export GIT_CONFIG_COUNT; git status"), git},
+		{"GIT_CONFIG_PARAMETERS assigned", sh("GIT_CONFIG_PARAMETERS=\"'commit.verbose'='1'\"; git commit -a --dry-run"), git},
+		{"export GIT_CONFIG_GLOBAL", sh("export GIT_CONFIG_GLOBAL=x.cfg && git status"), git},
+		{"export of an identity", sh("export GIT_AUTHOR_NAME=x; git commit -m msg"), ""},
 		{"commit.verbose set in the line, PowerShell", ps("git config commit.verbose true; git commit -a --dry-run"), git},
 		{"commit.verbose unset in the line", sh("git config --unset commit.verbose && git commit -a --dry-run"), git},
 		{"a key from a variable", sh(`git config "$K" true && git status`), git},
@@ -374,6 +446,8 @@ func TestShellGitUnknownWords(t *testing.T) {
 		{"commit -m of quoted ${!p@}", sh(`git commit -m "${!p@}"`), git},
 		{"commit -m of a quoted array's keys", sh(`git commit -m "${!a[@]}"`), git},
 		{"commit -m of quoted $*", sh(`git commit -m "$*"`), ""},
+		{"commit -m of a quoted zsh array", sh(`git commit -m "$a[@]"`), git},
+		{"commit -m of a quoted zsh subscript", sh(`git commit -m "$a[1]"`), git},
 		{"commit -m of quoted ${*}", sh(`git commit -m "${*}"`), ""},
 		// An unquoted glob expands to several words.
 		{"commit -m of a glob", sh(`git commit -m *`), git},
