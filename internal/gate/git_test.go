@@ -248,6 +248,18 @@ func TestShellGitHistoryGaps(t *testing.T) {
 		{"an alias for git", sh("alias g=git; g log -p"), git},
 		{"$(echo git log -p) as a command", sh("$(echo git log -p)"), git},
 		{"hash of git alone", sh("hash git; git log --oneline -1"), ""},
+		// Quoted code bash evaluates later (F4).
+		{"test -v of a subscript", sh(`test -v 'a[$(git log -p >&2)]'`), git},
+		{"printf -v of a subscript", sh(`printf -v 'a[$(git log -p >&2)]' x`), git},
+		{"read of a subscript", sh(`read 'a[$(git log -p >&2)]' <<< x`), git},
+		{"declare -n of a subscript", sh(`declare -n r='a[$(git log -p >&2)]'; echo $r`), git},
+		{"arithmetic of a variable", sh(`x='a[$(git log -p >&2)]'; echo $((x))`), git},
+		{"a prompt expansion", sh(`x='$(git log -p >&2)'; echo ${x@P}`), git},
+		{"PS4 with set -x", sh(`PS4='$(git log -p >&2)'; set -x; true`), git},
+		{"BASH_ENV", sh(`BASH_ENV=<(echo 'git log -p') bash -c true`), git},
+		{"printf -v of a plain name", sh(`printf -v x '%s' hi; echo "$x"`), ""},
+		{"arithmetic with no quoted code", sh(`n=1; n=$((n+1)); echo $n`), ""},
+		{"quoted $( with nothing that evaluates", sh(`git commit -m 'use $(foo)'`), ""},
 		// source and . alike (F2), and code built at run time (F3).
 		{"source of a process substitution", sh("source <(echo 'git log -p')"), git},
 		{". of a process substitution", sh(". <(echo 'git log -p')"), git},

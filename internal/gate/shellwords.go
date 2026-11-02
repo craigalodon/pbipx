@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 // partKind is what one part of a word is.
@@ -101,6 +102,9 @@ type simple struct {
 	// procArg is set for a command given a process substitution (cmd
 	// <(...)), which it reads or writes as a file.
 	procArg bool
+	// arith is set for an arithmetic command, ((...)), that names a
+	// variable.
+	arith bool
 	// background is set for a command run in the background (cmd &).
 	background bool
 	// uncertain is set on every command of a line the tokenizer did not
@@ -623,7 +627,7 @@ func (t *tokenizer) definesFunction(i int) bool {
 
 func (t *tokenizer) endCommand() {
 	t.endWord()
-	if len(t.cur.words) > 0 || len(t.cur.subs) > 0 || len(t.cur.docs) > 0 {
+	if len(t.cur.words) > 0 || len(t.cur.subs) > 0 || len(t.cur.docs) > 0 || t.cur.arith {
 		t.cur.pipeIn = t.pipe
 		t.cur.procSub = slices.Contains(t.parens, true)
 		t.cmds = append(t.cmds, t.cur)
@@ -765,6 +769,8 @@ func (t *tokenizer) run(start int, sub bool) (int, bool) {
 				if end, ok := arithEnd(rs, i, t.sc); ok {
 					t.endCommand()
 					t.cur.subs = append(t.cur.subs, bodySubs(rs[i+2:end-1], t.sc)...)
+					// A name in it is a variable whose value is evaluated.
+					t.cur.arith = strings.ContainsFunc(string(rs[i+2:end-1]), func(r rune) bool { return r == '_' || unicode.IsLetter(r) })
 					t.endCommand()
 					i = end
 					continue

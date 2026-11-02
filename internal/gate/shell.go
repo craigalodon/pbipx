@@ -240,6 +240,66 @@ func (w *walker) unknownProgram(c simple, v view) string {
 	return ""
 }
 
+// promptVars are the variables bash runs, or expands as code, later: set
+// anywhere in a line, they are code built at run time.
+var promptVars = []string{"PS0", "PS1", "PS2", "PS4", "PROMPT_COMMAND", "BASH_ENV", "ENV", "SHELLOPTS", "BASHOPTS"}
+
+// quotedCode reports whether c holds quoted text that bash would run if
+// it were evaluated: $(, a backtick or ${ inside quotes.
+func quotedCode(c simple) bool {
+	for _, wd := range c.words {
+		for _, p := range wd.parts {
+			if p.kind == litPart && p.quoted && (strings.Contains(p.text, "$(") || strings.Contains(p.text, "`") ||
+				strings.Contains(p.text, "${")) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// evaluates reports whether c makes bash evaluate a string as code: an
+// array subscript or a name that test -v, [[ -v, printf -v, read,
+// mapfile, declare -n (or a subscripted name), let or unset reads, an
+// arithmetic expression that names a variable (whose value is evaluated
+// in turn), or ${x@P} and ${x@E}, which expand a value as a prompt.
+func evaluates(c simple, v view) bool {
+	if c.arith {
+		return true
+	}
+	for _, wd := range c.words {
+		for _, p := range wd.parts {
+			if p.kind != opaquePart {
+				continue
+			}
+			if strings.HasPrefix(p.raw, "$((") || strings.HasPrefix(p.raw, "$[") {
+				if strings.ContainsFunc(p.raw, func(r rune) bool { return r == '_' || 'a' <= r && r <= 'z' || 'A' <= r && r <= 'Z' }) {
+					return true
+				}
+			}
+			if strings.HasPrefix(p.raw, "${") && (strings.HasSuffix(p.raw, "@P}") || strings.HasSuffix(p.raw, "@E}")) {
+				return true
+			}
+		}
+	}
+	subscript := slices.ContainsFunc(v.rest, func(a string) bool { return strings.Contains(a, "[") })
+	switch v.name {
+	case "test", "[", "[[":
+		return slices.Contains(v.rest, "-v")
+	case "printf":
+		return slices.Contains(v.rest, "-v")
+	case "read", "mapfile", "readarray", "let":
+		return true
+	case "declare", "typeset", "local", "export", "readonly":
+		return subscript || slices.ContainsFunc(v.rest, func(a string) bool {
+			return strings.HasPrefix(a, "-") && strings.Contains(a, "n")
+		})
+	case "unset":
+		return subscript
+	}
+	return false
+}
+
 // redefiners are the commands that can make a name run another program:
 // an alias, a hashed path, a builtin turned off or loaded, and a script
 // or text run in the shell itself, which can define a function.
@@ -897,8 +957,11 @@ type walker struct {
 	redefines bool
 	// hashed are the names the line made stand for another program (hash
 	// -p, alias): a command that runs one runs what the gate cannot tell.
-	hashed  map[string]bool
-	message map[int]bool
+	hashed map[string]bool
+	// quotedCode is set once a command holds quoted code, and evaluates
+	// once one makes bash evaluate a string (evaluates).
+	quotedCode, evaluates bool
+	message               map[int]bool
 	// anywhere names a change after which every read in the line counts,
 	// wherever it is: one in a process substitution, which starts before
 	// or alongside the command it is given to, and any change in a line
@@ -1213,6 +1276,17 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 	}
 	if why := w.unknownProgram(c, v); why != "" {
 		w.setRuntime(why, hintPlain)
+	}
+	// Quoted code bash evaluates later (F4): quoted $(...) with a
+	// construct that evaluates a string, in any order in the line.
+	w.quotedCode = w.quotedCode || quotedCode(c)
+	w.evaluates = w.evaluates || evaluates(c, v)
+	if w.quotedCode && w.evaluates {
+		w.setRuntime("quoted code is evaluated by bash (an array subscript, test -v, printf -v, read, declare -n, "+
+			"let, arithmetic or a prompt expansion)", hintPlain)
+	}
+	if lineSets([]view{v}, promptVars...) {
+		w.setRuntime("a variable whose value bash runs later (PS4, PROMPT_COMMAND, BASH_ENV and the like) is set", hintPlain)
 	}
 	if c.procSub {
 		// What it runs, nested lines included, is in the process
