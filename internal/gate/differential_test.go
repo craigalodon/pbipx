@@ -32,26 +32,26 @@ func (f findingAt) String() string {
 	return [...]string{"in the working tree", "in history only", "staged only"}[f]
 }
 
-// sentinel is the planted value, which git's output is searched for.
+// sentinel is the planted value, which output is searched for.
 const sentinel = "Doe, Jane"
 
 // TestDifferentialBash runs generated command lines under real bash, with
-// stub programs that only log the arguments they are run with, and checks
-// that whenever bash really runs a dangerous command (a recursive search
-// of the working directory, a cat of a protected file, git printing the
-// finding) in a repository with a planted finding, the gate denies the
-// line. It reads each line as bash does or fails closed; it catches the
-// tokenizer mistakes the reviews found (a ) inside ${...} in $(...), a
-// case pattern in $(...), a here-document delimiter quoted with $'...',
-// << in arithmetic, an empty brace alternative, a CR in a word, a
-// backslash-newline join, code bash evaluates later).
+// stub programs, and checks that whenever bash really runs a dangerous
+// command (a recursive search of the working directory, a read of a
+// protected file, git printing the finding) in a repository with a
+// planted finding, the gate denies the line. It reads each line as bash
+// does or fails closed; it catches the tokenizer mistakes the reviews
+// found (a ) inside ${...} in $(...), a case pattern in $(...), a
+// here-document delimiter quoted with $'...', << in arithmetic, an empty
+// brace alternative, a CR in a word, a backslash-newline join, a split
+// here-document operator, code bash evaluates later).
 //
-// Whether a git command is dangerous is asked of git itself: the git stub
-// runs a reading subcommand again with real git, when it is run, and
-// notes when its output holds the planted value. The stub make (and npm)
-// rewrites the protected file, as a formatter would, so the git commands
-// after it see what it wrote; the file is put back after each line,
-// before the gate decides.
+// Each line runs in a scratch copy of its repository. The git stub runs
+// every git command for real there, changes included (a tag moved, a
+// stash, a commit), and notes when its output holds the planted value;
+// readers log their arguments and note when their input is a file that
+// holds it (cat < pbip/x); make and npm rewrite the protected file, as a
+// formatter would. The gate decides against the repository as it was.
 //
 // Each line runs in one of three repositories, by the generator: the
 // finding in the working tree, in history only, or staged only.
@@ -72,6 +72,7 @@ func TestDifferentialBash(t *testing.T) {
 	}
 	roots := differentialRepos(t)
 	stubs, logFile := differentialStubs(t, bash)
+	scratch := t.TempDir()
 	rng := rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15)) //nolint:gosec // G404: a seeded, repeatable test generator
 	ran := 0
 	for i := 0; i < lines; i++ {
@@ -79,7 +80,7 @@ func TestDifferentialBash(t *testing.T) {
 		at := findingAt(rng.IntN(len(roots)))
 		root := roots[at]
 		for _, opts := range [][]string{nil, {"-O", "expand_aliases"}} {
-			if !bashRunsDanger(t, bash, opts, root, stubs, logFile, line, at) {
+			if !bashRunsDanger(t, bash, opts, root, scratch, stubs, logFile, line, at) {
 				continue
 			}
 			ran++
@@ -114,14 +115,14 @@ func differentialRepos(t *testing.T) []string {
 	return []string{inTree: tree, inHistory: history, inIndex: staged}
 }
 
-// differentialStubs writes the stub programs into a directory of their own:
-// grep, rg, cat, git and other readers log their name and arguments to
-// a log (logFile, a new one each run, named in PBIPX_DIFF_LOG) and do
-// nothing else, but git, which runs a reading subcommand
-// with real git too and logs "git-leak" when it prints the planted value;
-// make and npm log and rewrite the protected file, the planted value in
-// it; sh, bash, env, xargs and a few wrappers are links to the real ones,
-// so what they run is the stubs too.
+// differentialStubs writes the stub programs into a directory of their own.
+// Each logs its name and arguments to the run's log (PBIPX_DIFF_LOG; a
+// new one each run). The readers (grep, cat, head ...) do nothing else,
+// but note "stdin-leak" when their input is a file holding the planted
+// value; git runs real git with its arguments and notes "git-leak" when
+// its output holds it; make and npm rewrite the protected file, the
+// planted value in it. sh, bash, env, xargs and a few wrappers are links
+// to the real ones, so what they run is the stubs too.
 func differentialStubs(t *testing.T, bash string) (dir, logFile string) {
 	t.Helper()
 	realGit, err := exec.LookPath("git")
@@ -134,20 +135,15 @@ func differentialStubs(t *testing.T, bash string) (dir, logFile string) {
 	}
 	dir = t.TempDir()
 	logFile = filepath.Join(t.TempDir(), "log")
-	script := "#!/bin/sh\n{ printf '%s' \"${0##*/}\"; for a in \"$@\"; do printf '\\037%s' \"$a\"; done; printf '\\036'; } >> \"$PBIPX_DIFF_LOG\"\n"
+	logArgs := "{ printf '%s' \"${0##*/}\"; for a in \"$@\"; do printf '\\037%s' \"$a\"; done; printf '\\036'; } >> \"$PBIPX_DIFF_LOG\"\n"
+	reader := "#!/bin/sh\n" + logArgs + "if [ -f /dev/stdin ] && '" + realGrep + "' -qF '" + sentinel + "' </dev/stdin; then\n" +
+		"\tprintf 'stdin-leak\\036' >> \"$PBIPX_DIFF_LOG\"\nfi\n"
 	for _, name := range []string{"grep", "egrep", "rg", "cat", "head", "tail", "sed", "find", "python3", "ls", "wc", "sort"} {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0o700); err != nil { //nolint:gosec // G306: a test's own stub
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(reader), 0o700); err != nil { //nolint:gosec // G306: a test's own stub
 			t.Fatal(err)
 		}
 	}
-	gitStub := script + `sub=
-for a in "$@"; do case $a in -*) ;; *) sub=$a; break ;; esac; done
-run=
-case $sub in
-log|show|diff|grep|status|cat-file|diff-index|diff-tree|diff-files|blame|whatchanged) run=1 ;;
-stash) case " $* " in *" show "*|*" list "*) run=1 ;; esac ;;
-esac
-if [ -n "$run" ] && '` + realGit + `' --no-pager -c core.pager=cat "$@" </dev/null 2>&1 | '` + realGrep + `' -qF '` + sentinel + `'; then
+	gitStub := "#!/bin/sh\n" + logArgs + `if '` + realGit + `' --no-pager -c core.pager=cat "$@" </dev/null 2>&1 | '` + realGrep + `' -qF '` + sentinel + `'; then
 	printf 'git-leak\036' >> "$PBIPX_DIFF_LOG"
 fi
 `
@@ -159,7 +155,7 @@ fi
 	if err := os.WriteFile(formatted, []byte(strings.ReplaceAll(slicer("student", "full_name", sentinel), "\n", " ")+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	rewrite := script + "mkdir -p '" + path0(leakVisual) + "' && while IFS= read -r l; do printf '%s\\n' \"$l\"; done < '" +
+	rewrite := "#!/bin/sh\n" + logArgs + "mkdir -p '" + path0(leakVisual) + "' && while IFS= read -r l; do printf '%s\\n' \"$l\"; done < '" +
 		formatted + "' > '" + leakVisual + "'\n"
 	for _, name := range []string{"make", "npm"} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(rewrite), 0o700); err != nil { //nolint:gosec // G306: a test's own stub
@@ -179,43 +175,46 @@ fi
 	return dir, logFile
 }
 
-// differentialRuns counts the lines run, for their logs' names.
+// differentialRuns counts the lines run, for their logs' and copies' names.
 var differentialRuns int
 
 // path0 is the directory of a slash-separated path.
 func path0(p string) string { return p[:strings.LastIndexByte(p, '/')] }
 
-// bashRunsDanger runs line under bash with opts, in root, with only the
-// stubs on PATH, and reports whether it ran a dangerous command. The
-// protected file is put back as it was before it returns.
-func bashRunsDanger(t *testing.T, bash string, opts []string, root, stubs, logFile, line string, at findingAt) bool {
+// bashRunsDanger runs line under bash with opts, in a scratch copy of
+// root under scratch, with only the stubs on PATH, and reports whether it
+// ran a dangerous command.
+func bashRunsDanger(t *testing.T, bash string, opts []string, root, scratch, stubs, logFile, line string, at findingAt) bool {
 	t.Helper()
-	file := filepath.Join(root, filepath.FromSlash(leakVisual))
-	before, readErr := os.ReadFile(file) //nolint:gosec // G304: the test's own fixture
-	defer func() {
-		if readErr != nil {
-			_ = os.Remove(file)
-			return
-		}
-		if err := os.WriteFile(file, before, 0o600); err != nil { //nolint:gosec // G703: the test's own fixture path
-			t.Fatal(err)
-		}
-	}()
-	// A log of its own for each run: a process a line left running writes
-	// into its own run's.
+	// A log and a copy of the repository of its own for each run: a
+	// process a line left running writes into its own run's.
 	differentialRuns++
-	logFile += "." + strconv.Itoa(differentialRuns)
+	run := strconv.Itoa(differentialRuns)
+	logFile += "." + run
 	if err := os.WriteFile(logFile, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = os.Remove(logFile) }()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// Only git, make and npm change anything: a line with none of them
+	// runs in the repository itself.
+	copyDir := root
+	if strings.Contains(line, "git") || strings.Contains(line, "make") || strings.Contains(line, "npm") {
+		copyDir = filepath.Join(scratch, run)
+		if out, err := exec.Command("cp", "-a", root, copyDir).CombinedOutput(); err != nil { //nolint:gosec // G204: the test's own paths
+			t.Fatalf("cp: %v: %s", err, out)
+		}
+		defer func() { _ = os.RemoveAll(copyDir) }()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	args := append(append([]string{"--norc", "--noprofile"}, opts...), "-c", line)
 	cmd := exec.CommandContext(ctx, bash, args...) //nolint:gosec // G204: the test runs bash on its own generated lines
-	cmd.Dir = root
+	cmd.Dir = copyDir
 	cmd.Env = []string{
 		"PATH=" + stubs, "HOME=" + t.TempDir(), "LC_ALL=C", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=" + os.DevNull,
+		"GIT_EDITOR=true", "GIT_SEQUENCE_EDITOR=true", "GIT_TERMINAL_PROMPT=0",
+		"GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=test@example.com",
+		"GIT_COMMITTER_NAME=Test", "GIT_COMMITTER_EMAIL=test@example.com",
 		"PBIPX_DIFF_LOG=" + logFile,
 	}
 	_ = cmd.Run()                     // a line may fail; what it ran is in the log
@@ -236,9 +235,10 @@ func bashRunsDanger(t *testing.T, bash string, opts []string, root, stubs, logFi
 }
 
 // dangerous reports whether running name with args reads the planted
-// finding, where it is: git printing it (the git stub's "git-leak"), and,
-// while it is in the working tree, a recursive grep, rg (which recurses
-// by default), or cat of a file under the protected root.
+// finding, where it is: git printing it (the git stub's "git-leak"), a
+// reader given a file holding it as its input ("stdin-leak"), and, while
+// it is in the working tree, a recursive grep, rg (which recurses by
+// default), or a read of a file under the protected root.
 func dangerous(name string, args []string, at findingAt) bool {
 	has := func(want ...string) bool {
 		for _, a := range args {
@@ -251,7 +251,7 @@ func dangerous(name string, args []string, at findingAt) bool {
 		return false
 	}
 	switch name {
-	case "git-leak":
+	case "git-leak", "stdin-leak":
 		return true
 	case "grep", "egrep":
 		return at != inHistory && has("-r", "-R", "--recursive")
@@ -280,6 +280,9 @@ var (
 		"git show :" + leakVisual, "git grep --cached Doe", "git status -v", "git diff-index -p --cached HEAD",
 		"git grep -n Doe", "make fmt && git diff", "npm run fmt; git diff HEAD", "make && git diff --stat",
 		"make && git diff --cached",
+		"git diff-files -p", "make fmt && git diff-files -p", "make && git diff-index -p HEAD",
+		"git stash && make fmt && git diff", "git stash; npm run fmt; git diff", "cat < " + leakVisual,
+		"git tag -f t HEAD~1 && git diff t", "git add -A && git diff --cached",
 	}
 	differentialWrappers = []string{
 		"%s",
@@ -338,9 +341,15 @@ var (
 		"x=$(cat <<'E'\nmsg\nE )\n%s\nE\n)",
 		// Code bash evaluates later.
 		"PS4='$(%s >&2)'; set -x; true",
-		"x='a[$(%s)]'; echo $((x))",
+		"v='a[$(%s)]'; echo $((v))",
 		"test -v 'a[$(%s)]'",
 		"BASH_ENV=<(echo '%s') bash -c true",
+		// Operators split by a backslash-newline.
+		"cat <\\\n<'E'\nx\\\nE\n%s\nE",
+		"false |\\\n| %s",
+		"echo x >\\\n> /dev/null; %s",
+		"cat <\\\n(%s)",
+		"echo $\\\n(%s)",
 	}
 )
 
