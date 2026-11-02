@@ -42,8 +42,10 @@ func lister(name string, rest []string) bool {
 // in another command's words, in a command substitution or in a
 // here-document. A line that did not tokenize is read whole. git's message
 // text (gitMessageText) is prose and is left out; the command
-// substitutions an unquoted here-document in it runs are still read.
-func namesRootOutsideListers(line, root string) bool {
+// substitutions an unquoted here-document in it runs are still read. With
+// exempt false, as when the line may redefine cat or git, nothing is left
+// out.
+func namesRootOutsideListers(line, root string, exempt bool) bool {
 	if !namesWord(line, root) {
 		return false
 	}
@@ -52,20 +54,23 @@ func namesRootOutsideListers(line, root string) bool {
 			return true
 		}
 		msg := gitMessageText(c)
+		if !exempt {
+			msg = gitMessage{words: make([]bool, len(c.words)), subs: make([]bool, len(c.subs))}
+		}
 		for k, sub := range c.subs {
 			if msg.subs[k] {
-				if docRunsRoot(catHeredoc(sub), root) {
+				if docRunsRoot(catHeredoc(sub), root, exempt) {
 					return true
 				}
 				continue
 			}
-			if namesRootOutsideListers(sub, root) {
+			if namesRootOutsideListers(sub, root, exempt) {
 				return true
 			}
 		}
 		for _, doc := range c.docs {
 			if msg.docs {
-				if docRunsRoot(doc, root) {
+				if docRunsRoot(doc, root, exempt) {
 					return true
 				}
 				continue
@@ -88,9 +93,9 @@ func namesRootOutsideListers(line, root string) bool {
 
 // docRunsRoot reports whether a command substitution in the unquoted
 // here-document doc names root (namesRootOutsideListers).
-func docRunsRoot(doc *heredoc, root string) bool {
+func docRunsRoot(doc *heredoc, root string, exempt bool) bool {
 	for _, sub := range doc.subs {
-		if namesRootOutsideListers(sub, root) {
+		if namesRootOutsideListers(sub, root, exempt) {
 			return true
 		}
 	}

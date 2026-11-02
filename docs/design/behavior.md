@@ -918,15 +918,30 @@ path, is denied with `event-error`: the call cannot be judged.
      `node -e`, `perl -e`, an awk program, and a here-document fed to an
      interpreter (`python3 - <<'EOF' ...`, `cat <<'EOF' | python3`).
      A message is still run if something feeds it to an interpreter
-     (`git log -1 --format=%B | python3`): a script interpreter
-     (`python`, `python3`, `node`, `perl`, `ruby`, `php`, `Rscript`,
-     `lua`, `tclsh` and kin) reading its program from its input, given no
-     script operand, no code option (`-c`, `-e`, `-r` ...) and no module
-     (`-m`), or `-` as the script, runs a program built at run time, as a
-     shell reading a pipe does, and touches every protected root. Its
-     input is shown only when it is a quoted here-document, or one or a
-     here-string with no expansion, and no pipe: that text is tested as
-     above.
+     (`git log -1 --format=%B | python3`): a script interpreter reading
+     its program from its input runs a program built at run time, as a
+     shell reading a pipe does, and touches every protected root. The
+     interpreters are `python`, `pypy`, `perl`, `ruby`, `php` and `lua`
+     with any version after the name (`python3.14`, `perl5.36`), `node`
+     with a number (`node22`) and `nodejs`, `ipython`, `R`, `Rscript`,
+     `luajit` and `tclsh`, given no script operand, no code option (`-c`,
+     `-e`, `-r` ...) and no module or file option (`-m`, `-f`), or given
+     `-`, `/dev/stdin`, `/dev/fd/0` or `/proc/self/fd/0` as the script;
+     `deno` alone or `deno run` and `bun run` read the same way; `awk`,
+     `gawk`, `mawk` and `nawk` only with `-f` naming their input. `uv
+     run`, `poetry run`, `pipenv run`, `conda run`, `pdm run`, `hatch
+     run`, `rye run`, `pnpm exec`, `npx` and `bunx` are wrappers of the
+     program after them (their options skipped; a value given apart is
+     taken for the program). Another interpreter, or one under a name not
+     listed, is not judged so. Its input is shown only when it is a
+     quoted here-document, or one or a here-string with no expansion, and
+     no pipe: that text is tested as above.
+
+     The message text is tested as any other text when the line may make
+     `cat` or `git` run another program: it defines a function (`name()`
+     unquoted, or `function name`), runs `alias`, `hash`, `enable`,
+     `source`, `.` or `eval`, or assigns or exports `PATH`, anywhere in the
+     line or a line nested in it.
      **Known over-block:** `echo pbip` and `printf` naming a root still
      scan the tree, since their output can feed a pipe into an
      interpreter.

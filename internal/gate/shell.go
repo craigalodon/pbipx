@@ -119,6 +119,45 @@ var gitTreeChangers = map[string][]string{
 	"merge-file":      {"-p", "--stdout"},
 }
 
+// redefiners are the commands that can make a name run another program:
+// an alias, a hashed path, a builtin turned off or loaded, and a script
+// or text run in the shell itself, which can define a function.
+var redefiners = map[string]bool{
+	"alias": true, "hash": true, "enable": true, "source": true, ".": true, "eval": true,
+	"function": true,
+}
+
+// redefines reports whether c may make cat or git run another program for
+// the rest of the line: a function definition (name(), function name),
+// alias, hash, enable, source, . or eval, or an assignment or export of
+// PATH.
+func redefines(c simple, v view) bool {
+	if c.funcDef {
+		return true
+	}
+	words := stripKeywords(c.args())
+	if len(words) > 0 && (redefiners[words[0]] || redefiners[v.name]) {
+		return true
+	}
+	if len(c.words) > 0 && c.words[0].text == "function" {
+		return true
+	}
+	for _, a := range v.argv {
+		if name, _, ok := strings.Cut(a, "="); ok && name == "PATH" {
+			return true
+		}
+	}
+	switch v.name {
+	case "export", "declare", "typeset", "local", "readonly":
+		for _, a := range v.rest {
+			if name, _, _ := strings.Cut(a, "="); name == "PATH" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // treeChange names the command v runs when it changes the working tree
 // with content the gate has not seen: a git command that checks out,
 // merges, applies or restores (gitTreeChangers; any git subcommand that is
@@ -419,6 +458,12 @@ type walker struct {
 	// after it reads.
 	changed         string
 	readAfterChange bool
+	// redefines is set when a command of the line may make cat or git run
+	// another program (redefines): git's message text is then not left
+	// out of the root-name tests. message are the indexes in lines of the
+	// lines that are cat reading a here-document that is git's message.
+	redefines bool
+	message   map[int]bool
 	// tooMany is set when the line holds more than maxCommands commands.
 	tooMany bool
 	ctl     *controls
@@ -633,6 +678,9 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 	v := s.viewOf(c, *st)
 	v.cache = w.cache
 	w.views = append(w.views, v)
+	if redefines(c, v) {
+		w.redefines = true
+	}
 
 	// The command substitutions in its words and here-documents run
 	// before it, each in a subshell in this directory: a read in one is
@@ -646,9 +694,13 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 		w.line(sub, &sst, depth+1)
 		if msg.subs[k] && n < len(w.lines) && w.lines[n] == sub {
 			// cat reading a here-document that is git's message: the
-			// body is not tested for a root's name (namesRootOutsideListers);
-			// the lines its body runs, walked after it, still are.
-			w.lines = slices.Delete(w.lines, n, n+1)
+			// body is not tested for a root's name (namesRootOutsideListers),
+			// unless the line may redefine cat or git; the lines its body
+			// runs, walked after it, still are.
+			if w.message == nil {
+				w.message = map[int]bool{}
+			}
+			w.message[n] = true
 		}
 	}
 	for _, doc := range c.docs {
@@ -1930,9 +1982,12 @@ func (w *walker) reaches() trigger {
 	if w.reach.set() {
 		return w.reach
 	}
-	for _, line := range w.lines {
+	for i, line := range w.lines {
+		if w.message[i] && !w.redefines {
+			continue
+		}
 		for _, root := range s.policy.ProtectedRoots() {
-			if namesRootOutsideListers(line, root) {
+			if namesRootOutsideListers(line, root, !w.redefines) {
 				return trigger{"the command names the protected root " + displayPath(root), hintNames}
 			}
 		}
@@ -1956,7 +2011,7 @@ func (w *walker) reaches() trigger {
 		_, search := searchers[v.name]
 		reader := readers[v.name] || search
 		for _, xw := range v.words {
-			if xw.message {
+			if xw.message && !w.redefines {
 				continue
 			}
 			abss, unknown := s.wordSpellings(v, xw)
