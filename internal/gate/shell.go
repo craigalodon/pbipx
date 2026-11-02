@@ -41,6 +41,11 @@ func (s *setup) shell(line string) Decision {
 	if w.tooManyWords {
 		return deny(ReasonInternalError, "brace expansion in the command line makes more than %d words, too many to judge", maxBraceLine)
 	}
+	if w.uncertainWhy != "" {
+		// What the gate cannot read as bash would, it does not judge in
+		// part.
+		return deny(ReasonInternalError, "the gate cannot read the command line as bash would: %s. %s", w.uncertainWhy, hintSimplify)
+	}
 
 	// Before anything else: changing Claude Code's settings in the
 	// repository, or approving the policy. Even the tool alone could
@@ -64,6 +69,12 @@ func (s *setup) shell(line string) Decision {
 		return allow()
 	}
 	// 2. git printing content git history holds.
+	if w.runtimeWhy != "" {
+		// Code built at run time could run git, and history can always
+		// be reached.
+		return deny(ReasonGitContent, "%s, which could run git printing content; git history cannot be vetted. %s",
+			w.runtimeWhy, hintPlain)
+	}
 	for _, v := range w.views {
 		if v.name == "hub" {
 			// hub runs git with its arguments.
@@ -851,7 +862,11 @@ type walker struct {
 	// tooManyWords is set when brace expansion makes more words than
 	// maxBraceLine in a line.
 	tooManyWords bool
-	ctl          *controls
+	// uncertainWhy says why the gate cannot read the line as bash would
+	// (setUncertain), and runtimeWhy what in it is code built at run time
+	// (setRuntime); "" for none.
+	uncertainWhy, runtimeWhy string
+	ctl                      *controls
 	// probe is set for a walk that judges nothing and only finds the
 	// paths the line touches (adopt.go), with a setup that has no
 	// repository; probed are the paths find, fd, xargs and parallel read
@@ -864,7 +879,7 @@ type walker struct {
 // the working directory st, which cd changes for the commands after it.
 func (w *walker) commands(line string, cmds []simple, st *cwdState, depth int) {
 	if depth > maxDepth {
-		w.setReach(whyTooDeep, hintPlain)
+		w.setUncertain(whyTooDeep)
 		return
 	}
 	w.lines = append(w.lines, line)
@@ -899,17 +914,16 @@ func (w *walker) commands(line string, cmds []simple, st *cwdState, depth int) {
 		if c.uncertain {
 			// The tokenizer did not end the line at the plain top level:
 			// what it runs, and in what order, cannot be told.
-			w.setReach(whyUnclosed, hintPlain)
+			w.setUncertain(whyUnclosed)
 			w.loopy = true
 		}
 		if !c.pipeIn {
 			prev = nil
 		}
 		v := w.simple(c, st, depth)
-		if c.fallback && (judged(v.name) || strings.Contains(line, "$(") || strings.Contains(line, "`")) {
-			// The line did not tokenize: what a reading command reads, or
-			// what a substitution runs, cannot be told.
-			w.setReach("the line has an unbalanced quote or a trailing backslash, so what it reads cannot be told", hintQuotes)
+		if c.fallback {
+			// The line did not tokenize: what it runs cannot be told.
+			w.setUncertain("the line has an unbalanced quote or a trailing backslash, or nests substitutions too deeply")
 		}
 		if c.pipeIn && (shellReadsScript(v) || v.name == "at" || v.name == "batch") {
 			w.pipedScript(prev, v, depth)
@@ -954,7 +968,7 @@ func (w *walker) pipeline(start, stages int) {
 // line reads a nested command line.
 func (w *walker) line(line string, st *cwdState, depth int) {
 	if depth > maxDepth {
-		w.setReach(whyTooDeep, hintPlain)
+		w.setUncertain(whyTooDeep)
 		return
 	}
 	w.commands(line, splitCommands(line), st, depth)
@@ -998,7 +1012,7 @@ func shellReadsScript(v view) bool {
 // arguments of an echo or printf. Anything else is built at run time.
 func (w *walker) pipedScript(prev *simple, v view, depth int) {
 	if prev == nil {
-		w.setReach(whyPipedScript, hintPlain)
+		w.setRuntime(whyPipedScript, hintPlain)
 		return
 	}
 	pv := w.s.viewOf(*prev, v.cwd)
@@ -1018,7 +1032,7 @@ func (w *walker) pipedScript(prev *simple, v view, depth int) {
 		fed = true
 	}
 	if !fed {
-		w.setReach(whyPipedScript, hintPlain)
+		w.setRuntime(whyPipedScript, hintPlain)
 	}
 }
 
@@ -1067,6 +1081,27 @@ func (w *walker) setReach(why, hint string) {
 	}
 }
 
+// setUncertain records that the gate cannot read the line as bash would
+// (an unfinished construct, an unbalanced quote, a line nested too deep):
+// the call is denied outright. It reaches every root too, for the paths
+// adoption takes the line to touch.
+func (w *walker) setUncertain(why string) {
+	w.setReach(why, hintPlain)
+	if w.uncertainWhy == "" {
+		w.uncertainWhy = why
+	}
+}
+
+// setRuntime records that the line runs code built at run time, which
+// could run git printing history: the call is denied with git-content.
+// It reaches every root too.
+func (w *walker) setRuntime(why, hint string) {
+	w.setReach(why, hint)
+	if w.runtimeWhy == "" {
+		w.runtimeWhy = why
+	}
+}
+
 // The triggers that recur.
 const (
 	whyTooDeep     = "a command line is nested more than 4 deep, too deep to follow"
@@ -1090,7 +1125,9 @@ const (
 	hintOther  = "Run the command in bash directly, with its paths written out."
 	hintLister = "Point find or fd away from the protected folders, or exclude them."
 	hintQuotes = "Balance the quotes in the command."
-	hintGit    = "Limit the paths (`-- src`) or use --stat."
+	// hintSimplify ends a refusal for a line the gate cannot read.
+	hintSimplify = "Write the command line plainly, as separate simple commands."
+	hintGit      = "Limit the paths (`-- src`) or use --stat."
 	// hintGitExpand ends a git refusal for an argument the gate cannot
 	// expand.
 	hintGitExpand = "Write git's arguments out in full, without variables or command substitutions."
@@ -1192,7 +1229,7 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 	if readsProgram(v.name, v.rest) && !programShown(c, v) {
 		// python3, node, perl ... reading their program from a pipe, a
 		// file or a process substitution run what the gate cannot read.
-		w.setReach(whyPipedProgram, hintPlain)
+		w.setRuntime(whyPipedProgram, hintPlain)
 	}
 	switch v.name {
 	case "source", ".":
@@ -1252,7 +1289,7 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 		// tmux runs a shell command it is given in a pane; keys sent to a
 		// pane run what the gate cannot follow.
 		if _, command, keys := tmuxCommand(v.rest); keys {
-			w.setReach("tmux sends keys to a pane, which runs a command the gate cannot follow", hintOther)
+			w.setRuntime("tmux sends keys to a pane, which runs a command the gate cannot follow", hintOther)
 		} else if command != "" {
 			w.nested(command, v.restKnown[len(v.restKnown)-1], v.cwd.clone(), depth)
 		}
@@ -1263,13 +1300,13 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 			w.fedScript(c, v, depth)
 		case slices.ContainsFunc(v.rest, func(a string) bool { return strings.HasPrefix(a, "-f") }),
 			slices.ContainsFunc(v.words, func(x xword) bool { return x.redirect && x.input }):
-			w.setReach("at runs commands from a file the gate does not read", hintOther)
+			w.setRuntime("at runs commands from a file the gate does not read", hintOther)
 		}
 	case "pwsh", "powershell", "cmd":
 		// No parser for these: a command string, or a script on the
 		// input, could read anything.
 		if v.pipeIn || len(v.rest) > 0 && !versionOnly(v.rest) {
-			w.setReach("PowerShell or cmd runs a command the gate cannot read", hintOther)
+			w.setRuntime("PowerShell or cmd runs a command the gate cannot read", hintOther)
 		}
 	case "ssh", "su", "runuser", "machinectl", "sshpass":
 		if remoteCommand(v.name, v.rest) || v.pipeIn {
@@ -1587,7 +1624,7 @@ func (w *walker) nested(line string, known bool, st cwdState, depth int) {
 func (w *walker) nestedIn(line string, known bool, st *cwdState, depth int) {
 	if !known {
 		// Built at run time: what it runs cannot be told.
-		w.setReach("a nested command line is built at run time (an expansion in sh -c, eval or the like)", hintPlain)
+		w.setRuntime("a nested command line is built at run time (an expansion in sh -c, eval or the like)", hintPlain)
 	}
 	w.line(line, st, depth+1)
 }

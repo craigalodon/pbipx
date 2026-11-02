@@ -122,12 +122,13 @@ func TestMessagesNameTheTrigger(t *testing.T) {
 			[]string{"a cd, pushd or popd moves a command to a working directory the gate cannot tell"}, hintExpand},
 		{"an unresolvable expansion", sh("cat $SOMEFILE"), gate.ReasonFinding,
 			[]string{"cat is given a word with an expansion the gate cannot resolve"}, hintExpand},
-		{"a line built at run time", sh(`bash -c "$CMD"`), gate.ReasonFinding,
-			[]string{"a nested command line is built at run time"}, hintPlain},
+		{"a line built at run time", sh(`bash -c "$CMD"`), gate.ReasonGitContent,
+			[]string{"a nested command line is built at run time", "which could run git printing content"}, hintPlain},
 		{"find -exec", sh("find . -name '*.json' -exec cat {} +"), gate.ReasonFinding,
 			[]string{"find runs a command on, or reads, the files it finds, in a directory that holds the protected root pbip"}, hintLister},
-		{"an unbalanced quote", sh("cat 'README.md"), gate.ReasonFinding,
-			[]string{"the line has an unbalanced quote or a trailing backslash"}, "Balance the quotes in the command."},
+		{"an unbalanced quote", sh("cat 'README.md"), gate.ReasonInternalError,
+			[]string{"the gate cannot read the command line as bash would: the line has an unbalanced quote"},
+			"Write the command line plainly, as separate simple commands."},
 
 		// git names the subcommand, and the path it would print or what
 		// makes its content unprovable.
