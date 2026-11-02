@@ -213,7 +213,9 @@ const (
 	whyBodyJoin   = "a backslash-newline in an unquoted here-document body changes which line ends it, or splits a $( or a backtick"
 	whyBash52     = "a here-document inside a command substitution has a line that starts with its delimiter, " +
 		"which versions of bash read differently"
-	whyRejoin = "a backslash-newline is left after the lines it joins are joined"
+	whyRejoin        = "a backslash-newline is left after the lines it joins are joined"
+	whySplitRedirect = "a backslash-newline splits a redirection or here-document operator"
+	whyJoinNotCode   = "a backslash-newline the gate took for a join is inside quotes, a comment or a quoted here-document body"
 )
 
 // pendingDoc is a here-document whose body is still to be read.
@@ -676,18 +678,35 @@ func tokenize(line string) (cmds []simple, ok bool) {
 	_, ok = t.run(0, false)
 	if joins := t.sc.memo.joins; len(joins) > 0 {
 		joined := make([]rune, 0, len(rs))
+		doubt := t.sc.memo.joinDoubt
+		// Where each join was, in the joined line: between joined[j-1]
+		// and joined[j].
+		var at []int
 		for k := 0; k < len(rs); k++ {
 			if joins[&rs[k]] {
+				if k > 0 && (rs[k-1] == '<' || rs[k-1] == '>') || k+2 < len(rs) && (rs[k+2] == '<' || rs[k+2] == '>') {
+					// A redirection or here-document operator split: what
+					// follows may be a body bash does not join.
+					doubt = cmp.Or(doubt, whySplitRedirect)
+				}
+				at = append(at, len(joined))
 				k++ // the backslash, then the newline
 				continue
 			}
 			joined = append(joined, rs[k])
 		}
-		doubt := t.sc.memo.joinDoubt
 		t = &tokenizer{rs: joined, sc: newScan()}
 		_, ok = t.run(0, false)
 		if len(t.sc.memo.joins) > 0 {
 			doubt = cmp.Or(doubt, whyRejoin)
+		}
+		// Each join removed must be where the joined line is code: one
+		// inside single quotes, a comment or a quoted here-document body
+		// was not a join (the first reading misread the line).
+		for _, j := range at {
+			if j > 0 && t.sc.memo.notCode[&joined[j-1]] || j < len(joined) && t.sc.memo.notCode[&joined[j]] {
+				doubt = cmp.Or(doubt, whyJoinNotCode)
+			}
 		}
 		if ok && doubt != "" {
 			t.doubt(doubt)
@@ -724,6 +743,10 @@ type scanMemo struct {
 	// removed safely ("" when all can).
 	joins     map[*rune]bool
 	joinDoubt string
+	// notCode marks the runes read as text no join is made in: inside
+	// single quotes and $'...', a comment, a quoted here-document body
+	// with its delimiter line.
+	notCode map[*rune]bool
 }
 
 type scanKey struct {
@@ -745,8 +768,18 @@ type arithResult struct {
 func newScan() lineScan {
 	return lineScan{memo: &scanMemo{
 		subst: map[scanKey]substResult{}, arith: map[scanKey]arithResult{}, brace: map[scanKey]int{},
-		joins: map[*rune]bool{},
+		joins: map[*rune]bool{}, notCode: map[*rune]bool{},
 	}}
+}
+
+// notCode marks rs[from:to] as text bash makes no join in.
+func (sc lineScan) notCode(rs []rune, from, to int) {
+	if sc.memo == nil {
+		return
+	}
+	for k := max(from, 0); k < min(to, len(rs)); k++ {
+		sc.memo.notCode[&rs[k]] = true
+	}
 }
 
 // doubtJoin records that a backslash-newline in a here-document body
@@ -962,9 +995,11 @@ func (t *tokenizer) run(start int, sub bool) (int, bool) {
 				t.lit("#", false)
 				continue
 			}
+			start := i + 1
 			for i+1 < len(rs) && rs[i+1] != '\n' {
 				i++
 			}
+			t.sc.notCode(rs, start, i+1)
 		case '\\':
 			if i+1 >= len(rs) {
 				return 0, false
@@ -983,6 +1018,7 @@ func (t *tokenizer) run(start int, sub bool) (int, bool) {
 				return 0, false
 			}
 			t.lit(string(rs[i+1:end]), true)
+			t.sc.notCode(rs, i+1, end)
 			i = end
 		case '"':
 			end, ok := t.double(i + 1)
@@ -1003,6 +1039,7 @@ func (t *tokenizer) run(start int, sub bool) (int, bool) {
 					return 0, false
 				}
 				t.lit(s, true)
+				t.sc.notCode(rs, i+2, end)
 				i = end
 				continue
 			}
@@ -1108,7 +1145,10 @@ func (t *tokenizer) bodies(i int) int {
 		if !closed {
 			t.doubt(whyUnclosed)
 		}
-		if !p.doc.quoted {
+		if p.doc.quoted {
+			// bash joins nothing in a quoted body.
+			t.sc.notCode(t.rs, i, min(next, len(t.rs)))
+		} else {
 			// bash joins a backslash-newline in an unquoted body.
 			t.bodyJoins(i, next, p)
 		}

@@ -39,6 +39,28 @@ func TestShellContinuations(t *testing.T) {
 	})
 }
 
+// TestShellSplitHeredocOperator: a here-document operator split by a
+// backslash-newline, << after the join, whose quoted body bash does not
+// join: the gate must not take the body's backslash-newline for a join.
+// The finding is in history only; real bash runs the git log.
+func TestShellSplitHeredocOperator(t *testing.T) {
+	root, _ := historyRepo(t)
+	sh := func(cmd string) gate.Event { return gate.Event{Tool: gate.Shell, Command: cmd} }
+	unread := gate.ReasonInternalError
+	body := "\nx\\\nE\ngit log -p -1\nE"
+	run(t, root, []decideCase{
+		{"<\\<nl><'E'", sh("cat <\\\n<'E'" + body), unread},
+		{"<\\<nl><-'E'", sh("cat <\\\n<-'E'" + body), unread},
+		{"<\\<nl><\\E", sh("cat <\\\n<\\E" + body), unread},
+		{"<\\<nl><\"E\"", sh("cat <\\\n<\"E\"" + body), unread},
+		{"nested in bash <<'EOF'", sh("bash <<'EOF'\ncat <\\\n<'E'" + body + "\nEOF"), unread},
+		{"nested in eval", sh("eval 'cat <\\\n<\"E\"" + body + "'"), unread},
+		{"a join in a quoted body read as code first", sh("cat <<'E'\nx\\\nE\ngit log -p -1\nE"), gate.ReasonGitContent},
+		{"a join after a single-quoted word", sh("echo 'a'\\\n && git log --oneline -1"), ""},
+		{"a join in a comment", sh("true # x \\\ngit log --oneline -1"), ""},
+	})
+}
+
 // TestShellUnreadableMessages: each construct the gate cannot read as bash
 // would is named in its own fixed words.
 func TestShellUnreadableMessages(t *testing.T) {
