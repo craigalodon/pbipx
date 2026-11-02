@@ -248,6 +248,11 @@ func TestShellGitHistoryGaps(t *testing.T) {
 		{"an alias for git", sh("alias g=git; g log -p"), git},
 		{"$(echo git log -p) as a command", sh("$(echo git log -p)"), git},
 		{"hash of git alone", sh("hash git; git log --oneline -1"), ""},
+		// A function named like a builtin (F7).
+		{"cd defined, then git log -p", sh("cd() { :; }; git log -p"), git},
+		{"cd defined and used", sh("cd() { git log -p; }; cd x"), git},
+		{"cat defined, then used", sh("cat() { :; }; cat README.md"), git},
+		{"a plain function", sh("f() { git log --oneline -1; }; f"), ""},
 		// Quoted code bash evaluates later (F4).
 		{"test -v of a subscript", sh(`test -v 'a[$(git log -p >&2)]'`), git},
 		{"printf -v of a subscript", sh(`printf -v 'a[$(git log -p >&2)]' x`), git},

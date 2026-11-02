@@ -240,6 +240,19 @@ func (w *walker) unknownProgram(c simple, v view) string {
 	return ""
 }
 
+// modeled reports whether the gate reads a command of that name in a way
+// of its own: a builtin it follows, a wrapper, a reader, a search, a
+// shell, an interpreter, git and the like. A function of that name makes
+// the name stand for another program.
+func modeled(name string) bool {
+	_, wrap := wrappers[name]
+	_, search := searchers[name]
+	_, interp := interpreters[interpreterFamily(name)]
+	return wrap || search || interp || readers[name] || shells[name] || inert[name] || redefiners[name] ||
+		slices.Contains([]string{"cd", "pushd", "popd", "chdir", "git", "hub", "gh", "exec", "read", "test", "[",
+			"find", "fd", "xargs", "trap", "printf", "echo", "type", "builtin", "command"}, name)
+}
+
 // promptVars are the variables bash runs, or expands as code, later: set
 // anywhere in a line, they are code built at run time.
 var promptVars = []string{"PS0", "PS1", "PS2", "PS4", "PROMPT_COMMAND", "BASH_ENV", "ENV", "SHELLOPTS", "BASHOPTS"}
@@ -1301,6 +1314,24 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 	s := w.s
 	v := s.viewOf(c, *st)
 	v.cache = w.cache
+	if c.funcDef {
+		// A function definition's name is no command: it never runs
+		// here (cd() would otherwise move the directory). Its body is
+		// read where it stands. A function named like a program or a
+		// builtin the gate models runs, where it is called, what the gate
+		// cannot tell. The line is unordered: the function runs where it
+		// is called.
+		w.redefines, w.loopy = true, true
+		if len(v.argv) > 0 {
+			if name := progName(v.argv[len(v.argv)-1]); modeled(name) {
+				if w.hashed == nil {
+					w.hashed = map[string]bool{}
+				}
+				w.hashed[name] = true
+			}
+		}
+		return view{cwd: v.cwd}
+	}
 	w.views = append(w.views, v)
 	idx := len(w.views) - 1
 	if redefines(c, v) {

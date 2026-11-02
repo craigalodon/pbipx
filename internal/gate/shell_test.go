@@ -681,6 +681,7 @@ func TestShellTokenizerFailsClosed(t *testing.T) {
 		{"a stray )", shIn("sql", "echo hi )"), gate.ReasonInternalError, gate.ReasonInternalError},
 		// A named descriptor is part of the redirection.
 		{"a named descriptor", shIn("sql", "grep x clean.sql {fd}>/dev/null"), "", ""},
+		{"cd defined, then a search", sh("cd() { :; }; rg ."), "", gate.ReasonFinding},
 		// A function defined after reserved words.
 		{"a function in an if", shIn("sql", "if true; then f() { cat clean.sql; }; fi; git checkout HEAD~1 -- .; f"),
 			gate.ReasonGitContent, gate.ReasonGitContent},
@@ -966,7 +967,7 @@ func TestShellGitMessageText(t *testing.T) {
 	runBoth(t, []both{
 		// cat, or git, may not be the program it names: then a message is
 		// not text.
-		{"cat redefined as a function", sh("cat() { sh; };" + body), "", gate.ReasonFinding},
+		{"cat redefined as a function", sh("cat() { sh; };" + body), gate.ReasonGitContent, gate.ReasonGitContent},
 		{"cat hashed to a shell", sh("hash -p /bin/sh cat;" + body), gate.ReasonGitContent, gate.ReasonGitContent},
 		{"cat aliased to a shell", sh("shopt -s expand_aliases; alias cat=sh;" + body), gate.ReasonGitContent, gate.ReasonGitContent},
 		{"PATH assigned", sh("PATH=/tmp/x:$PATH;" + body), "", gate.ReasonFinding},
