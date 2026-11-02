@@ -749,7 +749,19 @@ path, is denied with `event-error`: the call cannot be judged.
        abbreviation such as `--auth` included), given without `=`, no
        later word is a message. A cluster is still read for the options it
        holds, so `git commit -pm "$(...)"` and `git stash push -pm ...`
-       are denied as interactive hunks. After
+       are denied as interactive hunks. A message that holds an expansion
+       is one only when every expansion in it (`$X`, `${...}`, `$(...)`,
+       backticks, `$1`) is inside double quotes: outside them the shell
+       splits its value into words, which could be options (`--dry-run
+       -v` prints the staged diff). So `git commit -m $X`, `-am $X`,
+       `-m$X`, `--message=$X`, `-m "$X"$Y` and `-m $(cat <<'EOF' ...)`
+       are denied, while `-m "$X"` and `-m "fix: $X done"` are not. In
+       PowerShell the message must likewise be a double-quoted string
+       (`"..."` or a here-string): an unquoted variable, subexpression,
+       group or splat may be an array, passed as several arguments, and
+       an expansion given to `Start-Process -ArgumentList` goes into a
+       command line git splits. This also decides git's message text in
+       rule 3 below. After
        `--` it is a pathspec, and a subcommand that prints content is
        denied without asking git anything with the word unexpanded (the
        stash lookup included), while one that does not

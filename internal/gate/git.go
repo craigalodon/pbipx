@@ -125,11 +125,13 @@ var gitNeverContent = map[string]bool{
 // unknownOption reports whether one of args, sub's words before "--", is
 // one that cannot be told (unknown) and could be an option: any but a
 // message (gitMessageArgs), for a subcommand whose -m takes one (git
-// commit -m "$(cat <<EOF ...)", git commit -am "$MSG").
-func unknownOption(sub string, args, unknown []string) bool {
+// commit -m "$(cat <<EOF ...)", git commit -am "$MSG"). A message holding
+// an expansion the shell splits into words (splits(i) for args[i]: git
+// commit -m $MSG) could hold options too.
+func unknownOption(sub string, args, unknown []string, splits func(int) bool) bool {
 	msg, _ := gitMessageArgs(sub, args)
 	for i, a := range args {
-		if !msg[i] && slices.Contains(unknown, a) {
+		if (!msg[i] || splits(i)) && slices.Contains(unknown, a) {
 			return true
 		}
 	}
@@ -360,7 +362,9 @@ func gitMessageText(c simple) gitMessage {
 	start := len(args) - len(inv.rest)
 	msg, stdin := gitMessageArgs(inv.sub, inv.args)
 	for i, isMsg := range msg {
-		m.words[idx[start+i]] = isMsg
+		// A word the shell splits may be more than the message.
+		w := idx[start+i]
+		m.words[w] = isMsg && !c.words[w].splits
 	}
 	m.docs = stdin
 	// The command substitutions in the words, in order, are c.subs.
@@ -808,7 +812,7 @@ func (g gitDenial) message() string {
 // returns why the command is denied, and nil otherwise. unknown are git's
 // arguments that cannot be told: with any, a subcommand that prints
 // content is denied, as one whose pathspecs are unprovable.
-func (s *setup) gitContent(args, unknown []string) *gitDenial {
+func (s *setup) gitContent(args, unknown []string, splits []bool) *gitDenial {
 	name, rest := program(args)
 	if name != "git" {
 		return nil
@@ -830,6 +834,9 @@ func (s *setup) gitContent(args, unknown []string) *gitDenial {
 		return &gitDenial{inv.sub, "is given a global option the gate cannot expand (a variable or a command substitution), " +
 			"which could be any of them", hintGitExpand}
 	}
+	// The words the line gave after the subcommand end both args and
+	// inv.rest; an alias's expansion goes before them.
+	given := len(inv.rest)
 	inv, why := s.resolveAlias(inv)
 	if why != "" {
 		return &gitDenial{inv.sub, why, "Run the git command the alias stands for, with the paths limited (`-- src`) or --stat."}
@@ -838,7 +845,11 @@ func (s *setup) gitContent(args, unknown []string) *gitDenial {
 		return &gitDenial{inv.sub, inv.unsafeWhy, "Drop that global option, or use --stat."}
 	}
 	inv.unknown = len(unknown) > 0
-	if !gitNeverContent[inv.sub] && unknownOption(inv.sub, inv.args, unknown) {
+	if !gitNeverContent[inv.sub] && unknownOption(inv.sub, inv.args, unknown, func(i int) bool {
+		fromEnd := len(inv.rest) - i
+		j := len(args) - fromEnd
+		return fromEnd <= given && j >= 0 && j < len(splits) && splits[j]
+	}) {
 		// Before "--" a word that cannot be told could be an option that
 		// turns content on: -p, -v, --cc, a stash or reflog subcommand.
 		return &gitDenial{inv.sub, "is given, before --, an argument the gate cannot expand " +

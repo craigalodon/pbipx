@@ -33,6 +33,9 @@ type part struct {
 	// quoted is true for literal text that was quoted or escaped, where a
 	// glob character is literal.
 	quoted bool
+	// inDouble is true for an expansion inside double quotes, which the
+	// shell does not split into words.
+	inDouble bool
 }
 
 // word is one word of a simple command, with its quotes removed.
@@ -43,6 +46,10 @@ type word struct {
 	parts []part
 	// quoted is true when any part of the word was quoted or escaped.
 	quoted bool
+	// splits is true when an expansion in the word ($X, ${X}, $(...),
+	// backticks, $1) is outside double quotes: the shell splits its value
+	// into words, so the word may become several arguments.
+	splits bool
 	// redirect is true for a redirection's target, which is not an
 	// argument of the command.
 	redirect bool
@@ -130,6 +137,8 @@ type tokenizer struct {
 	litBuf    strings.Builder
 	litOpen   bool
 	litQuoted bool
+	// inDouble is set while a double-quoted string is read.
+	inDouble bool
 	// pending are the here-documents whose bodies start after the next
 	// newline.
 	pending []pendingDoc
@@ -168,7 +177,7 @@ func (t *tokenizer) expansion(kind partKind, text, raw string) {
 	t.inWord = true
 	t.raw.WriteString(raw)
 	t.flushLit()
-	t.parts = append(t.parts, part{kind: kind, text: text, raw: raw})
+	t.parts = append(t.parts, part{kind: kind, text: text, raw: raw, inDouble: t.inDouble})
 }
 
 // dropWord forgets the word being read.
@@ -183,8 +192,11 @@ func (t *tokenizer) dropWord() {
 func (t *tokenizer) endWord() {
 	t.flushLit()
 	if t.inWord {
+		splits := slices.ContainsFunc(t.parts, func(p part) bool {
+			return (p.kind == paramPart || p.kind == opaquePart) && !p.inDouble
+		})
 		t.cur.words = append(t.cur.words, word{
-			text: t.raw.String(), parts: t.parts, quoted: t.quoted,
+			text: t.raw.String(), parts: t.parts, quoted: t.quoted, splits: splits,
 			redirect: t.redirect, input: t.redirect && t.input, here: t.redirect && t.here,
 		})
 		t.redirect, t.input, t.here = false, false, false
@@ -507,6 +519,8 @@ func bodySubs(rs []rune) []string {
 func (t *tokenizer) double(i int) (int, bool) {
 	rs := t.rs
 	t.lit("", true)
+	t.inDouble = true
+	defer func() { t.inDouble = false }()
 	for ; i < len(rs); i++ {
 		switch rs[i] {
 		case '"':
@@ -790,10 +804,12 @@ func splitFields(line string) []simple {
 		f.Reset()
 		quoted := strings.ContainsAny(w, `'"\`)
 		parts := []part{{kind: litPart, text: w, quoted: quoted}}
-		if strings.ContainsAny(w, "$`") {
+		splits := strings.ContainsAny(w, "$`")
+		if splits {
+			// Where the quotes are cannot be told: it may split.
 			parts = append(parts, part{kind: opaquePart, raw: ""})
 		}
-		cur.words = append(cur.words, word{text: w, parts: parts, quoted: quoted})
+		cur.words = append(cur.words, word{text: w, parts: parts, quoted: quoted, splits: splits})
 	}
 	endCommand := func(nextPipe bool) {
 		endWord()

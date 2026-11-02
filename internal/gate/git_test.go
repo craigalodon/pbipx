@@ -269,6 +269,20 @@ func TestShellGitUnknownWords(t *testing.T) {
 		{"commit -m of a substitution", sh("git commit -m \"$(cat <<'EOF'\nA message\nEOF\n)\""), ""},
 		{"commit --message= of a variable", sh(`git commit --message="$MSG"`), ""},
 		{"stash push -m of a variable", sh(`git stash push -m "$MSG"`), ""},
+		// An expansion outside double quotes is split into words, which
+		// could be options: such a message is not one.
+		{"commit -m of an unquoted variable", sh(`git commit -m $X`), git},
+		{"commit -am of an unquoted variable", sh(`git commit -am $X`), git},
+		{"commit -m with an unquoted variable attached", sh(`git commit -m$X`), git},
+		{"commit --message= of an unquoted variable", sh(`git commit --message=$X`), git},
+		{"commit -m of an unquoted substitution", sh("git commit -m $(cat <<'EOF'\nA message\nEOF\n)"), git},
+		{"commit -m of a backtick substitution unquoted", sh("git commit -m `cat msg.txt`"), git},
+		{"commit -m with one unquoted part", sh(`git commit -m "$X"$Y`), git},
+		{"commit -m of an unquoted parameter operator", sh(`git commit -m ${X:-x}`), git},
+		{"commit -m of a positional parameter", sh(`git commit -m $1`), git},
+		{"commit -m of a variable within text", sh(`git commit -m "fix: $X done"`), ""},
+		{"commit -m of a literal", sh(`git commit -m 'literal'`), ""},
+		{"commit -m of $\"...\"", sh(`git commit -m $"$X"`), ""},
 		// -m clustered after short options that take no value.
 		{"commit -am of a substitution", sh("git commit -am \"$(cat <<'EOF'\nA message\nEOF\n)\""), ""},
 		{"commit -sm of a substitution", sh("git commit -sm \"$(cat <<'EOF'\nA message\nEOF\n)\""), ""},

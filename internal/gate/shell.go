@@ -386,9 +386,11 @@ type xword struct {
 type view struct {
 	words []xword
 	// argv are the expanded arguments, redirection targets left out and
-	// leading reserved words stripped; argvKnown says which are known.
-	argv      []string
-	argvKnown []bool
+	// leading reserved words stripped; argvKnown says which are known,
+	// argvSplits which hold an expansion the shell splits into words.
+	argv       []string
+	argvKnown  []bool
+	argvSplits []bool
 	// name is the command run, rest its arguments and under the wrappers
 	// it runs under (command); restKnown says which of rest are known.
 	name      string
@@ -723,7 +725,7 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 func (s *setup) viewOf(c simple, st cwdState) view {
 	v := view{cwd: st.clone(), pipeIn: c.pipeIn}
 	var args []string
-	var known []bool
+	var known, splits []bool
 	msg := gitMessageText(c)
 	for i, wd := range c.words {
 		xw := s.expandWord(wd, v.cwd)
@@ -732,10 +734,12 @@ func (s *setup) viewOf(c simple, st cwdState) view {
 		if !xw.redirect {
 			args = append(args, xw.text)
 			known = append(known, xw.known)
+			splits = append(splits, wd.splits)
 		}
 	}
 	v.argv = stripKeywords(args)
 	v.argvKnown = known[len(known)-len(v.argv):]
+	v.argvSplits = splits[len(splits)-len(v.argv):]
 	v.name, v.rest, v.under = command(v.argv)
 	v.restKnown = v.argvKnown[len(v.argvKnown)-len(v.rest):]
 	return v
@@ -1806,7 +1810,7 @@ func (s *setup) gitRule(v view) *gitDenial {
 	for _, d := range dirs {
 		in := *s
 		in.cwd = d
-		if g := in.gitContent(v.argv, unknown); g != nil {
+		if g := in.gitContent(v.argv, unknown, v.argvSplits); g != nil {
 			return g
 		}
 	}
