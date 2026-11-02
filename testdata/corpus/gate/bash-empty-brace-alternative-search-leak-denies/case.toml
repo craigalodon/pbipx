@@ -1,0 +1,7 @@
+description = "bash drops a word brace expansion leaves empty: {rg,} Jane is rg Jane, a search of the working directory, which reaches the protected root, so the tree is scanned and its finding denies"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
+known       = "predecessor"

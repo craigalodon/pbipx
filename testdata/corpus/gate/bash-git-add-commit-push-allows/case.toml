@@ -1,6 +1,7 @@
-description = "git add, commit with a message and push change the index and HEAD, but nothing after them prints file content, so the line is allowed. Plants no value"
+description = "git add, commit with a message and push change the index and HEAD, but none of them prints file content, so the line is allowed: here with an untracked note outside the protected roots that holds a person's name, which git add stages. A finding under a root would not change this: nothing in the line prints it"
 command     = "gate"
 args        = []
 policy      = "default"
 exit        = 0
-sentinels   = []
+sentinels   = ["Doe, Jane"]
+untracked   = ["notes/meeting.md"]

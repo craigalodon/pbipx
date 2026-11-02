@@ -1,4 +1,4 @@
-description = "case W in given to echo opens no case: the subshell after it is a command, whose cat of a file under the protected root is judged, so the tree is scanned and its finding denies"
+description = "case W in given to echo opens no case: the subshell after it is a command, whose recursive grep of the working directory reaches the protected root, so the tree is scanned and its finding denies. The line does not name the root"
 command     = "gate"
 args        = []
 policy      = "default"

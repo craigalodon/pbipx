@@ -3,6 +3,6 @@
   "cwd": "{root}",
   "tool_name": "Bash",
   "tool_input": {
-    "command": "echo case x in; (cat pbip/Example.Report/definition/pages/0000/visuals/0001/visual.json)"
+    "command": "echo case x in; (grep -r x .)"
   }
 }

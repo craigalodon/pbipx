@@ -1,0 +1,7 @@
+description = "a ) inside ${...} inside $(...) does not end the substitution: the recursive grep after it runs inside it and reaches the protected root, so the tree is scanned and its finding denies"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
+known       = "predecessor"
