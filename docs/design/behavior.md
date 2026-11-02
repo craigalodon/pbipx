@@ -465,7 +465,7 @@ repositories a call is the gate's to judge
   the working directory alone does not reach below itself. When the call
   touches something that cannot be placed (the shell rule's "touches
   every root": a working directory that cannot be told, a reading
-  command's word that cannot be placed, a line nested too deeply or built
+  command's word that cannot be placed, a line built
   at run time), every indexed work tree counts. The repositories that hold
   the working directory are judged first, innermost first; any deny wins.
 - A call that touches **no adopted repository** is allowed: in a
@@ -653,19 +653,32 @@ path, is denied with `event-error`: the call cannot be judged.
     substitutions, comments, here-documents and case patterns. Inside
     arithmetic (`((...))`, `$((...))`, `$[...]`) `<<` is a shift, not a
     here-document, and only the substitutions in it run. In a case
-    pattern `|` separates patterns, and a pattern's `)` closes nothing;
-  - the tokenizer fails closed on its own uncertainty: a line it does not
+    pattern `|` separates patterns, and a pattern's `)` closes nothing.
+    Each nested construct is read once, whatever reader tries it first
+    (an arithmetic expression that turns out to be a subshell): the ends
+    found are remembered for the line, so reading it takes time linear in
+    its length (200 nested `$((` read at once);
+  - a carriage return is part of a word, as in bash (`git log -p\r` gives
+    git the word `-p\r`), not a blank; a backslash-newline joins the lines
+    it splits, as bash joins them, inside a word or between words;
+  - the tokenizer fails closed on its own uncertainty. A line it does not
     end at the plain top level (a `case` or a parenthesis left open, a
     case pattern being read, a here-document left open, a `)` that closes
-    nothing, a delimiter as above) touches every protected root and is
-    unordered (rule 2). A differential test runs generated lines under
-    real bash with stub programs and checks that the gate denies every
-    one in which bash runs a dangerous command;
-  - with unbalanced quotes or a trailing backslash, the line is split on
-    whitespace, at newlines and at `;`, `&`, `|`, `(` and `)` whether or
-    not a space sets them apart, quotes kept as written. A reading or
-    searching command in such a line, or any `$(` or backtick in it,
-    counts as touching every protected root;
+    nothing, a delimiter as above), one with unbalanced quotes or a
+    trailing backslash, one nested more than four deep, a backslash-newline
+    next to an operator or a `$` (`&\<newline>&`, `$\<newline>(`), a
+    here-document delimiter that holds `$`, a backtick or a newline, an
+    unquoted here-document body with a backslash-newline, and a
+    here-document inside a command substitution with a line that starts
+    with its delimiter (bash 5.2 ends the body there, later versions do
+    not) are lines the gate cannot read as bash would. Such a line is
+    denied outright with `internal-error`, with a fixed message saying so
+    and asking for the command line written plainly, as separate simple
+    commands; nothing in it is judged in part and no tree is scanned.
+    (Decided 2026-11-02.) A differential test runs generated lines under
+    real bash with stub programs, in repositories whose finding is in the
+    working tree, in history only, and staged only, and checks that the
+    gate denies every one in which bash runs a dangerous command;
   - a program is known by the last element of its path, without a
     trailing `.exe` in any case, as Windows, Git Bash and WSL run it:
     `rg.exe`, `/usr/bin/rg.exe` and `git.exe` are `rg` and `git`. Its case
@@ -679,7 +692,14 @@ path, is denied with `event-error`: the call cannot be judged.
     `caffeinate`, `unbuffer`, `chronic`, `taskset`, `flock`, `coproc`,
     `busybox`, `xvfb-run` and a few tracers and sandboxes. Their long
     options that take a value given apart (`timeout --signal KILL 5`) are
-    read as such. `command -v` and `-V` run nothing. Any other program,
+    read as such. `time` and `coproc` are followed by the reserved words
+    after them, as bash reads them (`time { git log -p; }`, `time -p !
+    cmd`, `time function f { ...; }`). git run by `xargs` or `parallel`,
+    and git under `find -exec` given `{}`, `{/}` or `{.}`, is given words
+    the line does not show: they are unknown words of git's, which rule 2
+    denies wherever an unknown word could be an option (`echo -p | xargs
+    git log`; `xargs git push` stays allowed). `command -v` and `-V` run
+    nothing. Any other program,
     unless it is one known never to run its words (`echo`, `which`, `man`,
     package managers and the like), whose first word that is not an option
     is a reader, a search, git, `find`, `fd`, a shell or `eval`, is judged
@@ -695,15 +715,39 @@ path, is denied with `event-error`: the call cannot be judged.
     shell reads from a here-document, a here-string (`<<<`), `source
     /dev/stdin`, or a pipe from a here-document, a here-string, `echo` or
     `printf`; a shell reading any other pipe runs a script built at run
-    time. A deeper line, or one whose text is built at run time
-    (`bash -c "$CMD"`, an unquoted here-document with an expansion), counts
-    as touching every protected root. `eval`'s `cd` moves the line after
-    it; the others' does not;
+    time. A deeper line is one the gate cannot read (above). `eval`'s `cd`
+    moves the line after it; the others' does not;
+  - code built at run time is code the gate cannot see, and it could run
+    git printing history, which no tree scan covers: a line holding any
+    is denied with `git-content` (and touches every protected root). It
+    is a nested line whose text is not literal (`bash -c "$CMD"`, `eval
+    "$x"`, an unquoted here-document with an expansion fed to a shell),
+    a shell or interpreter reading a pipe or input built at run time,
+    `source` or `.` of a process substitution, `/dev/fd/N` or a pipe
+    (`source` and `.` alike), a command word the gate cannot expand or
+    that holds a glob, from the first word to the program's (`$(which
+    git) log -p`, `${GIT:-git} log -p`, `$g diff`, `/usr/bin/gi? log`),
+    a name that `hash -p` or `alias` made stand for another program, a
+    function named as a program the gate models (`cd() { ...; }`, `cat()
+    { ...; }`; a function definition's name is never run as a command),
+    quoted code that bash evaluates later (a quoted `$(`, backtick or
+    `${` in a line that also has an array subscript or name read by `test
+    -v`, `[[ -v`, `printf -v`, `read`, `mapfile`, `declare -n`, `let` or
+    `unset`, arithmetic naming a variable, `((...))` with a name, or a
+    `${x@P}` or `${x@E}` expansion), setting a variable whose value bash
+    runs later (`PS0`, `PS1`, `PS2`, `PS4`, `PROMPT_COMMAND`, `BASH_ENV`,
+    `ENV`, `SHELLOPTS`, `BASHOPTS`, after reserved words such as `time`
+    and under a wrapper such as `env` included), `tmux send-keys`, `at
+    -f`, and `pwsh`, `powershell` or `cmd` running a command. **Known
+    over-block:** `eval "$(pyenv init -)"` and the like, whose code is a
+    tool's output, deny; run the tool's setup outside the agent's
+    commands. (Decided 2026-11-02.)
   - there is no parser for PowerShell or `cmd`: `pwsh`, `powershell` or
     `cmd` with any argument but a version or help request, or reading a
-    pipe, counts as touching every protected root. So do `ssh` with a
-    command after the host or reading a pipe, `su` or `runuser` with a
-    command, and `machinectl shell`.
+    pipe, counts as touching every protected root, and running a command
+    as code built at run time (above). `ssh` with a command after the
+    host or reading a pipe, `su` or `runuser` with a command, and
+    `machinectl shell` touch every protected root.
   1. The tool itself alone (one simple command, optionally after environment
      assignments, with no `$(` or backtick) is allowed: it redacts on its own.
      `policy approve` is never the tool alone (below).
@@ -937,22 +981,37 @@ path, is denied with `event-error`: the call cannot be judged.
      `hash`, `PATH` and the like); a filter given a file, and the
      substitutions an unquoted body runs, still read.
 
-     git's own reads are judged by rule 2, against the index and HEAD as
-     they are before the line runs. So a git command that changes the
-     index or HEAD (`add`, `rm`, `mv`, `commit`, `stash` but `list` and
-     `show`, `cherry-pick`, `revert`, `apply --index`/`--cached`/`--3way`,
-     `update-index`, `read-tree`, `reset`, `restore`, `update-ref`,
-     `merge`, `rebase`, `pull`, `am`, `checkout`, `switch` but a branch
-     created at HEAD, `notes` but `list` and `show`, `symbolic-ref`
-     setting or deleting a ref (one name alone, with `-q` or `--short`,
-     reads), `replace` but its list, `fetch --update-head-ok`, `branch`
-     with `-f`, `-C` or `-M`, `gh pr checkout`, `gh repo sync`, `gh repo
-     clone` and hub's tree-changing git commands, a subcommand that is
-     not git's own, and every tree change) makes any later git command in
-     the line that could print file content given its arguments deny with
-     `git-content` (`git add -A && git diff --cached`, `git add -A && git
-     commit -qm wip && git show`, `git add -A && git stash && git stash
-     show -p`); in an unordered line, any such command anywhere. "Later"
+     git's own reads are judged by rule 2, against the repository (its
+     index, HEAD, refs, configuration and objects) as it is before the
+     line runs. So every git command that is not known to be read-only
+     makes any later git command in the line that could print file
+     content given its arguments deny with `git-content` (`git add -A &&
+     git diff --cached`, `git add -A && git commit -qm wip && git show`,
+     `git add -A && git stash && git stash show -p`, `git tag -f main
+     <tree> && git diff --cached main`, `git fetch && git diff --cached`);
+     in an unordered line, any such command anywhere. The read-only git
+     commands are an allowlist: `status`, `log`, `show`, `diff` and
+     `whatchanged` without `--output`, `rev-parse`, `rev-list`,
+     `ls-files`, `ls-tree`, `ls-remote`, `cat-file`, `describe`,
+     `merge-base`, `name-rev`, `for-each-ref`, `show-ref`, `show-branch`,
+     `count-objects`, `version`, `help`, `var`, `check-ignore`,
+     `check-attr`, `check-ref-format`, `check-mailmap`, `blame`,
+     `annotate`, `cherry`, `diff-tree`, `diff-index`, `diff-files`,
+     `verify-commit`, `verify-tag`, `shortlog`, `range-diff`, `grep`
+     without `-O`, `stash list` and `show`, `notes list` and `show`,
+     `worktree list`, `reflog` (but `expire`, `delete` and the like),
+     `config` only reading, `branch` and `tag` listing (no name but with
+     `--list`, and none of the options that create, move or delete one),
+     `remote` with no subcommand, `show` or `get-url`, `symbolic-ref`
+     with one name and no `-d`, and `replace` with nothing or `--list`;
+     `checkout -b` and `switch -c` creating a branch at HEAD change
+     nothing a later command prints. Every other git command, an alias, a
+     subcommand that is not git's own, an ambiguous abbreviation, `gh pr
+     checkout`, `gh repo sync`, `gh repo clone` and hub's tree-changing
+     git commands count as a change. **Known over-block:** `git fetch &&
+     git diff --cached`, or `git branch --contains X && git diff`,
+     deny, though the first command moves nothing the second reads.
+     (Decided 2026-11-02.) "Later"
      follows the order commands run in: a command's own substitutions
      before it. A git command that prints no file content whatever the
      files hold (`git push`, `git commit -m msg`, `git status` without
@@ -963,7 +1022,7 @@ path, is denied with `event-error`: the call cannot be judged.
      The tokenizer fails closed on its own uncertainty: a line that does
      not end at the plain top level (a `case` left open, a case pattern
      being read, a parenthesis left open, a here-document whose delimiter
-     line never comes) touches every protected root and is unordered. A
+     line never comes) is denied with `internal-error` (above). A
      `case` is opened only by `case WORD in` as a command (after any
      reserved words), so `echo case x in` opens none, and closed by `esac`
      as a command word or right after `in`; a case pattern's `)` closes
@@ -985,7 +1044,11 @@ path, is denied with `event-error`: the call cannot be judged.
        working directory, judged for the commands after it, and reads
        nothing: `cd ..` is not a read of the root it holds; nor the
        first operand of `jq`, `yq` or `gojq`, its filter, unless `-f`
-       gives the filter: `jq . package.json` reads package.json). That
+       gives the filter: `jq . package.json` reads package.json; the
+       values of its options, `--arg NAME VALUE`, `-L DIR` and the like,
+       are not the filter, and are placed as any word. A filter that holds
+       `import` or `include` reads modules from its search path, so the
+       working directory counts as read too). That
        includes the value of a `--flag=value`, what an unquoted
        glob matches, and for a word with `**` (which zsh, and bash with
        `globstar`, read as any depth) everything under its literal prefix.
@@ -1009,7 +1072,7 @@ path, is denied with `event-error`: the call cannot be judged.
        `--base-directory`; default `.`) that touches a root, as for `find`;
        the command it runs is judged as a command of its own. `fd` alone
        prints names, which are schema;
-     - a nested line is too deep or built at run time.
+     - a nested line is built at run time.
 
      A root's name is compared without regard to case in these tests, on
      every platform: they only decide whether the real roots are scanned.
@@ -1077,7 +1140,10 @@ path, is denied with `event-error`: the call cannot be judged.
      a file it reads, `--body-file` or `--input`, is placed as any word;
      `gh pr checkout`, `repo sync` and `repo clone` change the tree, and
      `gh pr diff` prints a remote patch, which denies with `git-content`
-     unless `--name-only` is given; `hub` is judged as git. **Known
+     unless `--name-only` is given; gh's command group is found after
+     its options, `gh -R owner/repo pr diff` included; `hub` is judged as
+     git, its subcommand found as git's and never taken for a program it
+     wraps (`hub log -p`, `hub grep`). **Known
      limitation:** other remote content gh prints, `gh api` of a
      `/contents/` or `/raw/` path, `gh gist view` and `gh run view
      --log`, is not judged),
@@ -1376,7 +1442,7 @@ hint of what to do instead:
   directory is in a root, a `cd` moves a command into one, a word names
   a path that is in or holds one, the line names a root, a word has an
   expansion the gate cannot resolve, the working directory cannot be
-  told, a line is built at run time or nested too deep, `find`, `fd` or
+  told, a line is built at run time, `find`, `fd` or
   `xargs` read under a root, or a program the gate cannot read
   (PowerShell, `ssh`) runs a command;
 - a search taken to be recursive says why: the option, printed from the
@@ -1391,7 +1457,14 @@ hint of what to do instead:
   argument the gate cannot expand, what it is in fixed words: "a
   variable or a command substitution", "a brace expansion of more than
   64 words", or "a message word with a glob outside quotes";
-- a read after a tree change names the command that changes the tree.
+- a read after a tree change names the command that changes the tree,
+  and a content-printing git command after a git command not known to be
+  read-only names that command;
+- code built at run time denies with `git-content` and says, in fixed
+  words, what in the line is built at run time;
+- a line the gate cannot read as bash would denies with `internal-error`,
+  says which construct in fixed words, and ends with "Write the command
+  line plainly, as separate simple commands."
 
 Programs are named only when they are in the gate's tables (a reader, a
 search, `git`'s own subcommands); a root is named from the policy. The
