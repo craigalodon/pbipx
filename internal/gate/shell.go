@@ -502,21 +502,40 @@ func jqFilter(v view) int {
 		}
 	}
 	start := len(args) - len(v.rest)
-	for j, a := range v.rest {
-		if a == "--" {
-			if j+1 < len(v.rest) {
-				return args[start+j+1]
-			}
-			return -1
+	at := func(j int) int {
+		if start+j >= 0 && start+j < len(args) {
+			return args[start+j]
 		}
-		if !strings.HasPrefix(a, "-") || a == "-" {
-			if start+j >= 0 && start+j < len(args) {
-				return args[start+j]
-			}
-			return -1
+		return -1
+	}
+	for j := 0; j < len(v.rest); j++ {
+		a := v.rest[j]
+		switch {
+		case a == "--":
+			return at(j + 1)
+		case !strings.HasPrefix(a, "-") || a == "-":
+			return at(j)
+		case !strings.Contains(a, "="):
+			// The values of jq's options are not its filter.
+			j += jqOptionValues[a]
 		}
 	}
 	return -1
+}
+
+// jqOptionValues are how many words jq's (and gojq's and yq's) options
+// that take values take after them.
+var jqOptionValues = map[string]int{
+	"-L": 1, "--arg": 2, "--argjson": 2, "--slurpfile": 2, "--rawfile": 2, "--indent": 1,
+	"--from-file": 1, "-f": 1, "--seq": 0, "--library-path": 1,
+}
+
+// jqImports reports whether jq's filter in v imports or includes modules,
+// which jq reads from the paths -L names (placed as any word) or from its
+// search path: the working directory is then read too.
+func jqImports(v view, filter int) bool {
+	return filter >= 0 && filter < len(v.words) &&
+		(strings.Contains(v.words[filter].text, "import") || strings.Contains(v.words[filter].text, "include"))
 }
 
 // asGit is v, a hub command, as the git command hub runs.
@@ -2868,6 +2887,10 @@ func (w *walker) reaches() trigger {
 		}
 		if where := touched(sc.operands); where != "" {
 			return trigger{v.name + " searches a path that " + where, hintSearch}
+		}
+		if where := touched([]string{"."}); jqImports(v, jqFilter(v)) && where != "" {
+			return trigger{v.name + " imports modules, which it can read from its working directory, and the working directory " +
+				where, hintNames}
 		}
 		if where := touched([]string{"."}); sc.widen != "" && where != "" {
 			return trigger{v.name + " is taken to search its working directory recursively (" + sc.widen +

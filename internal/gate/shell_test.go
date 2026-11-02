@@ -740,6 +740,12 @@ func TestShellOrderAndScope(t *testing.T) {
 		{"yq . of a file", sh("yq . x.yml"), "", ""},
 		{"jq of a file in the root", sh("jq . pbip/x.json"), "", gate.ReasonFinding},
 		{"jq -f with . as a path", sh("jq -f prog.jq ."), "", gate.ReasonFinding},
+		{"jq -L of a glob into the root, importing",
+			sh(`jq -L p*/*/*/*/*/*/0001 -n 'import "visual" as $v; $v'`), "", gate.ReasonFinding},
+		{"jq importing from its working directory", sh(`jq -n 'import "visual" as $v; $v'`), "", gate.ReasonFinding},
+		{"jq --arg values are not the filter", sh(`jq --arg x pbip '.' package.json`), "", gate.ReasonFinding},
+		{"jq --slurpfile of a file in the root", sh(`jq --slurpfile v pbip/x.json -n '$v'`), "", gate.ReasonFinding},
+		{"jq --arg of a plain value", shIn("sql", `jq --arg x y '.' clean.json`), "", ""},
 		// A cd target moves the working directory and reads nothing.
 		{"cd up after a build", shIn("sql", "cd ../notes && go build ./... && cd .."), "", ""},
 		{"cd into the root, then a build", sh("cd pbip && make"), "", gate.ReasonFinding},
