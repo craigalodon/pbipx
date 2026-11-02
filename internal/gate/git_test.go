@@ -236,6 +236,7 @@ func TestShellGitHistoryGaps(t *testing.T) {
 		{"log of a brace list away from the roots", sh("git log -p -- {README.md,notes}"), ""},
 		{"log of more brace words than the gate expands", sh("git log --oneline x{1..100}"), git},
 		{"log of an invalid brace", sh("git log --oneline {a}"), ""},
+		{"case words echoed, then git log -p", sh("echo case x in; (git log -p)"), git},
 	})
 }
 
@@ -295,6 +296,18 @@ func TestShellGitAbbreviations(t *testing.T) {
 		{"-m -- -p", sh("git commit -m -- -p"), git},
 		{"-- after a message", sh("git commit --dry-run -m msg -- -v"), ""},
 		// The short and porcelain formats print no diff with -v.
+		{"case words echoed, then git diff --cached", sh("echo case x in; (git diff --cached)"), git},
+		// A format negated, or -u's value, is no short format.
+		{"status -v -ufalse", sh("git status -v -ufalse"), git},
+		{"status -v -uno", sh("git status -v -uno"), git},
+		{"status -s --no-short -v", sh("git status -s --no-short -v"), git},
+		{"status --porcelain --no-porcelain -v", sh("git status --porcelain --no-porcelain -v"), git},
+		{"status -v -z --no-null", sh("git status -v -z --no-null"), git},
+		{"status --porcelain --no-po -v", sh("git status --porcelain --no-po -v"), git},
+		{"commit -v --short --dry-run --no-short", sh("git commit -v --short --dry-run --no-short"), git},
+		{"status --no-short --short -v", sh("git status --no-short --short -v"), ""},
+		{"status --short -v, PowerShell", ps("git status --short -v"), ""},
+		{"status -s --no-short -v, PowerShell", ps("git status -s --no-short -v"), git},
 		{"status --short -v", sh("git status --short -v"), ""},
 		{"status -s -v", sh("git status -sv"), ""},
 		{"status --porcelain -v", sh("git status --porcelain -v"), ""},

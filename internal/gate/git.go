@@ -2023,27 +2023,55 @@ func verbosity(args []string, withValue string) int {
 }
 
 // shortFormat reports whether git status (status true) or git commit's
-// dry run prints the short or porcelain format, which shows no diff
-// whatever -v says: the last of --short, --porcelain[=v1|v2] and --long
-// given decides, and for status -s and -z (alone or in a cluster) and
-// --null are short formats too.
-// With none given, it is the long format (a configured status.short is
-// not read: the gate errs towards the diff).
+// dry run prints the short or porcelain format, or NUL-terminated output,
+// none of which shows a diff whatever -v says (checked with git 2.53).
+// The options are read in order, as git reads them: --short (status -s)
+// and --porcelain[=v1|v2] set a short format, --long the long one, and a
+// negation (--no-short, --no-porcelain, --no-long) none; -z or --null
+// turns NUL-terminated output on and --no-null off. Short options are read
+// in clusters up to a letter that takes a value (status -u<mode>, commit
+// -m, -F, -c, -C, -t, -S, -u), whose rest is that value. With nothing
+// given it is the long format: a configured status.short is not read, so
+// the gate errs towards the diff.
 func shortFormat(args []string, status bool) bool {
-	short := false
+	short, null := false, false
+	stopAt := "mFcCtSu" // commit's letters that take a value
+	if status {
+		stopAt = "u"
+	}
 	for _, a := range args {
 		name, _, _ := strings.Cut(a, "=")
-		switch {
-		case name == "--short" || name == "--porcelain":
+		switch name {
+		case "--short", "--porcelain":
 			short = true
-		case name == "--long":
+			continue
+		case "--long", "--no-short", "--no-porcelain", "--no-long":
 			short = false
-		case status && name == "--null",
-			status && len(a) > 1 && a[0] == '-' && a[1] != '-' && strings.ContainsAny(a[1:], "sz"):
-			short = true
+			continue
+		case "--null":
+			null = true
+			continue
+		case "--no-null":
+			null = false
+			continue
+		}
+		if len(a) < 2 || a[0] != '-' || a[1] == '-' {
+			continue
+		}
+		for j := 1; j < len(a); j++ {
+			c := a[j]
+			if strings.IndexByte(stopAt, c) >= 0 {
+				break
+			}
+			switch {
+			case c == 's' && status:
+				short = true
+			case c == 'z':
+				null = true
+			}
 		}
 	}
-	return short
+	return short || null
 }
 
 // commitVerbosity is how verbose git commit is: -v counted, or with no

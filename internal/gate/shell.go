@@ -623,6 +623,12 @@ func (w *walker) commands(line string, cmds []simple, st *cwdState, depth int) {
 			w.tooManyWords = true
 			return
 		}
+		if c.uncertain {
+			// The tokenizer did not end the line at the plain top level:
+			// what it runs, and in what order, cannot be told.
+			w.setReach(whyUnclosed, hintPlain)
+			w.loopy = true
+		}
 		if !c.pipeIn {
 			prev = nil
 		}
@@ -770,6 +776,9 @@ func (w *walker) setReach(why, hint string) {
 const (
 	whyTooDeep     = "a command line is nested more than 4 deep, too deep to follow"
 	whyPipedScript = "a shell reads its script from a pipe whose content is built at run time"
+	// whyUnclosed is the trigger for a line the gate does not read to its
+	// end: what it runs cannot be told.
+	whyUnclosed = "the command line leaves a case, a parenthesis or a here-document open, so what it runs cannot be told"
 	// whyPipedProgram is the trigger for a script interpreter reading its
 	// program from its input.
 	whyPipedProgram = "a script interpreter (python, node, perl and the like) reads its program from its input, " +

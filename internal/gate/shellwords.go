@@ -100,6 +100,9 @@ type simple struct {
 	overflow bool
 	// background is set for a command run in the background (cmd &).
 	background bool
+	// uncertain is set on every command of a line the tokenizer did not
+	// end at the plain top level: what it runs cannot be told.
+	uncertain bool
 	// procSub is true for a command inside a process substitution,
 	// <(...) or >(...), which starts before or alongside the command it
 	// is given to.
@@ -168,6 +171,9 @@ type tokenizer struct {
 	// closes no parenthesis.
 	cases       int
 	casePattern bool
+	// uncertain is set when the tokenizer cannot be sure what the line
+	// runs (a here-document never closed).
+	uncertain bool
 }
 
 // pendingDoc is a here-document whose body is still to be read.
@@ -549,20 +555,35 @@ func (t *tokenizer) caseWord() {
 	last := ws[len(ws)-1]
 	switch {
 	case last.quoted:
-	case last.text == "esac" && len(ws) == 1 && t.cases > 0:
+	case last.text == "esac" && t.cases > 0 &&
+		(leadingKeywords(ws[:len(ws)-1]) == len(ws)-1 || t.casePattern && len(ws) >= 2 && ws[len(ws)-2].text == "in"):
+		// esac as a command word, or right after "case WORD in".
 		t.cases--
 		t.casePattern = false
-	case last.text == "in" && len(ws) >= 3 && ws[len(ws)-3].text == "case" && !ws[len(ws)-3].quoted:
+	case last.text == "in" && len(ws) >= 3 && ws[len(ws)-3].text == "case" && !ws[len(ws)-3].quoted &&
+		leadingKeywords(ws[:len(ws)-3]) == len(ws)-3:
+		// case as the command word, after any reserved words.
 		t.cases++
 		t.casePattern = true
 	}
+}
+
+// leadingKeywords counts the unquoted reserved words and grouping tokens
+// ws starts with.
+func leadingKeywords(ws []word) int {
+	n := 0
+	for n < len(ws) && !ws[n].quoted && (keywords[ws[n].text] || ws[n].text == "time") {
+		n++
+	}
+	return n
 }
 
 // definesFunction reports whether the "(" at i, after a command of one
 // word (the name, of any characters), opens "()": a function definition,
 // name() or name ( ).
 func (t *tokenizer) definesFunction(i int) bool {
-	words := len(t.cur.words)
+	// The words after reserved words (if, then, {, !, time ...).
+	words := len(t.cur.words) - leadingKeywords(t.cur.words)
 	if t.inWord {
 		words++
 	}
@@ -783,6 +804,18 @@ func tokenize(line string) (cmds []simple, ok bool) {
 		// The line ends before a body starts: each is empty, as in bash.
 		t.bodies(len(rs))
 	}
+	// The tokenizer fails closed on its own uncertainty: a line that does
+	// not end at the plain top level (a case or a parenthesis left open,
+	// a case pattern being read, a here-document never closed) is marked,
+	// and the walker takes it to touch every root.
+	if t.uncertain || t.cases > 0 || t.casePattern || len(t.parens) > 0 {
+		if len(t.cmds) == 0 {
+			t.cmds = append(t.cmds, simple{})
+		}
+		for i := range t.cmds {
+			t.cmds[i].uncertain = true
+		}
+	}
 	return t.cmds, true
 }
 
@@ -805,7 +838,8 @@ func (t *tokenizer) heredocOp(i int) (int, bool) {
 // past the last delimiter line.
 func (t *tokenizer) bodies(i int) int {
 	for _, p := range t.pending {
-		body, next := readBody(t.rs, i, p.delim, p.strip)
+		body, next, closed := readBody(t.rs, i, p.delim, p.strip)
+		t.uncertain = t.uncertain || !closed
 		i = next
 		p.doc.body = body
 		if !p.doc.quoted {
@@ -871,8 +905,8 @@ func readDelim(rs []rune, i int) (delim string, strip, quoted bool, end int, ok 
 // readBody reads a here-document's body from i, the start of a line, up to
 // the line that is the delimiter (after its leading tabs, for <<-), and
 // returns the body and the index just past the delimiter line. Without a
-// delimiter line the body runs to the end, as in bash.
-func readBody(rs []rune, i int, delim string, strip bool) (string, int) {
+// delimiter line the body runs to the end, as in bash, and closed is false.
+func readBody(rs []rune, i int, delim string, strip bool) (body string, next int, closed bool) {
 	var b strings.Builder
 	for i < len(rs) {
 		nl := indexRune(rs, i, '\n')
@@ -885,12 +919,12 @@ func readBody(rs []rune, i int, delim string, strip bool) (string, int) {
 		}
 		i = nl + 1
 		if line == delim {
-			return b.String(), i
+			return b.String(), i, true
 		}
 		b.WriteString(line)
 		b.WriteByte('\n')
 	}
-	return b.String(), len(rs)
+	return b.String(), len(rs), false
 }
 
 // bodySubs are the command substitutions, $(...) and `...`, in an unquoted
@@ -1057,7 +1091,7 @@ func matchClose(rs []rune, i int, open, close rune) int {
 		switch rs[j] {
 		case '\n':
 			for _, d := range pending {
-				_, next := readBody(rs, j+1, d.delim, d.strip)
+				_, next, _ := readBody(rs, j+1, d.delim, d.strip)
 				j = next - 1
 			}
 			pending = nil
