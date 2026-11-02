@@ -745,7 +745,7 @@ func (t *tokenizer) run(start int, sub bool) (int, bool) {
 	for i := start; i < len(rs); i++ {
 		c := rs[i]
 		switch c {
-		case ' ', '\t', '\r':
+		case ' ', '\t':
 			t.endWord()
 		case '\n':
 			t.endCommand()
@@ -888,8 +888,23 @@ func (t *tokenizer) run(start int, sub bool) (int, bool) {
 				return 0, false
 			}
 			i++
-			if rs[i] != '\n' { // a backslash-newline joins lines
+			if rs[i] != '\n' {
 				t.lit(string(rs[i]), true)
+				continue
+			}
+			// A backslash-newline joins lines. Within a word, or between
+			// words, the gate reads that as bash does; next to an operator
+			// or a $ it could make one bash reads otherwise ((\<nl>( is
+			// arithmetic), so the line is not read.
+			prev, next := ' ', ' '
+			if i >= 2 {
+				prev = rs[i-2]
+			}
+			if i+1 < len(rs) {
+				next = rs[i+1]
+			}
+			if strings.ContainsRune(";&|()<>$`", prev) || strings.ContainsRune(";&|()<>{}", next) {
+				t.uncertain = true
 			}
 		case '\'':
 			end := indexRune(rs, i+1, '\'')
@@ -1000,7 +1015,7 @@ func (t *tokenizer) heredocOp(i int) (int, bool) {
 	if !ok {
 		return 0, false
 	}
-	if strings.ContainsAny(delim, "$`") {
+	if strings.ContainsAny(delim, "$`\n") {
 		// A delimiter the gate may read other than bash does.
 		t.uncertain = true
 	}
@@ -1017,6 +1032,17 @@ func (t *tokenizer) bodies(i int) int {
 	for _, p := range t.pending {
 		body, next, closed := readBody(t.rs, i, p.delim, p.strip)
 		t.uncertain = t.uncertain || !closed
+		if !p.doc.quoted && strings.Contains(body, "\\\n") {
+			// bash joins a backslash-newline in an unquoted body, which
+			// can make a delimiter line the gate did not see.
+			t.uncertain = true
+		}
+		if t.sc.depth > 0 && bodyLineStarts(body, p.delim, p.strip) {
+			// Inside a command substitution, bash 5.2 ends the body at a
+			// line that starts with the delimiter, and reads the rest of
+			// it as commands.
+			t.uncertain = true
+		}
 		i = next
 		p.doc.body = body
 		if !p.doc.quoted {
@@ -1041,7 +1067,7 @@ func readDelim(rs []rune, i int) (delim string, strip, quoted bool, end int, ok 
 	}
 	var b strings.Builder
 	start := i
-	for ; i < len(rs) && !strings.ContainsRune(" \t\r\n;&|()<>", rs[i]); i++ {
+	for ; i < len(rs) && !strings.ContainsRune(" \t\n;&|()<>", rs[i]); i++ {
 		switch rs[i] {
 		case '$':
 			// $'...' and $"..." are quoting, which bash removes: <<$'E'
@@ -1105,6 +1131,20 @@ func readDelim(rs []rune, i int) (delim string, strip, quoted bool, end int, ok 
 		return "", false, false, 0, false
 	}
 	return b.String(), strip, quoted, i - 1, true
+}
+
+// bodyLineStarts reports whether a line of body starts with delim, other
+// than the delimiter line itself, which is not in body.
+func bodyLineStarts(body, delim string, strip bool) bool {
+	for _, line := range strings.Split(body, "\n") {
+		if strip {
+			line = strings.TrimLeft(line, "\t")
+		}
+		if delim != "" && strings.HasPrefix(line, delim) {
+			return true
+		}
+	}
+	return false
 }
 
 // readBody reads a here-document's body from i, the start of a line, up to
@@ -2050,6 +2090,11 @@ func command(args []string) (name string, rest []string, under []string) {
 			if i+1 < len(args) && args[i+1] == "{" {
 				i++
 			}
+			args = append(args[:i:i], stripKeywords(args[i:])...)
+		}
+		if base == "time" {
+			// time { ...; }, time ! cmd, time function f { ...; }: the
+			// reserved words after time and its options.
 			args = append(args[:i:i], stripKeywords(args[i:])...)
 		}
 	}

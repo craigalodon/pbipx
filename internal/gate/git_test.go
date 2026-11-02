@@ -248,6 +248,24 @@ func TestShellGitHistoryGaps(t *testing.T) {
 		{"an alias for git", sh("alias g=git; g log -p"), git},
 		{"$(echo git log -p) as a command", sh("$(echo git log -p)"), git},
 		{"hash of git alone", sh("hash git; git log --oneline -1"), ""},
+		// CR, backslash-newline and time (F8, F9, F10).
+		{"a CRLF here-document", sh("cat <<E\r\nx\r\nE\r\ngit log -p"), git},
+		{"a delimiter joined across lines", sh("cat <<E\\\nF\nx\nEF\ngit log -p"), gate.ReasonInternalError},
+		{"(\\<nl>( arithmetic", sh("(\\\n(x<<true))\ngit log -p\ntrue"), gate.ReasonInternalError},
+		{"a delimiter line joined in the body", sh("cat <<E\nx\nE\\\n\ngit log -p\nE"), gate.ReasonInternalError},
+		{"a continued command line", sh("git log \\\n  --oneline -1"), ""},
+		{"time with groups", sh("time { { git log -p; }; }"), git},
+		{"time -p with !", sh("time -p { ! git log -p; }"), git},
+		{"time with a function", sh("time { function g { git log -p; }; g; }"), git},
+		// xargs and find -exec add words git is given (F11).
+		{"xargs feeding git log", sh("echo -p | xargs git log"), git},
+		{"xargs -0 feeding git log", sh(`printf '%s\0' -p | xargs -0 git log`), git},
+		{"find -exec git log {} +", sh("find . -name x -exec git log {} +"), git},
+		{"xargs feeding git push", sh("echo origin | xargs git push"), ""},
+		// bash 5.2 ends a here-document in $(...) at a line starting with
+		// the delimiter (F14).
+		{"a here-document in $(...) with a line starting with its delimiter",
+			sh("git commit -m \"$(cat <<'EOF'\nmsg\nEOF )\"\ngit log -p\nEOF\n)\""), gate.ReasonInternalError},
 		// A function named like a builtin (F7).
 		{"cd defined, then git log -p", sh("cd() { :; }; git log -p"), git},
 		{"cd defined and used", sh("cd() { git log -p; }; cd x"), git},

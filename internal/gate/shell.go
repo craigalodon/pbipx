@@ -2759,6 +2759,23 @@ func unknownArgs(v view) []string {
 // (gitContent).
 func (s *setup) gitRule(v view) *gitDenial {
 	unknown := unknownArgs(v)
+	if v.name == "git" && (slices.Contains(v.under, "xargs") || slices.Contains(v.under, "parallel")) {
+		// xargs (and parallel) add the words they read to git's: words
+		// the gate cannot tell, which could be options (echo -p | xargs
+		// git log). With -I they replace a word instead, as unknown.
+		const stdinWord = "\x00stdin"
+		v.argv = append(slices.Clone(v.argv), stdinWord)
+		unknown = append(unknown, stdinWord)
+	}
+	if v.name == "git" {
+		// find -exec's and fd -x's placeholder is a file name the gate
+		// cannot tell, which could be an option (a file named -p).
+		for _, a := range v.rest {
+			if strings.Contains(a, "{}") || strings.Contains(a, "{/}") || strings.Contains(a, "{.}") {
+				unknown = append(unknown, a)
+			}
+		}
+	}
 	dirs := v.cwd.dirs
 	if !v.cwd.known() {
 		dirs = []string{s.repo.Root}
