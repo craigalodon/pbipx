@@ -425,6 +425,10 @@ func TestShellGitCommitVerboseConfig(t *testing.T) {
 		{"a write to /etc/gitconfig", sh(`printf x >> /etc/gitconfig && git commit -a --dry-run`), git},
 		{"a write to a target that cannot be told", sh(`printf x >> "$(git rev-parse --git-path config)" && git commit -a --dry-run`), git},
 		{"a write to an unrelated file", sh(`printf x >> notes.txt && git commit -a --dry-run`), ""},
+		// A git configuration by its name, wherever it is (Git for
+		// Windows keeps the system file under its install prefix).
+		{"a write to a gitconfig anywhere", sh(`printf x >> /opt/tools/git/etc/gitconfig && git commit -a --dry-run`), git},
+		{"a write to git/config anywhere", sh(`printf x >> /tmp/x/git/config && git commit -a --dry-run`), git},
 		{"commit.verbose set in the line, PowerShell", ps("git config commit.verbose true; git commit -a --dry-run"), git},
 		{"commit.verbose unset in the line", sh("git config --unset commit.verbose && git commit -a --dry-run"), git},
 		{"a key from a variable", sh(`git config "$K" true && git status`), git},

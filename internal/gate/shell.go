@@ -2133,7 +2133,7 @@ func (s *setup) writesGitDir(v view) bool {
 	for _, xw := range append(words, dests...) {
 		abss, _ := s.wordSpellings(v, xw)
 		for _, a := range abss {
-			if slices.Contains(strings.Split(filepath.ToSlash(a), "/"), ".git") {
+			if slices.Contains(strings.Split(filepath.ToSlash(a), "/"), ".git") || gitConfigName(a, s.fold) {
 				return true
 			}
 			if _, ok := relTo(common, a, s.fold); common != "" && ok {
@@ -2165,7 +2165,23 @@ func (s *setup) userGitConfigs() []string {
 			out = append(out, p)
 		}
 	}
+	if s.repo != nil {
+		out = append(out, s.git().configFiles(s.repo.Root)...)
+	}
 	return out
+}
+
+// gitConfigName reports whether the path a names a git configuration
+// file by its name, wherever it is: a file named gitconfig or .gitconfig,
+// or one named config in a directory named git or .git.
+func gitConfigName(a string, fold bool) bool {
+	parts := strings.Split(filepath.ToSlash(a), "/")
+	eq := func(x, y string) bool { return x == y || fold && strings.EqualFold(x, y) }
+	base := parts[len(parts)-1]
+	if eq(base, "gitconfig") || eq(base, ".gitconfig") {
+		return true
+	}
+	return len(parts) >= 2 && eq(base, "config") && (eq(parts[len(parts)-2], "git") || eq(parts[len(parts)-2], ".git"))
 }
 
 // commonDir is this repository's common git directory, "" when git cannot
