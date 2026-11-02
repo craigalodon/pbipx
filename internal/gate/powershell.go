@@ -168,11 +168,17 @@ func probePowerShell(cwd, home, line string) (spots []spot, unknown bool) {
 // settings directory, or that runs 'pbipx policy approve'. The gate
 // cannot tell a PowerShell read from a write, so naming one is enough.
 func psControl(cwd, home string, words []string, ctl controls) (Decision, bool) {
+	seen := map[string]bool{}
 	for i, w := range words {
 		if strings.EqualFold(w, "policy") && i+1 < len(words) && strings.EqualFold(words[i+1], "approve") {
 			return deny(ReasonAgentSettings, "the command may run 'pbipx policy approve'; "+
 				"approving the policy is a person's step at a terminal, and an agent may not approve the policy that binds it"), true
 		}
+		// A word is placed once: each placing costs file system calls.
+		if seen[w] {
+			continue
+		}
+		seen[w] = true
 		for _, v := range psVariants(w, home) {
 			sp := spellings(cwd, v)
 			what, ok := ctl.target(sp)
@@ -191,8 +197,9 @@ func psControl(cwd, home string, words []string, ctl controls) (Decision, bool) 
 // repository (behavior.md, "The gate", PowerShell): a word naming a Claude
 // Code settings file or a .claude directory in the repository, or a file
 // outside it that controls the gate, denies with agent-settings; a word
-// naming local state with local-state; and otherwise the protected tree is
-// scanned, as if the command touched every root.
+// naming local state with local-state; a git command that could print
+// content git history holds with git-content (psGit); and otherwise the
+// protected tree is scanned, as if the command touched every root.
 func (s *setup) powershell(line string) Decision {
 	words, ok := psWords(line)
 	if !ok {
@@ -221,6 +228,10 @@ func (s *setup) powershell(line string) Decision {
 				}
 			}
 		}
+	}
+	// git printing content git history holds, as for Bash.
+	if d, ok := s.psGit(line); ok {
+		return d
 	}
 	if local != "" {
 		return deny(ReasonLocalState, "the PowerShell command names %s, Power BI Desktop local state, which is never read",

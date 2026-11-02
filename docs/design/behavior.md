@@ -978,14 +978,55 @@ path, is denied with `event-error`: the call cannot be judged.
     controls the gate (as for Bash, but reading counts too: a PowerShell
     read cannot be told from a write), and the words `policy approve` in
     sequence. These deny from every working directory, adopted or not;
+  - git printing content git history holds denies with `git-content`,
+    judged as for Bash (Bash's rule 2, above). For this the line is also read
+    into statements: one ends at `;`, `|`, `&&`, `||`, a background `&`, a
+    line break, and the bounds of a group (`(...)`, `$(...)`, `@(...)`,
+    `@{...}`) or a script block (`{...}`), whose own statements are read
+    too; a comment, a redirection and its target, and an assignment to a
+    variable before the command are left out. A statement runs git when
+    its first word is `git` (any case, a path to it, with `.exe`, `.cmd`
+    or `.bat`), after `&` or the dot-source `.` too, or when git is the
+    first word that is not an option after another command (`cmd /c git
+    ...`); the words to the end of the statement are git's arguments. A
+    word holding `$` outside single quotes, a backtick escape, a group or
+    a splat (`@name`) cannot be told, and neither can a word holding `%`
+    after `--%`: as for Bash, before `--` it could be an option that
+    prints content, and after it a pathspec. Also judged as git: a
+    command word that cannot be told (`& $exe log -p`, `& (Get-Command
+    git) ...`) given arguments; `Start-Process` of git or of a program
+    that cannot be told, with `-ArgumentList` (or the second positional
+    argument) split as Windows splits a command line; and the command
+    line given to `Invoke-Expression` (`iex`), or to `pwsh`, `powershell`,
+    `cmd` or a Unix shell as one string, read as a PowerShell line, up to
+    4 deep. `Invoke-Expression` or a shell given an argument that cannot
+    be told, or fed by a pipe, `pwsh -EncodedCommand`, a script block
+    built from a string (`[scriptblock]::Create`, `InvokeScript`), and
+    `Set-Alias`
+    or `New-Alias` naming git deny, since git could run in a way the gate
+    cannot follow. An assignment to `$env:NAME` (or a word naming such a
+    variable, as `Set-Item env:NAME` does) of a variable git reads is
+    judged as an assignment before git in Bash. After `cd`,
+    `Set-Location`, `Push-Location` or `Pop-Location` anywhere in the
+    line, or with `Start-Process -WorkingDirectory`, git is judged from
+    the working directory, the repository's root and each protected root.
+    A git command that changes the working tree (as for Bash) followed by
+    a statement other than git denies, since the later one is judged
+    against the tree as it was before. A nested command line shares the
+    session of the line around it: its statements run in order with the
+    line's, and a location change, an environment assignment or a change
+    to the tree in either counts for both (`iex 'Set-Location pbip'; git
+    log -p -- x` is judged as moved);
   - any word naming local state denies with `local-state`;
   - otherwise the protected tree is scanned, as for Grep: a block or an
     error anywhere there denies, a clean tree allows.
 
-  A line of more than 20,000 words is denied with `internal-error`. A
-  PowerShell call that builds a path at run time (`Join-Path`, a variable
-  set from a computation) reaches only what its words show; this is the
-  same limit as for Bash (threat model).
+  A line of more than 20,000 words, or with groups nested more than 64
+  deep, is denied with `internal-error`. A PowerShell call that builds a
+  path at run time (`Join-Path`, a variable set from a computation)
+  reaches only what its words show; this is the same limit as for Bash
+  (threat model). A script it runs (`.\x.ps1`, `pwsh -File`) and a
+  function or alias defined in an earlier call are not read.
 - **LSP** (pbipx only; Claude Code's code intelligence tool). Its input is
   not documented, so the adapter takes every string, at any depth of
   `tool_input`, under a key whose name holds `path`, `file` or `uri` (case
