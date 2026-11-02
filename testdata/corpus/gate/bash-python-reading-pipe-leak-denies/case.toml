@@ -1,0 +1,7 @@
+description = "python3 reading its program from a pipe (here a commit message) runs a program built at run time, which could open any file, so the tree is scanned and its finding denies"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
+known       = "predecessor"
