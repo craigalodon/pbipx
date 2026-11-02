@@ -112,6 +112,8 @@ func TestMessagesNameTheTrigger(t *testing.T) {
 		{"cwd in a root", gate.Event{Tool: gate.Shell, Command: "wc -c report.json", Cwd: "pbip/A.Report"}, gate.ReasonFinding,
 			[]string{"the working directory is in the protected root pbip, " + reached}, hintCwd},
 		{"names a root", sh("make -C pbip"), gate.ReasonFinding, []string{"the command names the protected root pbip"}, hintNames},
+		{"a program given .", sh("gofmt -l ."), gate.ReasonFinding,
+			[]string{"a word of the command names a path that holds the protected root pbip"}, hintNames},
 		{"a word reaches a root", sh("wc -c ./p*/A.Report/definition/report.json"), gate.ReasonFinding,
 			[]string{"wc is given a path that is in the protected root pbip"}, hintNames},
 		{"cd to a root", sh("cd pb''ip && make"), gate.ReasonFinding,

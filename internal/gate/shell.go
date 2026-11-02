@@ -358,6 +358,43 @@ func (s *setup) indexChange(v view) string {
 	return s.indexChangeOf(v.argv, s.viewDir(v))
 }
 
+// jqFilter is the index in v.words of the filter jq, yq or gojq is given
+// as its first operand, -1 when it has none or reads it from a file (-f,
+// --from-file): that word is a program, not a path. Options' values are
+// not told apart, which can only leave the filter placed.
+func jqFilter(v view) int {
+	if v.name != "jq" && v.name != "yq" && v.name != "gojq" {
+		return -1
+	}
+	if slices.ContainsFunc(v.rest, func(a string) bool {
+		return a == "-f" || a == "--from-file" || strings.HasPrefix(a, "--from-file=")
+	}) {
+		return -1
+	}
+	var args []int // the index in v.words of each argument
+	for i, xw := range v.words {
+		if !xw.redirect {
+			args = append(args, i)
+		}
+	}
+	start := len(args) - len(v.rest)
+	for j, a := range v.rest {
+		if a == "--" {
+			if j+1 < len(v.rest) {
+				return args[start+j+1]
+			}
+			return -1
+		}
+		if !strings.HasPrefix(a, "-") || a == "-" {
+			if start+j >= 0 && start+j < len(args) {
+				return args[start+j]
+			}
+			return -1
+		}
+	}
+	return -1
+}
+
 // asGit is v, a hub command, as the git command hub runs.
 func asGit(v view) view {
 	v.argv = slices.Clone(v.argv)
@@ -2603,13 +2640,18 @@ func (w *walker) reaches() trigger {
 		_, search := searchers[v.name]
 		reader := readers[v.name] || search
 		mover := v.name == "cd" || v.name == "pushd" || v.name == "chdir"
-		for _, xw := range v.words {
+		filter := jqFilter(v)
+		for wi, xw := range v.words {
 			if xw.message && !w.redefines {
 				continue
 			}
 			if mover && !xw.redirect {
 				// A cd target moves the working directory, which is
 				// judged for the commands after it; it reads nothing.
+				continue
+			}
+			if wi == filter {
+				// jq's filter is a program, not a path.
 				continue
 			}
 			abss, unknown := s.wordSpellings(v, xw)

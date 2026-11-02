@@ -733,6 +733,12 @@ func TestShellOrderAndScope(t *testing.T) {
 			sh("gh pr create --title 'Fix the parser' --body \"$(cat <<'EOF'\nSummary of the change\nEOF\n)\""), "", ""},
 		{"gh with a body file in the root", sh("gh pr create --body-file pbip/x"), "", gate.ReasonFinding},
 
+		// jq's first operand is its filter, not a path.
+		{"jq . of a file", sh("jq . package.json"), "", ""},
+		{"jq '.' of a file", sh("jq '.' x.json"), "", ""},
+		{"yq . of a file", sh("yq . x.yml"), "", ""},
+		{"jq of a file in the root", sh("jq . pbip/x.json"), "", gate.ReasonFinding},
+		{"jq -f with . as a path", sh("jq -f prog.jq ."), "", gate.ReasonFinding},
 		// A cd target moves the working directory and reads nothing.
 		{"cd up after a build", shIn("sql", "cd ../notes && go build ./... && cd .."), "", ""},
 		{"cd into the root, then a build", sh("cd pbip && make"), "", gate.ReasonFinding},

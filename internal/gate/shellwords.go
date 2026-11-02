@@ -1887,7 +1887,9 @@ func command(args []string) (name string, rest []string, under []string) {
 				for j < len(args) && strings.HasPrefix(args[j], "-") {
 					j++
 				}
-				if j < len(args) && judged(progName(args[j])) {
+				// A word "." after a program is a path (gofmt -l .), not the
+				// dot-source builtin it would be as a command.
+				if j < len(args) && args[j] != "." && judged(progName(args[j])) {
 					under = append(under, base)
 					i = j
 					continue
