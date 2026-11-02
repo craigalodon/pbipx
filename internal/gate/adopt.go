@@ -86,6 +86,11 @@ func decideAdopted(ev Event, opts Options) Decision {
 		f.records = records
 		for _, r := range roots {
 			f.index = append(f.index, r, resolve(r))
+			// Every linked work tree of the clone counts too: a search
+			// from a common parent reaches a sibling git worktree add made.
+			for _, wt := range linkedWorktrees(r) {
+				f.index = append(f.index, wt, resolve(wt))
+			}
 		}
 		slices.Sort(f.index)
 		f.index = slices.Compact(f.index)
