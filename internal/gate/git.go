@@ -304,6 +304,94 @@ func (o gitOptions) cluster(a, next string) (c gitCluster, ok bool) {
 	return c, true
 }
 
+// gitMessage is what of a simple command is git's message text, read by
+// gitMessageText: prose, not paths, so a protected root's name in it does
+// not make the command reach the root. words and subs are indexed as the
+// command's words and command substitutions.
+type gitMessage struct {
+	// words are the message words: the value of -m or --message given
+	// apart, or a word holding it attached (gitMessageArgs).
+	words []bool
+	// subs are the command substitutions in a message word whose one
+	// command is cat reading a here-document: its body is the message.
+	subs []bool
+	// docs is set when git reads its message from standard input (-F -,
+	// --file=-): the command's here-documents are the message.
+	docs bool
+}
+
+// gitMessageText reads c, when it runs git with a message: which of its
+// words, command substitutions and here-documents are message text. A
+// command that does not, or whose words do not line up as the gate reads
+// them, has none.
+func gitMessageText(c simple) gitMessage {
+	m := gitMessage{words: make([]bool, len(c.words)), subs: make([]bool, len(c.subs))}
+	if c.fallback {
+		return m
+	}
+	var idx []int // the index in c.words of each argument
+	var args []string
+	for i, wd := range c.words {
+		if !wd.redirect {
+			idx = append(idx, i)
+			args = append(args, wd.text)
+		}
+	}
+	name, rest := program(args)
+	if name != "git" || !isSuffix(args, rest) {
+		return m
+	}
+	inv, ok := parseGit(rest, "")
+	if !ok || !gitMessageSubs[inv.sub] || !isSuffix(rest, inv.rest) {
+		return m
+	}
+	start := len(args) - len(inv.rest)
+	msg, stdin := gitMessageArgs(inv.sub, inv.args)
+	for i, isMsg := range msg {
+		m.words[idx[start+i]] = isMsg
+	}
+	m.docs = stdin
+	// The command substitutions in the words, in order, are c.subs.
+	k := 0
+	for i, wd := range c.words {
+		for _, p := range wd.parts {
+			if p.kind != opaquePart || (!strings.HasPrefix(p.raw, "$(") && !strings.HasPrefix(p.raw, "`")) {
+				continue
+			}
+			if k >= len(c.subs) {
+				return gitMessage{words: m.words, subs: make([]bool, len(c.subs)), docs: m.docs}
+			}
+			m.subs[k] = m.words[i] && catHeredoc(c.subs[k]) != nil
+			k++
+		}
+	}
+	if k != len(c.subs) {
+		m.subs = make([]bool, len(c.subs))
+	}
+	return m
+}
+
+// catHeredoc is the here-document a command line reads when the line is
+// one command, cat with no argument, reading one here-document; nil
+// otherwise.
+func catHeredoc(line string) *heredoc {
+	cmds := splitCommands(line)
+	if len(cmds) != 1 {
+		return nil
+	}
+	c := cmds[0]
+	if c.fallback || c.pipeIn || len(c.subs) > 0 || len(c.docs) != 1 || len(c.words) != 1 ||
+		c.words[0].redirect || c.words[0].text != "cat" {
+		return nil
+	}
+	return c.docs[0]
+}
+
+// isSuffix reports whether tail is a suffix of words.
+func isSuffix(words, tail []string) bool {
+	return len(tail) <= len(words) && slices.Equal(words[len(words)-len(tail):], tail)
+}
+
 // whyUnknownSpec is why git given an argument that cannot be told is
 // denied when that argument could be a pathspec, a revision or a
 // directory. It reads after the subcommand.

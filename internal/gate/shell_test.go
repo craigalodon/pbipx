@@ -654,3 +654,52 @@ func TestShellExeNames(t *testing.T) {
 		restore()
 	}
 }
+
+// TestShellGitMessageText: a protected root's name in git's message text
+// (-m, --message, or a here-document read by -F -) is prose, not a path,
+// and is left out of the root-name tests. Every other word of the line,
+// and text a program reads as code, is tested as before.
+func TestShellGitMessageText(t *testing.T) {
+	isolateSearch(t)
+	runBoth(t, []both{
+		{"-m of a here-document naming the root",
+			sh("git commit -m \"$(cat <<'EOF'\nNote a check\n\nThis leaves pbip/ alone.\nEOF\n)\""), "", ""},
+		{"-m of an unquoted here-document naming the root",
+			sh("git commit -m \"$(cat <<EOF\nNote a check\n\nThis leaves pbip/ alone.\nEOF\n)\""), "", ""},
+		{"-F - of a here-document naming the root",
+			sh("git commit -F - <<'EOF'\nNote a check\n\nThis leaves pbip/ alone.\nEOF"), "", ""},
+		{"--file=- of a here-document naming the root",
+			sh("git commit --file=- <<'EOF'\nLeave pbip alone\nEOF"), "", ""},
+		{"--file - of a here-document naming the root",
+			sh("git commit -a --file - <<'EOF'\nLeave pbip alone\nEOF"), "", ""},
+		{"-aF- of a here-document naming the root",
+			sh("git commit -aF- <<'EOF'\nLeave pbip alone\nEOF"), "", ""},
+		{"-F - of an unquoted here-document running a cat of the root",
+			sh("git commit -F - <<EOF\n$(cat pbip/x)\nEOF"), "", gate.ReasonFinding},
+		{"-m naming the root", sh(`git commit -m "Leave pbip alone"`), "", ""},
+		{"-m of the root's path", sh(`git commit -m pbip/`), "", ""},
+		{"-am naming the root", sh(`git commit -am "Leave pbip alone"`), "", ""},
+		{"-m attached naming the root", sh(`git commit "-mLeave pbip alone"`), "", ""},
+		{"--message= naming the root", sh(`git commit --message="Leave pbip alone"`), "", ""},
+		{"merge -m naming the root", sh(`git merge -m "Merge the pbip change" topic`), "", ""},
+		{"tag -m naming the root", sh(`git tag -a v1 -m "pbip release"`), "", ""},
+
+		// The rest of the line is tested as before.
+		{"a pathspec naming the root", sh(`git commit -m "Leave pbip alone" -- pbip`), "", gate.ReasonFinding},
+		{"-Fm: m is the file, the next word a pathspec", sh(`git commit -Fm pbip`), "", gate.ReasonFinding},
+		{"a log -m naming the root", sh(`git log -m pbip`), "", gate.ReasonFinding},
+		{"a cat of the root in the message", sh(`git commit -m "$(cat pbip/x)"`), "", gate.ReasonFinding},
+		{"a cat of the root in the message's here-document",
+			sh("git commit -m \"$(cat <<EOF\n$(cat pbip/x)\nEOF\n)\""), "", gate.ReasonFinding},
+		{"a here-document read by another program in the message",
+			sh("git commit -m \"$(python3 <<'EOF'\nopen('pbip/x')\nEOF\n)\""), "", gate.ReasonFinding},
+		{"a here-document to git without -F -", sh("git commit -F msg.txt <<'EOF'\npbip\nEOF"), "", gate.ReasonFinding},
+		{"another command after the commit", sh(`git commit -m "Leave pbip alone" && cat pbip/x`), "", gate.ReasonFinding},
+		{"python3 -c naming the root", sh(`python3 -c "open('pbip/x')"`), "", gate.ReasonFinding},
+		{"python3 reading a here-document naming the root", sh("python3 - <<'EOF'\nopen('pbip/x')\nEOF"), "", gate.ReasonFinding},
+		{"a here-document piped to an interpreter", sh("cat <<'EOF' | python3\nopen('pbip/x')\nEOF"), "", gate.ReasonFinding},
+		// A known over-block: echo and printf can feed an interpreter.
+		{"echo naming the root", sh("echo pbip"), "", gate.ReasonFinding},
+		{"printf naming the root", sh("printf '%s\\n' pbip"), "", gate.ReasonFinding},
+	})
+}

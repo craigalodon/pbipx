@@ -377,6 +377,9 @@ type xword struct {
 	redirect bool
 	// input and here are word's: a redirection that reads, a here-string.
 	input, here bool
+	// message is set for git's message text (gitMessageText), which is
+	// not placed as a path.
+	message bool
 }
 
 // view is one simple command as the rules see it.
@@ -598,9 +601,17 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 	// not after this command's own change to the tree, and a change in
 	// one comes before this command. A process substitution, <(...) or
 	// >(...), runs alongside it and is read as a command after it.
-	for _, sub := range c.subs {
+	msg := gitMessageText(c)
+	for k, sub := range c.subs {
 		sst := v.cwd.clone()
+		n := len(w.lines)
 		w.line(sub, &sst, depth+1)
+		if msg.subs[k] && n < len(w.lines) && w.lines[n] == sub {
+			// cat reading a here-document that is git's message: the
+			// body is not tested for a root's name (namesRootOutsideListers);
+			// the lines its body runs, walked after it, still are.
+			w.lines = slices.Delete(w.lines, n, n+1)
+		}
 	}
 	for _, doc := range c.docs {
 		for _, sub := range doc.subs {
@@ -708,8 +719,10 @@ func (s *setup) viewOf(c simple, st cwdState) view {
 	v := view{cwd: st.clone(), pipeIn: c.pipeIn}
 	var args []string
 	var known []bool
-	for _, wd := range c.words {
+	msg := gitMessageText(c)
+	for i, wd := range c.words {
 		xw := s.expandWord(wd, v.cwd)
+		xw.message = msg.words[i]
 		v.words = append(v.words, xw)
 		if !xw.redirect {
 			args = append(args, xw.text)
@@ -1897,6 +1910,9 @@ func (w *walker) reaches() trigger {
 		_, search := searchers[v.name]
 		reader := readers[v.name] || search
 		for _, xw := range v.words {
+			if xw.message {
+				continue
+			}
 			abss, unknown := s.wordSpellings(v, xw)
 			if unknown && reader && !optionOnly(xw.text) {
 				return trigger{v.name + " is given a word with an expansion the gate cannot resolve", hintExpand}

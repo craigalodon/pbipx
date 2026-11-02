@@ -873,6 +873,27 @@ path, is denied with `event-error`: the call cannot be judged.
      A root's name is compared without regard to case in these tests, on
      every platform: they only decide whether the real roots are scanned.
 
+     In pbipx git's message text is left out of these tests, both the
+     whole-word test of the line and the placing of words: it is prose,
+     and people name folders in commit messages. It is the value of `-m`
+     or `--message` as rule 2 reads it (apart, attached, `--message=`, or
+     after a cluster: `commit`, `merge`, `tag`, `stash push`, `notes add`
+     and `append`), and, when that value is a command substitution whose
+     one command is `cat` with no argument reading a here-document
+     (`git commit -m "$(cat <<'EOF' ...)"`), that here-document's body;
+     and the here-documents of git reading its message from standard
+     input (`-F -`, `--file=-`, `--file -`). The command substitutions an
+     unquoted such body runs are still read as nested lines, and so is any
+     other substitution in a message (`git commit -m "$(cat pbip/x)"`
+     scans). Every other word of the command (a pathspec after `--`, the
+     value of `-F`), and every other command, is tested as before. Text a
+     program may read as code keeps the test: `python3 -c "open('pbip/x')"`,
+     `node -e`, `perl -e`, an awk program, and a here-document fed to an
+     interpreter (`python3 - <<'EOF' ...`, `cat <<'EOF' | python3`).
+     **Known over-block:** `echo pbip` and `printf` naming a root still
+     scan the tree, since their output can feed a pipe into an
+     interpreter.
+
      In pbipx a command that only lists names is left out of these tests:
      names are schema (principle 1), so it is allowed over a protected
      root whatever the tree holds, from any working directory that can be
