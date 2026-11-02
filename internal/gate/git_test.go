@@ -224,3 +224,64 @@ func TestShellGitStashShowPatch(t *testing.T) {
 		{"stash list", sh("git stash list"), ""},
 	})
 }
+
+// TestShellGitUnknownWords: an argument git is given that cannot be told
+// could be any pathspec, revision, option or directory. Before "--" it
+// could be an option that turns content on; after it, a pathspec. A
+// subcommand that prints content is then denied without asking git; one
+// that never does is allowed.
+func TestShellGitUnknownWords(t *testing.T) {
+	root := newRepo(t, cleanFiles())
+	write(t, root, warnVisual, slicer("student", "full_name", "Doe, Jane"))
+	sh := func(cmd string) gate.Event { return gate.Event{Tool: gate.Shell, Command: cmd} }
+	git := gate.ReasonGitContent
+	run(t, root, []decideCase{
+		{"diff of a variable", sh("git diff -- $X"), git},
+		{"diff of a quoted variable", sh(`git diff -- "$X"`), git},
+		{"diff of a built name", sh("X=pb; git diff -- ${X}ip"), git},
+		{"diff of a substitution", sh("git diff -- $(echo notes)"), git},
+		{"diff in an unknown directory", sh("git -C $D diff"), git},
+		{"show of a variable", sh("git show $REV"), git},
+		{"log -p of a variable", sh("git log -p $REV"), git},
+		{"grep under a variable", sh("git grep -e x -- $X"), git},
+		{"blame of a variable", sh("git blame $F"), git},
+		{"cat-file of a variable", sh("git cat-file -p $OBJ"), git},
+		{"stash show -p of a variable", sh("git stash show -p $S"), git},
+		{"unknown subcommand", sh("git $SUB"), git},
+		{"unknown word before the subcommand", sh("git $OPT log --oneline"), git},
+		{"unknown global option", sh("git --namespace=$N log --oneline"), git},
+		// config --file reads any file as configuration.
+		{"config --get of a variable", sh("git config --get $K"), git},
+		// Before "--" a word that cannot be told could be -p, -v or the
+		// like.
+		{"log of a substitution", sh("git log $(echo -p)"), git},
+		{"log --oneline of a variable", sh("git log --oneline $REV"), git},
+		{"log of a variable", sh("git log $X"), git},
+		{"whatchanged of a variable", sh("git whatchanged $X"), git},
+		{"reflog of a variable", sh("git reflog $X"), git},
+		{"diff --stat of a variable", sh("git diff --stat $X"), git},
+		{"status of a variable", sh("git status $X"), git},
+		{"commit of a variable", sh("git commit $X"), git},
+		{"log -m of a variable", sh("git log -m $X"), git},
+		{"log -m with a variable attached", sh("git log -m$X"), git},
+		// A message is never an option.
+		{"commit -m of a variable", sh(`git commit -m "$MSG"`), ""},
+		{"commit -m of a substitution", sh("git commit -m \"$(cat <<'EOF'\nA message\nEOF\n)\""), ""},
+		{"commit --message= of a variable", sh(`git commit --message="$MSG"`), ""},
+		{"stash push -m of a variable", sh(`git stash push -m "$MSG"`), ""},
+		{"add of a variable", sh("git add $X"), git},
+		{"stash of a variable", sh("git stash $X"), git},
+		// After "--" it is a pathspec, never an option.
+		{"log --oneline limited to a variable", sh("git log --oneline -- $X"), ""},
+		{"diff --stat limited to a variable", sh("git diff --stat -- $X"), ""},
+		{"status limited to a variable", sh("git status --short -- $X"), ""},
+		{"add limited to a variable", sh("git add -- $X"), ""},
+		{"status in an unknown directory", sh("git -C $D status"), ""},
+		// Commands that print no file content whatever their options.
+		{"branch of a variable", sh("git branch $B"), ""},
+		{"fetch of a variable", sh("git fetch $REMOTE"), ""},
+		{"push of a variable", sh("git push $REMOTE $B"), ""},
+		{"tag -l of a variable", sh("git tag -l $T"), ""},
+		{"remote of a variable", sh("git remote $X"), ""},
+	})
+}
