@@ -69,6 +69,22 @@ func (s *setup) shell(line string) Decision {
 			return deny(ReasonGitContent, "%s", g.message())
 		}
 	}
+	// A git command that changes the index or HEAD, then one that could
+	// print file content: the second was judged against the index and HEAD
+	// as they were before the first (in an unordered line, anywhere).
+	if w.indexChanged != "" {
+		unordered := w.loopy || w.anywhere != ""
+		for _, v := range w.views {
+			if v.name != "git" || v.seq == w.indexSeq || (!unordered && v.seq < w.indexSeq) {
+				continue
+			}
+			if s.contentCapable(v.argv, s.viewDir(v)) {
+				return deny(ReasonGitContent, "%s changes the index or HEAD, and a later git command in the line "+
+					"could print file content; it would be judged against the index and HEAD as they were before it. %s",
+					w.indexChanged, hintChange)
+			}
+		}
+	}
 	// A variable git reads, set or exported by a command of its own in the
 	// line, as an assignment before git is.
 	if lineEnvUnsafe(w.views) {
@@ -82,8 +98,8 @@ func (s *setup) shell(line string) Decision {
 	}
 	// git config setting a key a git command anywhere in the line reads:
 	// the gate read the configuration as it is before the line runs.
-	if lineSets(w.views, "HOME", "XDG_CONFIG_HOME") ||
-		slices.ContainsFunc(w.views, func(v view) bool { return configWrite(v.argv, unknownArgs(v)) || s.writesGitDir(v) }) {
+	if slices.ContainsFunc(w.views, func(v view) bool { return afterConfig(v.argv) != "" }) && (lineSets(w.views, "HOME", "XDG_CONFIG_HOME") ||
+		slices.ContainsFunc(w.views, func(v view) bool { return configWrite(v.argv, unknownArgs(v)) || s.writesGitDir(v) })) {
 		for _, v := range w.views {
 			if sub := afterConfig(v.argv); sub != "" {
 				return deny(ReasonGitContent, "%s", gitDenial{sub, whyAfterConfig, hintAfterConfig}.message())
@@ -192,19 +208,30 @@ func redefines(c simple, v view) bool {
 }
 
 // loopWords are the reserved words that start a loop, or its body, or a
-// function definition.
+// function definition: bash's, and zsh's repeat and foreach.
 var loopWords = map[string]bool{
 	"for": true, "while": true, "until": true, "select": true, "do": true, "function": true,
+	"repeat": true, "foreach": true,
+}
+
+// detachers are the programs that run a command detached from the line, to
+// finish after it: daemonizers and job schedulers. setsid is one only with
+// -f (--fork), screen with -d and -m, and tmux with -d (tmuxDetached).
+var detachers = map[string]bool{
+	"disown": true, "daemonize": true, "start-stop-daemon": true, "systemd-run": true,
+	"at": true, "batch": true,
 }
 
 // unordered reports whether c makes the line's commands run in an order
 // other than their place in it, so that a read can run after a tree
-// change written later: a loop (for, while, until, select, after any
-// grouping or reserved words), a function definition, a background job,
-// a pipeline stage, trap, coproc, a process substitution, and xargs,
-// find -exec, fd -x, parallel or watch, which run a command repeatedly.
+// change written later: a loop (after any grouping or reserved words), a
+// function definition, alias, eval, source or ., a background job, trap,
+// coproc, a process substitution, a detached job (detachers, setsid -f,
+// screen -dm, tmux -d), and xargs, find -exec, fd -x, parallel or watch,
+// which run a command repeatedly. A pipeline is unordered among its own
+// stages only (walker.commands).
 func unordered(c simple, v view) bool {
-	if c.funcDef || c.background || c.pipeIn || c.procSub {
+	if c.funcDef || c.background || c.procSub {
 		return true
 	}
 	for _, wd := range c.words {
@@ -218,17 +245,64 @@ func unordered(c simple, v view) bool {
 			break
 		}
 	}
-	switch v.name {
-	case "trap", "coproc", "parallel", "watch":
+	under := func(names ...string) bool {
+		return slices.ContainsFunc(names, func(n string) bool { return v.name == n || slices.Contains(v.under, n) })
+	}
+	switch {
+	case under("trap", "coproc", "parallel", "watch", "xargs", "alias", "eval", "source", "."):
 		return true
-	case "find":
+	case slices.ContainsFunc(v.under, func(n string) bool { return detachers[n] }) || detachers[v.name]:
+		return true
+	case under("setsid") && (slices.Contains(v.argv, "-f") || slices.Contains(v.argv, "--fork")):
+		return true
+	case under("screen") && slices.ContainsFunc(v.argv, func(a string) bool {
+		return strings.HasPrefix(a, "-") && !strings.HasPrefix(a, "--") && strings.ContainsAny(a, "dD") && strings.Contains(a, "m")
+	}):
+		return true
+	case v.name == "tmux" && tmuxDetached(v.rest):
+		return true
+	case v.name == "find":
 		return len(findExecs(v.rest)) > 0
-	case "fd", "fdfind":
+	case v.name == "fd" || v.name == "fdfind":
 		execs, _ := fdArgs(v.rest)
 		return len(execs) > 0
 	}
-	return slices.Contains(v.under, "xargs") || slices.Contains(v.under, "coproc") ||
-		slices.Contains(v.under, "watch") || slices.Contains(v.under, "parallel")
+	return false
+}
+
+// tmuxCommand reads a tmux command line: its subcommand, the shell
+// command it runs (new-session, new-window, split-window, respawn-pane and
+// run-shell take one as their last argument), and whether it sends keys
+// to a pane (send-keys), which runs what the gate cannot follow.
+func tmuxCommand(rest []string) (sub, command string, keys bool) {
+	i := 0
+	for i < len(rest) && strings.HasPrefix(rest[i], "-") {
+		i++
+	}
+	if i >= len(rest) {
+		return "", "", false
+	}
+	sub = rest[i]
+	switch sub {
+	case "send-keys", "send":
+		return sub, "", true
+	case "new-session", "new", "new-window", "neww", "split-window", "splitw", "respawn-pane",
+		"respawnp", "respawn-window", "respawnw", "run-shell", "run":
+		if last := rest[len(rest)-1]; len(rest) > i+1 && !strings.HasPrefix(last, "-") {
+			return sub, last, false
+		}
+	}
+	return sub, "", false
+}
+
+// tmuxDetached reports whether a tmux command runs its command detached
+// (-d), or in a session of its own.
+func tmuxDetached(rest []string) bool {
+	sub, command, _ := tmuxCommand(rest)
+	return command != "" && (sub != "run-shell" && sub != "run" || slices.Contains(rest, "-b")) &&
+		slices.ContainsFunc(rest, func(a string) bool {
+			return strings.HasPrefix(a, "-") && !strings.HasPrefix(a, "--") && strings.ContainsAny(a, "db")
+		})
 }
 
 // lineEnvUnsafe reports whether a command of the line sets or exports a
@@ -253,6 +327,23 @@ func lineEnvUnsafe(views []view) bool {
 		}
 	}
 	return unsafeEnv(set)
+}
+
+// viewDir is the directory v runs in, the repository's root when it cannot
+// be told.
+func (s *setup) viewDir(v view) string {
+	if v.cwd.known() {
+		return v.cwd.dirs[0]
+	}
+	if s.repo != nil {
+		return s.repo.Root
+	}
+	return s.cwd
+}
+
+// indexChange is indexChangeOf for the git command v.
+func (s *setup) indexChange(v view) string {
+	return s.indexChangeOf(v.argv, s.viewDir(v))
 }
 
 // isTreeChanger reports whether sub is one of git's subcommands that can
@@ -439,11 +530,79 @@ var silent = map[string]bool{
 // the gate, or cannot be placed. A word that only looks like a path
 // (./..., src/) does not count, nor does an output redirection's target.
 // git's own reads are judged by rule 2.
+// pipeFilters are the filters pipeFilter knows, each with the options it
+// takes that take a value (as the next word unless attached), and the
+// options that take none; any other option, or any operand, and it is no
+// filter of its input alone.
+var pipeFilters = map[string]struct{ value, flags []string }{
+	"head": {[]string{"-n", "-c", "--lines", "--bytes"}, []string{"-q", "-v", "-z", "--quiet", "--silent", "--verbose", "--zero-terminated"}},
+	"tail": {[]string{"-n", "-c", "--lines", "--bytes"}, []string{"-q", "-v", "-z", "-f", "-F", "--quiet", "--silent", "--verbose", "--zero-terminated", "--follow"}},
+	"wc":   {nil, []string{"-l", "-c", "-w", "-m", "-L", "--lines", "--bytes", "--words", "--chars", "--max-line-length"}},
+	"sort": {[]string{"-k", "-t", "--key", "--field-separator"}, []string{"-n", "-r", "-u", "-h", "-V", "-f", "-b", "-g", "-M", "-s", "-z",
+		"--numeric-sort", "--reverse", "--unique", "--human-numeric-sort", "--version-sort", "--ignore-case", "--stable"}},
+	"uniq": {[]string{"-f", "-s", "-w", "--skip-fields", "--skip-chars", "--check-chars"}, []string{"-c", "-d", "-u", "-i", "-z",
+		"--count", "--repeated", "--unique", "--ignore-case"}},
+	"cut": {[]string{"-d", "-f", "-c", "-b", "--delimiter", "--fields", "--characters", "--bytes", "--output-delimiter"},
+		[]string{"-s", "--complement", "--only-delimited"}},
+	"cat": {nil, []string{"-n", "-A", "-b", "-e", "-s", "-t", "-v", "-E", "-T"}},
+}
+
+// pipeFilter reports whether v, a command reading a pipe, reads only its
+// input: no redirection reads, no wrapper runs it, and it is a filter of
+// pipeFilters given no operand and only options from its lists, or a
+// search taken to read its input alone (no operand, no option naming a
+// file, no configuration: searchScope).
+func (w *walker) pipeFilter(v view) bool {
+	if len(v.under) > 0 || slices.ContainsFunc(v.words, func(x xword) bool { return x.redirect && x.input }) ||
+		slices.Contains(v.restKnown, false) {
+		return false
+	}
+	if _, ok := searchers[v.name]; ok {
+		sc := w.searchScope(v)
+		return len(sc.operands) == 0 && len(sc.reads) == 0 && sc.widen == "" && sc.everywhere == "" && searchReadsInput(v)
+	}
+	f, ok := pipeFilters[v.name]
+	if !ok {
+		return false
+	}
+	for i := 0; i < len(v.rest); i++ {
+		a := v.rest[i]
+		name, _, attached := strings.Cut(a, "=")
+		switch {
+		case a == "-":
+		case slices.Contains(f.flags, a):
+		case slices.Contains(f.value, name):
+			if !attached {
+				i++
+			}
+		case len(a) > 2 && a[0] == '-' && a[1] != '-' && slices.Contains(f.value, a[:2]):
+			// -n5, -d:
+		case len(a) > 1 && a[0] == '-' && strings.Trim(a[1:], "0123456789") == "" && (v.name == "head" || v.name == "tail"):
+			// head -20
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// searchReadsInput reports whether a search with no operand reads its
+// input rather than its working directory: grep, egrep and fgrep do, with
+// the options the search rule allows (search.go); rg, ag and the others
+// read a pipe too when nothing else is given.
+func searchReadsInput(v view) bool {
+	return slices.Contains([]string{"grep", "egrep", "fgrep", "rg", "ag", "ugrep", "ug"}, v.name)
+}
+
 func (w *walker) reads(v view) bool {
 	s := w.s
 	if v.name == "cat" && len(v.rest) == 0 && len(v.under) == 0 && v.docOnly && !w.redefines {
 		// cat of a here-document alone reads no file; the substitutions
 		// an unquoted one runs are commands of their own.
+		return false
+	}
+	if v.pipeIn && !w.redefines && w.pipeFilter(v) {
+		// A filter whose only input is the pipe reads no file.
 		return false
 	}
 	if judged(v.name) && v.name != "git" {
@@ -552,6 +711,9 @@ type view struct {
 	under     []string
 	cwd       cwdState
 	pipeIn    bool
+	// seq is the order the command runs in, among the line's commands:
+	// after the substitutions in its words.
+	seq int
 	// docOnly is set when its only input is one here-document: no pipe,
 	// no other input redirection, no here-string.
 	docOnly bool
@@ -590,6 +752,11 @@ type walker struct {
 	anywhere string
 	inProc   int
 	loopy    bool
+	// indexChanged names the first git command that changes the index or
+	// HEAD (indexChange), and indexSeq is its seq.
+	indexChanged string
+	indexSeq     int
+	seq          int
 	// tooMany is set when the line holds more than maxCommands commands.
 	tooMany bool
 	// tooManyWords is set when brace expansion makes more words than
@@ -614,7 +781,24 @@ func (w *walker) commands(line string, cmds []simple, st *cwdState, depth int) {
 	w.lines = append(w.lines, line)
 	var lister *view // a find or fd whose output this pipeline carries
 	var prev *simple // the command before, in this pipeline
+	// The stages of a pipeline run together: a change in one and a read in
+	// another, in any order, is a read after the change.
+	// In a line with a group or a subshell, a stage can be a whole group,
+	// which the gate does not track: the stages are taken to reach back to
+	// the line's start.
+	lineStart := len(w.views)
+	grouped := strings.ContainsAny(line, "{(")
+	pipeStart, stages := len(w.views), 0
+	defer func() { w.pipeline(pipeStart, stages) }()
 	for i, c := range cmds {
+		if !c.pipeIn {
+			w.pipeline(pipeStart, stages)
+			pipeStart, stages = len(w.views), 0
+			if grouped {
+				pipeStart = lineStart
+			}
+		}
+		stages++
 		if len(w.views) >= maxCommands {
 			w.tooMany = true
 			return
@@ -638,7 +822,7 @@ func (w *walker) commands(line string, cmds []simple, st *cwdState, depth int) {
 			// what a substitution runs, cannot be told.
 			w.setReach("the line has an unbalanced quote or a trailing backslash, so what it reads cannot be told", hintQuotes)
 		}
-		if c.pipeIn && shellReadsScript(v) {
+		if c.pipeIn && (shellReadsScript(v) || v.name == "at" || v.name == "batch") {
 			w.pipedScript(prev, v, depth)
 		}
 		if !c.pipeIn {
@@ -653,6 +837,28 @@ func (w *walker) commands(line string, cmds []simple, st *cwdState, depth int) {
 			}
 		}
 		prev = &cmds[i]
+	}
+}
+
+// pipeline judges the views from start on, the commands of a pipeline of
+// stages stages, nested ones included: with more than one stage, a tree
+// change in any and a read in any other is a read after the change.
+func (w *walker) pipeline(start, stages int) {
+	if w.probe || stages < 2 || w.readAfterChange || start >= len(w.views) {
+		return
+	}
+	views := w.views[start:]
+	for i, v := range views {
+		change := w.s.treeChange(v)
+		if change == "" {
+			continue
+		}
+		for j, r := range views {
+			if j != i && w.reads(r) {
+				w.readAfterChange, w.changed = true, change
+				return
+			}
+		}
 	}
 }
 
@@ -819,6 +1025,7 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 	v := s.viewOf(c, *st)
 	v.cache = w.cache
 	w.views = append(w.views, v)
+	idx := len(w.views) - 1
 	if redefines(c, v) {
 		w.redefines = true
 	}
@@ -876,6 +1083,14 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 			}
 		}
 	}
+	// git commands run in order: this one after its substitutions.
+	w.seq++
+	w.views[idx].seq = w.seq
+	if !w.probe && v.name == "git" && w.indexChanged == "" {
+		if change := s.indexChange(v); change != "" {
+			w.indexChanged, w.indexSeq = change, w.seq
+		}
+	}
 
 	known := func() bool { return !slices.Contains(v.restKnown, false) }
 	if shells[v.name] {
@@ -908,6 +1123,13 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 		if len(v.under) > 0 && v.under[len(v.under)-1] == "flock" && len(v.rest) > 0 {
 			w.nested(v.rest[0], v.restKnown[0], v.cwd.clone(), depth)
 		}
+	case "alias":
+		// alias name='command': the command runs where the name is used.
+		for i, a := range v.rest {
+			if _, body, ok := strings.Cut(a, "="); ok {
+				w.nested(body, v.restKnown[i], v.cwd.clone(), depth)
+			}
+		}
 	case "eval":
 		// eval runs in this shell: a cd in it moves the commands after it.
 		w.nestedIn(strings.Join(v.rest, " "), known(), st, depth)
@@ -936,6 +1158,23 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 			if name, _ := program(parallelTemplate(v.rest)); readers[name] {
 				w.reachesIn(v.cwd, ".", "parallel runs a reader on the file names its input carries")
 			}
+		}
+	case "tmux":
+		// tmux runs a shell command it is given in a pane; keys sent to a
+		// pane run what the gate cannot follow.
+		if _, command, keys := tmuxCommand(v.rest); keys {
+			w.setReach("tmux sends keys to a pane, which runs a command the gate cannot follow", hintOther)
+		} else if command != "" {
+			w.nested(command, v.restKnown[len(v.restKnown)-1], v.cwd.clone(), depth)
+		}
+	case "at", "batch":
+		// at reads the commands it schedules from its input.
+		switch {
+		case len(c.docs) > 0 || slices.ContainsFunc(v.words, func(x xword) bool { return x.here }):
+			w.fedScript(c, v, depth)
+		case slices.ContainsFunc(v.rest, func(a string) bool { return strings.HasPrefix(a, "-f") }),
+			slices.ContainsFunc(v.words, func(x xword) bool { return x.redirect && x.input }):
+			w.setReach("at runs commands from a file the gate does not read", hintOther)
 		}
 	case "pwsh", "powershell", "cmd":
 		// No parser for these: a command string, or a script on the
@@ -1884,6 +2123,13 @@ func (s *setup) writesGitDir(v view) bool {
 		}
 	}
 	dests, _ := s.destinations(v)
+	for _, xw := range dests {
+		if _, unknown := s.wordSpellings(v, xw); unknown {
+			// A write whose target cannot be told could be a config file.
+			return true
+		}
+	}
+	users := s.userGitConfigs()
 	for _, xw := range append(words, dests...) {
 		abss, _ := s.wordSpellings(v, xw)
 		for _, a := range abss {
@@ -1893,9 +2139,33 @@ func (s *setup) writesGitDir(v view) bool {
 			if _, ok := relTo(common, a, s.fold); common != "" && ok {
 				return true
 			}
+			if slices.ContainsFunc(users, func(u string) bool { return samePath(a, u, s.fold) }) {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+// userGitConfigs are the configuration files git reads outside the
+// repository: the user's (~/.gitconfig, $XDG_CONFIG_HOME/git/config,
+// ~/.config/git/config), the system's (/etc/gitconfig), and those
+// GIT_CONFIG_GLOBAL and GIT_CONFIG_SYSTEM name.
+func (s *setup) userGitConfigs() []string {
+	var out []string
+	if s.home != "" {
+		out = append(out, filepath.Join(s.home, ".gitconfig"), filepath.Join(s.home, ".config", "git", "config"))
+	}
+	if x := os.Getenv("XDG_CONFIG_HOME"); x != "" {
+		out = append(out, filepath.Join(x, "git", "config"))
+	}
+	out = append(out, filepath.FromSlash("/etc/gitconfig"))
+	for _, name := range []string{"GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM"} {
+		if p := os.Getenv(name); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // commonDir is this repository's common git directory, "" when git cannot
@@ -2264,8 +2534,14 @@ func (w *walker) reaches() trigger {
 		}
 		_, search := searchers[v.name]
 		reader := readers[v.name] || search
+		mover := v.name == "cd" || v.name == "pushd" || v.name == "chdir"
 		for _, xw := range v.words {
 			if xw.message && !w.redefines {
+				continue
+			}
+			if mover && !xw.redirect {
+				// A cd target moves the working directory, which is
+				// judged for the commands after it; it reads nothing.
 				continue
 			}
 			abss, unknown := s.wordSpellings(v, xw)

@@ -324,6 +324,37 @@ func TestShellGitAbbreviations(t *testing.T) {
 	})
 }
 
+// TestShellGitIndexChange: a git command that changes the index or HEAD,
+// then one that could print file content, which the gate would judge
+// against the index and HEAD as they were before. The finding is in the
+// working tree only, not yet added.
+func TestShellGitIndexChange(t *testing.T) {
+	root := newRepo(t, cleanFiles())
+	write(t, root, leakVisual, slicer("student", "full_name", "Doe, Jane"))
+	sh := func(cmd string) gate.Event { return gate.Event{Tool: gate.Shell, Command: cmd} }
+	git := gate.ReasonGitContent
+	run(t, root, []decideCase{
+		{"add, then diff --cached", sh("git add -A && git diff --cached"), git},
+		{"add, then diff --staged", sh("git add -A && git diff --staged"), git},
+		{"add, then diff HEAD", sh("git add -A; git diff HEAD"), git},
+		{"add, then commit --dry-run -v", sh("git add -A && git commit --dry-run -v"), git},
+		{"add and commit, then show", sh("git add -A && git commit -qm wip && git show"), git},
+		{"add and commit, then diff HEAD~1", sh("git add -A && git commit -qm wip && git diff HEAD~1"), git},
+		{"add and stash, then stash show -p", sh("git add -A && git stash && git stash show -p"), git},
+		{"stash -u, then stash show -p", sh("git stash -u && git stash show -p --include-untracked"), git},
+		{"checkout of paths, then diff --cached", sh("git checkout HEAD~1 -- pbip && git diff --cached"), git},
+		{"checkout of paths, then status -v", sh("git checkout HEAD~1 -- pbip && git status -v"), git},
+		{"add in a substitution of the diff", sh(`git diff --cached "$(git add -A)"`), git},
+		// Nothing a later command prints is content.
+		{"add, commit and push", sh(`git add -A && git commit -m "Add the report" && git push`), ""},
+		{"stash pop, then a commit with a here-document message",
+			sh("git stash pop && git commit -am \"$(cat <<'EOF'\nA message\nEOF\n)\""), ""},
+		{"add, then status", sh("git add -A && git status"), ""},
+		{"add, then log --oneline", sh("git add -A && git log --oneline -3"), ""},
+		{"a branch, then diff", sh("git checkout -b topic && git diff --stat"), ""},
+	})
+}
+
 // TestShellGitCommitVerboseConfig: commit.verbose turns on the diff of a
 // dry run as -v does. The leak is committed, then deleted from the work
 // tree and not committed: the diff shows it, the tree is clean.
@@ -387,6 +418,13 @@ func TestShellGitCommitVerboseConfig(t *testing.T) {
 		{"HOME exported", sh("export HOME=/tmp/h; git status"), git},
 		{"XDG_CONFIG_HOME assigned", sh("XDG_CONFIG_HOME=/tmp/x; git commit -a --dry-run"), git},
 		{"a read of .git/config", sh("cat .git/config && git status"), ""},
+		// User-level configuration, and a target that cannot be told.
+		{"printf appending to ~/.gitconfig", sh(`printf '[commit]\n\tverbose = true\n' >> ~/.gitconfig && git commit -a --dry-run`), git},
+		{"printf appending to the XDG config", sh(`printf x >> $HOME/.config/git/config && git commit -a --dry-run`), git},
+		{"tee into ~/.gitconfig", sh(`printf x | tee -a ~/.gitconfig && git commit -a --dry-run`), git},
+		{"a write to /etc/gitconfig", sh(`printf x >> /etc/gitconfig && git commit -a --dry-run`), git},
+		{"a write to a target that cannot be told", sh(`printf x >> "$(git rev-parse --git-path config)" && git commit -a --dry-run`), git},
+		{"a write to an unrelated file", sh(`printf x >> notes.txt && git commit -a --dry-run`), ""},
 		{"commit.verbose set in the line, PowerShell", ps("git config commit.verbose true; git commit -a --dry-run"), git},
 		{"commit.verbose unset in the line", sh("git config --unset commit.verbose && git commit -a --dry-run"), git},
 		{"a key from a variable", sh(`git config "$K" true && git status`), git},
@@ -497,6 +535,8 @@ func TestShellGitUnknownWords(t *testing.T) {
 		{"commit -m of a quoted array's keys", sh(`git commit -m "${!a[@]}"`), git},
 		{"commit -m of quoted $*", sh(`git commit -m "$*"`), ""},
 		{"commit -m of a quoted zsh array", sh(`git commit -m "$a[@]"`), git},
+		{"commit -m of a zsh line split", sh(`git commit -m "${(f)X}"`), git},
+		{"commit -m of a zsh word split", sh(`git commit -m "${(s: :)X}"`), git},
 		{"commit -m of a quoted zsh subscript", sh(`git commit -m "$a[1]"`), git},
 		{"commit -m of quoted ${*}", sh(`git commit -m "${*}"`), ""},
 		// An unquoted glob expands to several words.

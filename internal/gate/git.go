@@ -367,7 +367,7 @@ type gitMessage struct {
 // them, has none.
 func gitMessageText(c simple) gitMessage {
 	m := gitMessage{words: make([]bool, len(c.words)), subs: make([]bool, len(c.subs))}
-	if c.fallback {
+	if c.fallback || !slices.ContainsFunc(c.words, func(wd word) bool { return progName(wd.text) == "git" }) {
 		return m
 	}
 	var idx []int // the index in c.words of each argument
@@ -2020,6 +2020,78 @@ func verbosity(args []string, withValue string) int {
 		}
 	}
 	return n
+}
+
+// gitIndexChangers are git's subcommands that change the index or HEAD
+// (as well as those that change the working tree, gitTreeChangers), each
+// with the first words that make it not do so.
+var gitIndexChangers = map[string][]string{
+	"add": nil, "rm": nil, "mv": nil, "commit": nil, "cherry-pick": nil, "revert": nil,
+	"update-index": nil, "read-tree": nil, "reset": nil, "restore": nil, "update-ref": nil,
+	"merge": nil, "rebase": nil, "pull": nil, "am": nil, "checkout": nil, "switch": nil,
+	"stash": {"list", "show"}, "notes": {"list", "show"}, "apply": nil,
+}
+
+// indexChangeOf names the git command argv runs when it changes the index
+// or HEAD: git's own changers (gitIndexChangers; apply only with --index,
+// --cached or --3way, else as a tree change), every tree change
+// (gitChangesTree), and a subcommand that is not git's own. "" otherwise;
+// creating a branch at HEAD changes nothing a later command prints.
+func (s *setup) indexChangeOf(argv []string, dir string) string {
+	name, rest := program(argv)
+	if name != "git" {
+		return ""
+	}
+	inv, ok := parseGit(rest, dir)
+	switch {
+	case !ok:
+		return ""
+	case !gitBuiltins[inv.sub] || inv.ambiguous:
+		return gitLabel(inv.sub)
+	case s.branchOnly(inv):
+		return ""
+	case gitChangesTree(inv.sub, inv.rest):
+		return "git " + inv.sub
+	}
+	except, ok := gitIndexChangers[inv.sub]
+	if !ok {
+		return ""
+	}
+	if inv.sub == "apply" && !hasFlag(inv.args, []string{"--index", "--cached", "--3way"}) {
+		return ""
+	}
+	if len(inv.args) > 0 && slices.Contains(except, inv.args[0]) {
+		return ""
+	}
+	return "git " + inv.sub
+}
+
+// contentCapable reports whether the git command argv, run from dir, could
+// print file content given its arguments: what rule 2 would check (its
+// content as gitSpecs reads it), whatever the files in it. A subcommand
+// that prints none whatever its options, or a git command whose arguments
+// turn none on (git commit -m msg, git status, git log --oneline), is not.
+func (s *setup) contentCapable(argv []string, dir string) bool {
+	name, rest := program(argv)
+	if name != "git" {
+		return false
+	}
+	inv, ok := parseGit(rest, dir)
+	if !ok || gitNeverContent[inv.sub] {
+		return false
+	}
+	inv, why := s.resolveAlias(inv)
+	if why != "" || inv.unsafe || inv.ambiguous || inv.dashHidden {
+		return true
+	}
+	if gitNeverContent[inv.sub] {
+		return false
+	}
+	s.locate(&inv)
+	// What git holds will have changed: a stash looked up now may not
+	// exist yet, so nothing is taken to be absent.
+	inv.unknown = true
+	return s.gitSpecs(inv).content
 }
 
 // shortFormat reports whether git status (status true) or git commit's

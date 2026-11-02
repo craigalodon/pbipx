@@ -216,7 +216,8 @@ func (t *tokenizer) expansion(kind partKind, text, raw string) {
 // inside double quotes: "$@", "${@:2}", "${a[@]}", "${!p@}", "${!a[@]}".
 // Any ${...} holding @ is taken to. "$*" and "${*}" join into one word.
 func splitsQuoted(raw string) bool {
-	return raw == "$@" || strings.HasPrefix(raw, "${") && strings.Contains(raw, "@")
+	return raw == "$@" || strings.HasPrefix(raw, "${") && strings.Contains(raw, "@") ||
+		strings.HasPrefix(raw, "${(") // zsh parameter flags: (f), (s: :), (@) split
 }
 
 // globs reports whether the word holds a glob character outside quotes,
@@ -1406,7 +1407,7 @@ var wrappers = map[string]wrapper{
 // Any other program whose first word that is not an option is a program
 // the rules judge is judged as that program (command).
 var inert = map[string]bool{
-	"echo": true, "printf": true, "which": true, "whereis": true, "type": true, "man": true,
+	"gh": true, "echo": true, "printf": true, "which": true, "whereis": true, "type": true, "man": true,
 	"info": true, "help": true, "apropos": true, "whatis": true, "hash": true, "alias": true,
 	"unalias": true, "unset": true, "export": true, "declare": true, "typeset": true, "local": true,
 	"readonly": true, "set": true, "shopt": true, "test": true, "[": true, "[[": true, "true": true,
@@ -1441,26 +1442,33 @@ var shells = map[string]bool{
 // interpreter is how the gate reads a script interpreter's command line:
 // the options that give it its program as text (code), or name a module
 // or file it runs (runs), each with the program attached or as the next
-// word, and the other options that take the next word as a value.
+// word, the other options that take the next word as a value, and the
+// options known to take none (flags). Any other option may take the next
+// word as its value.
 type interpreter struct {
-	code, runs, values []string
+	code, runs, values, flags []string
 }
 
 // interpreters are the script interpreters that read their program from
 // their input when given no program: no script operand and no code
 // option, or their input as the script (stdinScripts). A versioned name
 // (python3.14, perl5.36, node22) is its family's (interpreterFamily).
+// Names are in lower case, as on a file system that folds case; R and
+// Rscript are found as r and rscript.
 var interpreters = map[string]interpreter{
-	"python": {code: []string{"-c"}, runs: []string{"-m"}, values: []string{"-W", "-X", "-Q"}},
+	"python": {code: []string{"-c"}, runs: []string{"-m"}, values: []string{"-W", "-X", "-Q"},
+		flags: []string{"-b", "-bb", "-B", "-d", "-E", "-i", "-I", "-O", "-OO", "-P", "-q", "-s", "-S", "-u", "-v", "-x", "-R"}},
 	"ipython": {code: []string{"-c"}, runs: []string{"-m"},
 		values: []string{"--profile", "--ipython-dir", "--log-level", "--config"}},
 	"node": {code: []string{"-e", "--eval", "-p", "--print"},
 		values: []string{"-r", "--require", "--import", "--input-type", "--loader", "--experimental-loader", "--title"}},
-	"perl":    {code: []string{"-e", "-E"}, values: []string{"-I", "-M", "-m", "-x"}},
-	"ruby":    {code: []string{"-e"}, values: []string{"-r", "-I", "-C", "-E", "--encoding"}},
+	"perl": {code: []string{"-e", "-E"}, values: []string{"-I", "-M", "-m", "-x"},
+		flags: []string{"-w", "-W", "-X", "-n", "-p", "-l", "-a", "-s", "-T", "-t", "-c", "-d", "-U"}},
+	"ruby": {code: []string{"-e"}, values: []string{"-r", "-I", "-C", "-E", "--encoding"},
+		flags: []string{"-w", "-W", "-v", "-d", "-n", "-p", "-l", "-a", "-s", "-c"}},
 	"php":     {code: []string{"-r", "-R", "-B", "-E"}, runs: []string{"-f"}, values: []string{"-d", "-c", "-z"}},
-	"R":       {code: []string{"-e"}, runs: []string{"-f", "--file"}, values: []string{"--encoding"}},
-	"Rscript": {code: []string{"-e"}},
+	"r":       {code: []string{"-e"}, runs: []string{"-f", "--file"}, values: []string{"--encoding"}},
+	"rscript": {code: []string{"-e"}},
 	"lua":     {code: []string{"-e"}, values: []string{"-l"}},
 	"luajit":  {code: []string{"-e"}, values: []string{"-l", "-b", "-j", "-O"}},
 	"tclsh":   {},
@@ -1472,6 +1480,10 @@ var interpreters = map[string]interpreter{
 // version after the name is dropped (python3.14 is python, pypy3 is
 // python, perl5.36 is perl, node22 and nodejs are node, lua5.4 is lua).
 func interpreterFamily(name string) string {
+	// Names are looked up in lower case on every platform: R is r, as a
+	// folding file system finds it (a lower-case r elsewhere is taken for
+	// R too, which can only deny).
+	name = strings.ToLower(name)
 	if _, ok := interpreters[name]; ok {
 		return name
 	}
@@ -1549,6 +1561,10 @@ func readsProgram(name string, rest []string) bool {
 		}
 		return false, false
 	}
+	// unsure is set after an option the gate does not know, whose value
+	// the next word may be: then that word is no clear script, and the
+	// program is taken to come from the input (a miss denies).
+	unsure := false
 	for i := 0; i < len(rest); i++ {
 		a := rest[i]
 		switch {
@@ -1557,7 +1573,7 @@ func readsProgram(name string, rest []string) bool {
 		case a == "--":
 			return i+1 >= len(rest) || slices.Contains(stdinScripts, rest[i+1])
 		case !strings.HasPrefix(a, "-"):
-			return false // the script
+			return unsure // the script, or an option's value
 		}
 		if ok, _ := matches(a, in.code); ok {
 			return false
@@ -1565,11 +1581,29 @@ func readsProgram(name string, rest []string) bool {
 		if ok, _ := matches(a, in.runs); ok {
 			return false
 		}
-		if ok, attached := matches(a, in.values); ok && !attached {
+		if clusterHas(a, in.code) {
+			// perl -ne 'print': a cluster ending in the code option.
+			return false
+		}
+		ok, attached := matches(a, in.values)
+		switch {
+		case ok && !attached:
 			i++
+		case ok, strings.Contains(a, "="), slices.Contains(in.flags, a):
+		default:
+			unsure = true
 		}
 	}
 	return true
+}
+
+// clusterHas reports whether a, a cluster of short options (-ne), ends in
+// one of the single-letter options opts names.
+func clusterHas(a string, opts []string) bool {
+	if len(a) < 3 || a[0] != '-' || a[1] == '-' {
+		return false
+	}
+	return slices.ContainsFunc(opts, func(o string) bool { return len(o) == 2 && o[0] == '-' && a[len(a)-1] == o[1] })
 }
 
 // runners are the programs that run the program named after a subcommand
@@ -1588,7 +1622,8 @@ func stripKeywords(args []string) []string {
 		switch w := args[0]; {
 		case keywords[w]:
 			args = args[1:]
-		case w == "function":
+		case w == "function", w == "repeat":
+			// function NAME, and zsh's repeat COUNT.
 			args = args[min(2, len(args)):]
 		case listKeywords[w]:
 			return nil

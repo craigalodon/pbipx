@@ -483,7 +483,7 @@ func (s *setup) collect(p *psLine, line string, depth int) (Decision, bool) {
 			"too many to judge", maxPSWords, maxPSGroups), true
 	}
 	p.env = append(p.env, psEnv(stmts)...)
-	p.legacy = p.legacy || psLegacy.MatchString(line)
+	p.legacy = p.legacy || psLegacy(line)
 	for _, st := range stmts {
 		f := s.psStatement(st)
 		if f.opaque != "" {
@@ -538,7 +538,7 @@ func (s *setup) psGit(line string) (Decision, bool) {
 			}
 		}
 	}
-	changed := ""
+	changed, indexChanged := "", ""
 	seen := map[string]bool{}
 	for _, u := range p.units {
 		if changed != "" && u.reads {
@@ -560,8 +560,17 @@ func (s *setup) psGit(line string) (Decision, bool) {
 			if g := s.psJudge(c, p.env, p.moved, p.legacy); g != nil {
 				return deny(ReasonGitContent, "%s", g.message()), true
 			}
+			argv, _, _ := psArgv(c, nil, false)
+			if indexChanged != "" && s.contentCapable(argv, s.cwd) {
+				return deny(ReasonGitContent, "%s changes the index or HEAD, and a later git command in the line "+
+					"could print file content; it would be judged against the index and HEAD as they were before it. %s",
+					indexChanged, hintChange), true
+			}
 			if changed == "" {
 				changed = s.psChanges(c)
+			}
+			if indexChanged == "" {
+				indexChanged = s.indexChangeOf(argv, s.cwd)
 			}
 		}
 	}
@@ -871,9 +880,19 @@ func psArgv(c psGitCall, env []string, legacy bool) (argv, unknown []string, sha
 	return argv, unknown, shapes
 }
 
-// psLegacy matches a line setting $PSNativeCommandArgumentPassing to
-// Legacy or Windows.
-var psLegacy = regexp.MustCompile(`(?i)\$PSNativeCommandArgumentPassing\s*=\s*['"]?(Legacy|Windows)\b`)
+// psLegacy reports whether a PowerShell line may set
+// $PSNativeCommandArgumentPassing to Legacy or Windows: it names the
+// variable in any form ($global:..., Set-Variable, sv, New-Variable) and
+// does not name Standard alone as its value.
+func psLegacy(line string) bool {
+	return psPassing.MatchString(line) && (!psStandard.MatchString(line) || psLegacyValue.MatchString(line))
+}
+
+var (
+	psPassing     = regexp.MustCompile(`(?i)PSNativeCommandArgumentPassing`)
+	psStandard    = regexp.MustCompile(`(?i)Standard`)
+	psLegacyValue = regexp.MustCompile(`(?i)\b(Legacy|Windows)\b`)
+)
 
 // psJudge judges one git call: from the call's working directory, and when
 // the line may change it (cd, Set-Location, Start-Process

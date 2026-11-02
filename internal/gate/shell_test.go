@@ -625,6 +625,9 @@ func TestShellInterpreterStdin(t *testing.T) {
 		{"uv run of a script", shIn("sql", "uv run python build.py"), "", ""},
 		{"deno run of a script", shIn("sql", "deno run main.ts"), "", ""},
 		{"R -f of a script", shIn("sql", "R --no-save -f build.R"), "", ""},
+		{"python3 with an option the gate does not know", shIn("sql", "echo x | python3 --frobnicate build.py"), "", gate.ReasonFinding},
+		{"node with an option the gate does not know", shIn("sql", "echo x | node --frob x"), "", gate.ReasonFinding},
+		{"python3 -u of a script", shIn("sql", "python3 -u build.py"), "", ""},
 		{"python3 of a script", shIn("sql", "python3 build.py"), "", ""},
 		{"python3 -c", shIn("sql", "python3 -c 'print(1)'"), "", ""},
 		{"python3 -m", shIn("sql", "echo x | python3 -m json.tool"), "", ""},
@@ -661,6 +664,54 @@ func TestShellTokenizerFailsClosed(t *testing.T) {
 			gate.ReasonGitContent, gate.ReasonGitContent},
 		{"a timed function", shIn("sql", "time f() { cat clean.sql; }; git checkout HEAD~1 -- .; f"),
 			gate.ReasonGitContent, gate.ReasonGitContent},
+	})
+}
+
+// TestShellOrderAndScope: aliases, eval, source and detached jobs make a
+// line unordered; a pipeline is unordered among its own stages only; a
+// filter reading only a pipe reads no file; a cd target reads nothing.
+func TestShellOrderAndScope(t *testing.T) {
+	isolateSearch(t)
+	git := gate.ReasonGitContent
+	runBoth(t, []both{
+		{"an alias run after a change", shIn("sql", "alias c='cat clean.sql'\ngit checkout HEAD~1 -- .\nc"), git, git},
+		{"eval run after a change", shIn("sql", "x='cat clean.sql'; git checkout HEAD~1 -- .; eval \"$x\""), git, git},
+		{"a detached job", shIn("sql", "setsid -f sh -c 'sleep 1; cp clean.sql out.txt'; git checkout HEAD~1 -- ."), git, git},
+		{"a disowned job", shIn("sql", "sh -c 'sleep 1; cat clean.sql' & disown; git checkout HEAD~1 -- ."), git, git},
+		{"at", shIn("sql", "echo 'cat clean.sql' | at now; git checkout HEAD~1 -- ."), git, git},
+		{"systemd-run", shIn("sql", "systemd-run --user cat clean.sql; git checkout HEAD~1 -- ."), git, git},
+		{"screen detached", shIn("sql", "screen -dm sh -c 'sleep 1; cat clean.sql'; git checkout HEAD~1 -- ."), git, git},
+		{"tmux detached", shIn("sql", "tmux new -d 'sleep 1; cat clean.sql'; git checkout HEAD~1 -- ."), git, git},
+		{"tmux send-keys", shIn("sql", "tmux send-keys 'make all' Enter"), "", gate.ReasonFinding},
+		{"zsh repeat", shIn("sql", "repeat 2 { cat clean.sql; git checkout -q HEAD~1 -- .; }"), git, git},
+		{"zsh foreach", shIn("sql", "foreach i (1 2) { cat clean.sql; git checkout -q HEAD~1 -- .; }"), git, git},
+		{"nohup in the foreground", shIn("sql", "nohup make build; git checkout main"), "", ""},
+
+		// A pipeline is unordered among its own stages.
+		{"a pipeline before a change", sh("go test ./... 2>&1 | tail -5; git stash pop"), "", ""},
+		{"a reader piped before a change", shIn("sql", "cat clean.sql | head -5 && git pull"), "", ""},
+		{"git log piped before a rebase", sh("git log --oneline | head -3; git rebase main"), "", ""},
+		{"a change in one stage, a read in another", shIn("sql", "git checkout HEAD~1 -- . | cat clean.sql"), git, git},
+
+		// A filter reading only a pipe reads no file.
+		{"tail of a pipe after a change", sh("git checkout main && go test ./... 2>&1 | tail -20"), "", ""},
+		{"head of git log after a pull", sh("git pull && git log --oneline | head -5"), "", ""},
+		{"tail of make after a switch", sh("git switch main && make 2>&1 | tail -3"), "", ""},
+		{"wc of status after stash pop", sh("git stash pop && git status --short | wc -l"), "", ""},
+		{"grep of a pipe after a change", sh("git pull && make 2>&1 | grep -n error"), "", ""},
+		{"a filter given a file after a change", shIn("sql", "git pull && make | tail -5 clean.sql"), git, git},
+		{"a filter given a file option after a change", shIn("sql", "git pull && make | grep -f clean.sql"), git, git},
+		{"a filter of a pipe, cat redefined", shIn("sql", "tail() { cat clean.sql; }; git pull && make | tail -5"), git, git},
+
+		// gh runs none of its words.
+		{"gh pr create with a here-document body",
+			sh("gh pr create --title 'Fix the parser' --body \"$(cat <<'EOF'\nSummary of the change\nEOF\n)\""), "", ""},
+		{"gh with a body file in the root", sh("gh pr create --body-file pbip/x"), "", gate.ReasonFinding},
+
+		// A cd target moves the working directory and reads nothing.
+		{"cd up after a build", shIn("sql", "cd ../notes && go build ./... && cd .."), "", ""},
+		{"cd into the root, then a build", sh("cd pbip && make"), "", gate.ReasonFinding},
+		{"gofmt of the repository", sh("gofmt -l ."), "", gate.ReasonFinding},
 	})
 }
 

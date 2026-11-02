@@ -115,7 +115,7 @@ func TestMessagesNameTheTrigger(t *testing.T) {
 		{"a word reaches a root", sh("wc -c ./p*/A.Report/definition/report.json"), gate.ReasonFinding,
 			[]string{"wc is given a path that is in the protected root pbip"}, hintNames},
 		{"cd to a root", sh("cd pb''ip && make"), gate.ReasonFinding,
-			[]string{"a cd moves the shell into a directory that is the protected root pbip"}, hintNames},
+			[]string{"a cd moves a command into a directory that is the protected root pbip"}, hintNames},
 		{"cd to an expansion", sh("cd $SOMEWHERE && make"), gate.ReasonFinding,
 			[]string{"a cd, pushd or popd moves a command to a working directory the gate cannot tell"}, hintExpand},
 		{"an unresolvable expansion", sh("cat $SOMEFILE"), gate.ReasonFinding,
