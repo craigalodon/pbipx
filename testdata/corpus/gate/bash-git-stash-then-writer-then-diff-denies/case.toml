@@ -1,0 +1,7 @@
+description = "git stash puts what HEAD holds back in the working tree, make may then rewrite it, and git diff prints what it wrote: the gate judged the tree as it was before both, so the line denies with git-content whatever the tree holds now"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
+known       = "predecessor"

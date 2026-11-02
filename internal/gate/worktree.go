@@ -18,13 +18,14 @@ const whyWorktreeAfterWrite = "a command that may write files runs before a git 
 	"which the gate judged as it was before"
 
 // worktreeAfterWrite reports whether a git command in the line that
-// prints the working tree's content (printsWorktree) runs after a command
+// prints the working tree's content (printsWorktree), its pathspecs not
+// provably out of every root (worktreeSpecsAvoid), runs after a command
 // that may write files (writesNothing false): before it, or anywhere in
 // an unordered line.
 func (w *walker) worktreeAfterWrite() bool {
 	unordered := w.loopy || w.anywhere != ""
 	for _, v := range w.views {
-		if !printsWorktree(v) {
+		if !printsWorktree(v) || w.s.worktreeSpecsAvoid(v) {
 			continue
 		}
 		for _, u := range w.views {
@@ -36,13 +37,110 @@ func (w *walker) worktreeAfterWrite() bool {
 	return false
 }
 
+// historyThenWrite names the git command that rewrites the working tree
+// from history (a stash, a checkout or restore of paths, a reset --hard,
+// a switch, a merge: treeChange) when it runs before a command that may
+// write files, which runs before a git command that prints the working
+// tree, its pathspecs not provably out of every root: what the writer
+// makes of the content history put back is printed, and the gate judged
+// the tree as it was before both. "" otherwise.
+func (w *walker) historyThenWrite() string {
+	unordered := w.loopy || w.anywhere != ""
+	before := func(a, b view) bool { return a.seq != b.seq && (unordered || a.seq < b.seq) }
+	for _, v := range w.views {
+		if !printsWorktree(v) || w.s.worktreeSpecsAvoid(v) {
+			continue
+		}
+		for _, u := range w.views {
+			if !before(u, v) || writesNothing(u) || gitTreeRewrite(u) {
+				continue
+			}
+			for _, h := range w.views {
+				if (h.name == "git" || h.name == "gh" || h.name == "hub") && before(h, u) {
+					if change := w.s.treeChange(h); change != "" {
+						return change
+					}
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// gitTreeRewrite reports whether v is a git command that changes the
+// working tree from history (the history half of historyThenWrite, not a
+// writer of its own).
+func gitTreeRewrite(v view) bool {
+	if v.name != "git" {
+		return false
+	}
+	_, rest := program(v.argv)
+	inv, ok := parseGit(rest, "")
+	return ok && gitChangesTree(inv.sub, inv.rest) && !gitHooks[inv.sub]
+}
+
+// worktreeSpecsAvoid reports whether v, a git command that prints the
+// working tree, is limited to pathspecs that provably avoid every root, as
+// rule 2 proves them without asking git (specsAvoid): those after "--",
+// or, with none, its operands that name existing paths (git diff
+// src/main.go), the others being revisions. No pathspec, one the gate
+// cannot tell, --no-index or --pathspec-from-file leave it unproven.
+func (s *setup) worktreeSpecsAvoid(v view) bool {
+	name, rest := program(v.argv)
+	if name != "git" || len(unknownArgs(v)) > 0 {
+		return false
+	}
+	inv, ok := parseGit(rest, s.viewDir(v))
+	if !ok {
+		return false
+	}
+	switch inv.sub {
+	case "diff", "diff-files", "diff-index", "status", "add", "stage", "grep":
+	default:
+		return false
+	}
+	if inv.elsewhere || inv.oddSpecs || hasFlag(inv.args, []string{"--no-index", "--pathspec-from-file"}) {
+		return false
+	}
+	s.locate(&inv)
+	if inv.place != gitHere {
+		return false
+	}
+	specs := inv.specs
+	if !inv.dashdash {
+		if inv.sub == "grep" {
+			return false // its first operand is the pattern
+		}
+		for _, a := range positional(inv.args) {
+			if s.isPath(inv, a) {
+				specs = append(specs, a)
+			}
+		}
+	}
+	if len(specs) == 0 {
+		return false
+	}
+	return s.specsAvoid(inv, s.parseSpecs(inv, specs)) == ""
+}
+
+// gitHooks are git's subcommands that run hooks, which can write files:
+// commit, merge, rebase, pull, am, checkout and switch (post-checkout),
+// cherry-pick, revert, push (pre-push), clone, worktree (add), gc
+// (pre-auto-gc).
+var gitHooks = map[string]bool{
+	"commit": true, "merge": true, "rebase": true, "pull": true, "am": true, "checkout": true,
+	"switch": true, "cherry-pick": true, "revert": true, "push": true, "clone": true, "worktree": true,
+	"gc": true,
+}
+
 // printsWorktree reports whether v is a git command that can print the
 // content of files in the working tree: git diff but --cached or a
 // summary alone (--stat, --name-only and the like), with or without a
-// revision, status -v -v, add, checkout, reset or restore with
-// -p, a dry run of commit with -v and -a, -o, -i or paths, stash show
-// (what a stash in the line records), difftool, mergetool, blame,
-// annotate, grep but --cached, and any subcommand that is not git's own.
+// revision, diff-files with a patch, diff-index with a patch but
+// --cached, status -v -v, add, checkout, reset or restore with -p, a dry
+// run of commit with -v and -a, -o, -i or paths, stash show (what a
+// stash in the line records), difftool, mergetool, blame, annotate, grep
+// but --cached, and any subcommand that is not git's own.
 func printsWorktree(v view) bool {
 	name, rest := program(v.argv)
 	if name == "hub" {
@@ -62,6 +160,10 @@ func printsWorktree(v view) bool {
 	case "diff":
 		summary := hasFlag(inv.args, gitSummaryFlags) && !hasFlag(inv.args, gitPatchFlags)
 		return !summary && !hasFlag(inv.args, []string{"--cached", "--staged"})
+	case "diff-files":
+		return hasFlag(inv.args, gitPatchFlags)
+	case "diff-index":
+		return hasFlag(inv.args, gitPatchFlags) && !hasFlag(inv.args, []string{"--cached"})
 	case "status":
 		return !shortFormat(inv.args, true) && verbosity(inv.args, "u") >= 2
 	case "add", "stage":
@@ -88,10 +190,13 @@ func printsWorktree(v view) bool {
 }
 
 // writesNothing reports whether v is known to write no file: an
-// assignment alone, git in a read-only form (gitReadOnly), or a program
-// that only prints, lists, reads or searches (noWrites), with no output
-// redirection but to /dev/null or a descriptor. Any other command may
-// write files, as may a function or alias the line defines.
+// assignment alone; a git command that runs no hook and changes no tree
+// (add, stash, fetch, tag, branch, config, update-ref, a read-only form;
+// gitHooks, gitChangesTree), a stash push included, which puts back what
+// HEAD holds (historyThenWrite); or a program that only prints, lists,
+// reads or searches (noWrites), with no output redirection but to
+// /dev/null or a descriptor. Any other command may write files, as may a
+// function or alias the line defines.
 func writesNothing(v view) bool {
 	for _, xw := range v.words {
 		if xw.redirect && !xw.here && (!xw.input || xw.rw) &&
@@ -105,7 +210,10 @@ func writesNothing(v view) bool {
 	if v.name == "git" {
 		_, rest := program(v.argv)
 		inv, ok := parseGit(rest, "")
-		return ok && gitBuiltins[inv.sub] && !inv.ambiguous && gitReadOnly(inv)
+		if !ok || !gitBuiltins[inv.sub] || inv.ambiguous || gitHooks[inv.sub] {
+			return false
+		}
+		return gitReadOnly(inv) || inv.sub == "stash" || !gitChangesTree(inv.sub, inv.rest)
 	}
 	if !noWrites[v.name] {
 		return false

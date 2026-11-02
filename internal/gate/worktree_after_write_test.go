@@ -25,7 +25,7 @@ func TestShellWorktreeAfterWrite(t *testing.T) {
 		{"a script, then diff of a root", "./scripts/gen.sh; git diff -- pbip/", finding},
 		{"pre-commit run, then diff", "pre-commit run --all-files; git diff", finding},
 		{"a formatter, then status -vv", "prettier --write . && git status -v -v", finding},
-		{"a build, then add -p", "go generate ./... && git add -p -- README.md", finding},
+		{"a build, then add -p of a path outside the roots", "go generate ./... && git add -p -- README.md", ""},
 		{"a redirection, then diff", "echo x > notes/x.md && git diff", finding},
 		{"a write in an assignment's substitution", `x=$(make fmt) && git diff`, finding},
 		{"a loop, then diff", "for i in 1; do git diff; done; make fmt", finding},

@@ -1,0 +1,6 @@
+description = "git add runs no hook and writes no file, and only takes entries out of the working-tree diff git diff then prints, which the gate judged before the line: allowed though the protected root holds a finding"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = ["Doe, Jane"]

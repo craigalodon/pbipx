@@ -162,6 +162,14 @@ func (s *setup) shell(line string) Decision {
 			}
 		}
 	}
+	// git putting history back in the working tree, then a command that
+	// may write files, then git printing the working tree: what it prints
+	// comes from history, which the tree scan below does not see.
+	if change := w.historyThenWrite(); change != "" {
+		return deny(ReasonGitContent, "%s puts content from history in the working tree, and a command after it may "+
+			"write files that a later git command prints; it would be judged against the tree as it was before. %s",
+			change, hintChange)
+	}
 	// A command that may write files, then git printing the working tree
 	// (F1): the tree it prints is scanned as for Grep.
 	if w.worktreeAfterWrite() {
@@ -2569,7 +2577,8 @@ func (s *setup) writesGitDir(v view) bool {
 	writable := mayWriteAll(v)
 	var words []xword
 	for i, xw := range v.words {
-		if writable[i] {
+		if writable[i] && !(xw.redirect && (xw.here || xw.input && !xw.rw)) {
+			// An input redirection and a here-string write nothing.
 			words = append(words, xw)
 		}
 	}
