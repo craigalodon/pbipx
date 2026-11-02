@@ -1187,11 +1187,23 @@ hint of what to do instead:
 
 Programs are named only when they are in the gate's tables (a reader, a
 search, `git`'s own subcommands); a root is named from the policy. The
-hints are fixed sentences: for a finding in a report's selection, "Clear
-the selection in Power BI Desktop and save, or ask a person to run `pbipx
-scan` at a terminal."; for a search, "Name the files to search
+hints are fixed sentences, and lead with something the agent can do
+itself, keeping a person's step where only a person can act: for a Read of
+a finding in a report's selection, "Use `pbipx explain` for its
+structure; to clear the selection, ask a person to clear it in Power BI
+Desktop and save, or to run `pbipx scan` at a terminal."; for any other
+finding on a Read, "Use `pbipx explain` for its structure; to clear the
+value, ask a person to remove it in Power BI Desktop or an editor, or to
+run `pbipx scan` at a terminal."; for a search, "Name the files to search
 explicitly, or exclude the protected folders."; for git, "Limit the paths
-(`-- src`) or use --stat."
+(`-- src`) or use --stat."; for git given an argument the gate cannot
+expand, "Write git's arguments out in full, without variables or command
+substitutions.", followed for `commit`, `merge`, `tag`, `stash` and
+`notes` by "`git commit -F - <<'EOF'` takes a message from a
+here-document."; for a PowerShell command, which the gate cannot read
+whatever the working directory, "Use the Read tool for a single file, or
+the Bash tool with the paths written out."; and for `agent-settings`,
+"Show the person the exact change, for them to make at a terminal."
 
 Gate reason classes: `finding`, `unvettable`, `scan-error`,
 `local-state`, `agent-settings` (pbipx only), `git-content`, `policy-error`,

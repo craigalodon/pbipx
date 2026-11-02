@@ -304,6 +304,16 @@ func (o gitOptions) cluster(a, next string) (c gitCluster, ok bool) {
 	return c, true
 }
 
+// gitExpandHint ends a git refusal for an argument the gate cannot expand:
+// for a subcommand that takes a message, it adds how to give one the gate
+// can read.
+func gitExpandHint(sub string) string {
+	if gitMessageSubs[sub] {
+		return hintGitExpand + " `git commit -F - <<'EOF'` takes a message from a here-document."
+	}
+	return hintGitExpand
+}
+
 // gitMessage is what of a simple command is git's message text, read by
 // gitMessageText: prose, not paths, so a protected root's name in it does
 // not make the command reach the root. words and subs are indexed as the
@@ -830,7 +840,7 @@ func (s *setup) gitContent(args, unknown []string) *gitDenial {
 		// Before "--" a word that cannot be told could be an option that
 		// turns content on: -p, -v, --cc, a stash or reflog subcommand.
 		return &gitDenial{inv.sub, "is given, before --, an argument the gate cannot expand " +
-			"(a variable or a command substitution), which could be an option that prints content (-p, -v, --cc)", hintGitExpand}
+			"(a variable or a command substitution), which could be an option that prints content (-p, -v, --cc)", gitExpandHint(inv.sub)}
 	}
 	s.locate(&inv)
 	switch inv.place {
@@ -843,7 +853,7 @@ func (s *setup) gitContent(args, unknown []string) *gitDenial {
 		}
 		if inv.unknown && s.gitSpecs(inv).content {
 			// An argument that cannot be told could name one.
-			return &gitDenial{inv.sub, whyUnknownSpec, hintGitExpand}
+			return &gitDenial{inv.sub, whyUnknownSpec, gitExpandHint(inv.sub)}
 		}
 		return nil
 	}
@@ -861,7 +871,7 @@ func (s *setup) gitContent(args, unknown []string) *gitDenial {
 			"Run it from inside the repository, with the directory made first."}
 	case inv.unknown:
 		// Never the name-only query with a word left unexpanded.
-		return &gitDenial{inv.sub, whyUnknownSpec, hintGitExpand}
+		return &gitDenial{inv.sub, whyUnknownSpec, gitExpandHint(inv.sub)}
 	case c.bySpecs && inv.oddSpecs:
 		return &gitDenial{inv.sub, "runs with --literal-pathspecs, --glob-pathspecs or --icase-pathspecs, " +
 			"which make every pathspec unprovable", "Drop that global option, or use --stat."}

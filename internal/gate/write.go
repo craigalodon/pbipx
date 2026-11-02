@@ -14,14 +14,14 @@ import (
 // file: one in the repository can set disableAllHooks, which turns off the
 // gate's own hook (threat model, layer 5).
 const agentSettingsWhy = "an agent may not change Claude Code's settings in the repository, " +
-	"since they can turn off the gate's hook; a person edits them"
+	"since they can turn off the gate's hook. " + hintSettings
 
 // controlWhy is why an agent may not write the files outside the
 // repository that control the gate: the approval store, where a forged
 // record would approve a weakened policy (layer 6), and Claude Code's user
 // and managed settings, which register the gate's hook or turn it off
 // (layer 5).
-const controlWhy = "an agent may not change what controls the gate; a person does, at a terminal"
+const controlWhy = "an agent may not change what controls the gate. " + hintSettings
 
 // write decides a write of p (behavior.md, "The gate", Write). The gate
 // does not otherwise judge writes: only a Claude Code settings file inside

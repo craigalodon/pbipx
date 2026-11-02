@@ -580,12 +580,17 @@ const (
 	// expand.
 	hintGitExpand = "Write git's arguments out in full, without variables or command substitutions."
 	hintChange    = "Run the change on its own, then the read as a separate call."
-	hintSelect    = "Clear the selection in Power BI Desktop and save, or ask a person to run `pbipx scan` at a terminal."
-	hintValue     = "Remove the value from the file in Power BI Desktop or an editor, or ask a person to run `pbipx scan` at a terminal."
-	hintVet       = "Ask a person to cover the file in the policy (.pbipx.toml), or leave it out of the call."
-	hintUnread    = "Check that the file can be read, or ask a person to run `pbipx scan` at a terminal."
-	hintLocal     = "Leave Power BI Desktop's .pbi folders out of the call; Desktop keeps them on its own."
-	hintSetting   = "Ask a person to make the change at a terminal."
+	hintSelect    = "Use `pbipx explain` for its structure; to clear the selection, ask a person to clear it in Power BI Desktop and save, or to run `pbipx scan` at a terminal."
+	hintValue     = "Use `pbipx explain` for its structure; to clear the value, ask a person to remove it in Power BI Desktop or an editor, or to run `pbipx scan` at a terminal."
+	// hintPowerShell ends a refusal for a PowerShell command, which the
+	// gate cannot read, whatever the working directory.
+	hintPowerShell = "Use the Read tool for a single file, or the Bash tool with the paths written out."
+	// hintSettings ends a refusal to change what controls the gate.
+	hintSettings = "Show the person the exact change, for them to make at a terminal."
+	hintVet      = "Ask a person to cover the file in the policy (.pbipx.toml), or leave it out of the call."
+	hintUnread   = "Check that the file can be read, or ask a person to run `pbipx scan` at a terminal."
+	hintLocal    = "Leave Power BI Desktop's .pbi folders out of the call; Desktop keeps them on its own."
+	hintSetting  = "Ask a person to make the change at a terminal."
 )
 
 // simple records one simple command run from st, reads what it nests, and
