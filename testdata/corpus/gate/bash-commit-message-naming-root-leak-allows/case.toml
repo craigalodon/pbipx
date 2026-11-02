@@ -1,0 +1,7 @@
+description = "a commit message from a here-document that names the protected root is prose, not a path, so the commit is not judged as a tree scan; allows while the tree leaks"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = ["Doe, Jane"]
+known       = "predecessor"

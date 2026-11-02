@@ -1,0 +1,6 @@
+description = "a program's code given on its command line (python3 -c) that names the protected root may read it, so the tree is scanned and its finding denies"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]

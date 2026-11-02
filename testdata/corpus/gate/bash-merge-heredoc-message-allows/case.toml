@@ -1,0 +1,6 @@
+description = "the cat in git merge's own message substitution runs before the merge, so it is not a read after the merge changes the tree. Plants no value"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = []
