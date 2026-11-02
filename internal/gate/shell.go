@@ -2528,16 +2528,19 @@ func (s *setup) commonDir() string {
 }
 
 // lineSets reports whether a command of the line sets or exports one of
-// names: an assignment before a command or alone, or an export, declare,
-// typeset, local or readonly of it.
+// names: an assignment before a command or alone, after reserved words
+// (time PS4=...) or under a wrapper (env BASH_ENV=...), or an export,
+// declare, typeset, local or readonly of it.
 func lineSets(views []view, names ...string) bool {
 	for _, v := range views {
-		for _, a := range v.argv {
+		// The words before the program's: an assignment alone has none.
+		before := v.argv
+		if v.name != "" {
+			before = v.argv[:max(0, len(v.argv)-len(v.rest)-1)]
+		}
+		for _, a := range before {
 			name, _, ok := strings.Cut(a, "=")
-			if !ok || !isName(name) {
-				break
-			}
-			if slices.Contains(names, name) {
+			if ok && isName(name) && slices.Contains(names, name) {
 				return true
 			}
 		}
