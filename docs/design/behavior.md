@@ -623,8 +623,11 @@ path, is denied with `event-error`: the call cannot be judged.
     text before and after it. Every word that results is a word of its
     own for every rule: `cat {pbip,sql}/x` names the root, `git log
     {-p,-2}` is `git log -p -2`, and `git add src/{a,b}.go` adds two
-    files. Any other brace is literal, as in bash: `{a}`, `{}`, `{a..}`,
-    `HEAD@{1}`, `${...}`, a quoted brace and the grouping `{` and `}`.
+    files. A word the expansion leaves empty is dropped, as bash drops
+    it: `{rg,} x` is `rg x`. Any other brace is literal, as in bash:
+    `{a}`, `{}`, `{a..}`, `HEAD@{1}`, `${...}`, a quoted brace, the
+    grouping `{` and `}`, and a `{name}` just before a redirection, which
+    is the redirection's named descriptor (`{fd}>/dev/null`).
     Past 64 words, with an end or a step outside the 64-bit integers, or
     in a word of more than 4,096 characters, the word is unknown, as a
     variable is, and a refusal for it says it is a brace expansion. A
@@ -639,7 +642,25 @@ path, is denied with `event-error`: the call cannot be judged.
     data, never commands: with a quoted delimiter (`<<'EOF'`, `<<"EOF"`,
     `<<\EOF`) all of it; with an unquoted one, all but its command
     substitutions (`$(...)` and backticks), which are read as nested lines.
-    A here-document inside a command substitution is read the same way;
+    A here-document inside a command substitution is read the same way.
+    The delimiter's quoting is removed as bash removes it, `$'E'` and
+    `$"E"` included (both end at a line `E`); a delimiter that still holds
+    `$` or a backtick, and a body whose delimiter line never comes, leave
+    the line uncertain (below);
+  - a command substitution's body is read by the tokenizer itself, as
+    bash reads it: its end is the first `)` at the body's top level, after
+    its quotes, `${...}` (a `)` or `#` in one is text), backticks, nested
+    substitutions, comments, here-documents and case patterns. Inside
+    arithmetic (`((...))`, `$((...))`, `$[...]`) `<<` is a shift, not a
+    here-document, and only the substitutions in it run. In a case
+    pattern `|` separates patterns, and a pattern's `)` closes nothing;
+  - the tokenizer fails closed on its own uncertainty: a line it does not
+    end at the plain top level (a `case` or a parenthesis left open, a
+    case pattern being read, a here-document left open, a `)` that closes
+    nothing, a delimiter as above) touches every protected root and is
+    unordered (rule 2). A differential test runs generated lines under
+    real bash with stub programs and checks that the gate denies every
+    one in which bash runs a dangerous command;
   - with unbalanced quotes or a trailing backslash, the line is split on
     whitespace, at newlines and at `;`, `&`, `|`, `(` and `)` whether or
     not a space sets them apart, quotes kept as written. A reading or
@@ -922,7 +943,11 @@ path, is denied with `event-error`: the call cannot be judged.
      `show`, `cherry-pick`, `revert`, `apply --index`/`--cached`/`--3way`,
      `update-index`, `read-tree`, `reset`, `restore`, `update-ref`,
      `merge`, `rebase`, `pull`, `am`, `checkout`, `switch` but a branch
-     created at HEAD, `notes` but `list` and `show`, a subcommand that is
+     created at HEAD, `notes` but `list` and `show`, `symbolic-ref`
+     setting or deleting a ref (one name alone, with `-q` or `--short`,
+     reads), `replace` but its list, `fetch --update-head-ok`, `branch`
+     with `-f`, `-C` or `-M`, `gh pr checkout`, `gh repo sync`, `gh repo
+     clone` and hub's tree-changing git commands, a subcommand that is
      not git's own, and every tree change) makes any later git command in
      the line that could print file content given its arguments deny with
      `git-content` (`git add -A && git diff --cached`, `git add -A && git
@@ -958,7 +983,9 @@ path, is denied with `event-error`: the call cannot be judged.
        path as written), is a protected root, is inside one, or contains
        one (but the target of `cd`, `pushd` or `chdir`, which moves the
        working directory, judged for the commands after it, and reads
-       nothing: `cd ..` is not a read of the root it holds). That
+       nothing: `cd ..` is not a read of the root it holds; nor the
+       first operand of `jq`, `yq` or `gojq`, its filter, unless `-f`
+       gives the filter: `jq . package.json` reads package.json). That
        includes the value of a `--flag=value`, what an unquoted
        glob matches, and for a word with `**` (which zsh, and bash with
        `globstar`, read as any depth) everything under its literal prefix.
@@ -1047,7 +1074,13 @@ path, is denied with `event-error`: the call cannot be judged.
      program takes, such as `gh pr create --body "$(cat <<'EOF' ...)"`,
      is still tested for a root's name (`gh` itself is a program that runs
      none of its words, so such a body is allowed when it names no root;
-     a file it reads, `--body-file` or `--input`, is placed as any word),
+     a file it reads, `--body-file` or `--input`, is placed as any word;
+     `gh pr checkout`, `repo sync` and `repo clone` change the tree, and
+     `gh pr diff` prints a remote patch, which denies with `git-content`
+     unless `--name-only` is given; `hub` is judged as git. **Known
+     limitation:** other remote content gh prints, `gh api` of a
+     `/contents/` or `/raw/` path, `gh gist view` and `gh run view
+     --log`, is not judged),
      and so is git's message under a wrapper (`env GIT_AUTHOR_NAME=x git
      commit -m "..."`). **Known limitation:** a message written to a file
      and run as a script in a later step (`git log -1 --format=%B > x.py
@@ -1773,7 +1806,12 @@ behavior (2026-10-29).
     common git directory), as the files that control the gate are judged
     (a redirection's target, the destination of `cp`, `mv`, `install`,
     `rsync`, `tee` or `dd`, `sed -i` and any command not known to only
-    read): `printf ... >> .git/config`; and by setting or exporting `HOME`
+    read): `printf ... >> .git/config`; by a write to any file named
+    `gitconfig` or `.gitconfig`, or `config` in a directory named `git` or
+    `.git`, wherever it is (Git for Windows keeps its system file under
+    its install prefix, not `/etc`), and to the files `git var
+    GIT_CONFIG_GLOBAL` and `GIT_CONFIG_SYSTEM` name; and by setting or
+    exporting `HOME`
     or `XDG_CONFIG_HOME` anywhere in the line, which points git at another
     user configuration.
   - a variable git reads, set or exported by a command of its own
