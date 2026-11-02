@@ -64,6 +64,8 @@ type word struct {
 	// here for a here-string's (<<<), which is the command's input itself,
 	// not a file.
 	input, here bool
+	// rw is true for a redirection that reads and writes (<>).
+	rw bool
 }
 
 // heredoc is one here-document, <<WORD or <<-WORD.
@@ -160,6 +162,7 @@ type tokenizer struct {
 	redirect bool // the word being read is a redirection's target
 	input    bool // the redirection reads
 	here     bool // the redirection is a here-string
+	rw       bool // the redirection reads and writes (<>)
 	pipe     bool // the next command reads this one's output
 	// litBuf is the literal part being read, open when litOpen.
 	litBuf    strings.Builder
@@ -541,7 +544,7 @@ func (t *tokenizer) endWord() {
 	if t.inWord {
 		w := word{
 			text: t.raw.String(), parts: t.parts, quoted: t.quoted, splits: wordSplits(t.parts),
-			redirect: t.redirect, input: t.redirect && t.input, here: t.redirect && t.here,
+			redirect: t.redirect, input: t.redirect && t.input, here: t.redirect && t.here, rw: t.redirect && t.rw,
 		}
 		// Brace expansion makes the word several, each a word of its own;
 		// past maxBraceWords it is one the gate does not expand.
@@ -582,7 +585,7 @@ func (t *tokenizer) endWord() {
 				t.cur.words = append(t.cur.words, x)
 			}
 		}
-		t.redirect, t.input, t.here = false, false, false
+		t.redirect, t.input, t.here, t.rw = false, false, false, false
 		t.caseWord()
 	}
 	t.raw.Reset()
@@ -655,7 +658,7 @@ func (t *tokenizer) endCommand() {
 		t.pipe = false
 	}
 	t.cur = simple{}
-	t.redirect, t.input, t.here = false, false, false
+	t.redirect, t.input, t.here, t.rw = false, false, false, false
 }
 
 // tokenize is splitCommands for a line whose quotes balance; ok is false
@@ -953,6 +956,7 @@ func (t *tokenizer) run(start int, sub bool) (int, bool) {
 			t.redirect = true
 			t.input = rs[start] == '<'
 			t.here = string(rs[start:i+1]) == "<<<"
+			t.rw = string(rs[start:i+1]) == "<>"
 		case '#':
 			if t.inWord {
 				t.lit("#", false)

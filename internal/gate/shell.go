@@ -5,6 +5,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -32,7 +33,7 @@ const maxCommands = 20000
 // in a message: it can carry anything.
 func (s *setup) shell(line string) Decision {
 	top := splitCommands(line)
-	w := &walker{s: s, cache: newSpellCache()}
+	w := &walker{s: s, cache: newSpellCache(), text: line}
 	st := cwdState{dirs: []string{s.cwd}}
 	w.commands(line, top, &st, 0)
 	if w.tooMany {
@@ -231,6 +232,9 @@ func (w *walker) unknownProgram(c simple, v view) string {
 		wd := c.words[args[j]]
 		known := v.argvKnown[j-(len(args)-len(v.argv))]
 		switch {
+		case !known && j == k && w.literalProgram(wd):
+			// A path whose directory cannot be told, to a program named
+			// by its literal last element: that program.
 		case !known && (j < len(args)-1 || wd.splits):
 			return "a command word the gate cannot expand (a variable or a command substitution) runs a program it cannot tell"
 		case wd.globs() && wd.text != "[" && wd.text != "[[" && j < len(args)-1:
@@ -238,6 +242,88 @@ func (w *walker) unknownProgram(c simple, v view) string {
 		}
 	}
 	return ""
+}
+
+// literalProgram reports whether wd, a command word whose value cannot be
+// told, is a path to a program named by its literal last element
+// ("$(go env GOPATH)/bin/golangci-lint", "${GOBIN:-$HOME/go/bin}/staticcheck"),
+// which the program is known by, whatever the directory. It is not when
+// the last element holds an expansion or a glob; when it names a shell,
+// an interpreter, a wrapper or eval, source or ., whose directory matters
+// little but whose arguments do; or when the word could split into other
+// words (an unquoted command substitution, positional parameters, or a
+// variable the line could set).
+func (w *walker) literalProgram(wd word) bool {
+	var tail strings.Builder
+	i := len(wd.parts)
+	for i > 0 && wd.parts[i-1].kind == litPart {
+		i--
+	}
+	for _, p := range wd.parts[i:] {
+		tail.WriteString(p.text)
+	}
+	slash := strings.LastIndexByte(tail.String(), '/')
+	if i == 0 || slash < 0 {
+		return false
+	}
+	name := tail.String()[slash+1:]
+	for _, p := range wd.parts[i:] {
+		if !p.quoted && hasGlob(p.text) {
+			return false
+		}
+	}
+	base := progName(name)
+	_, wrap := wrappers[base]
+	_, interp := interpreters[interpreterFamily(base)]
+	_, runner := runners[base]
+	if base == "" || wrap || interp || runner || shells[base] || slices.Contains([]string{"eval", "source", "."}, base) {
+		return false
+	}
+	for _, p := range wd.parts[:i] {
+		if p.kind == litPart || p.inDouble {
+			continue
+		}
+		if p.kind == tildePart {
+			continue
+		}
+		// An unquoted expansion splits: what it holds must come from
+		// outside the line.
+		if strings.Contains(p.raw, "$(") || strings.Contains(p.raw, "`") ||
+			strings.ContainsFunc(p.raw, func(r rune) bool { return r == '@' || r == '*' || r == '!' || '0' <= r && r <= '9' }) {
+			return false
+		}
+		for _, m := range paramNames.FindAllStringSubmatch(p.raw, -1) {
+			if setsName(w.text, m[1]) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// paramNames finds the names of the parameters an expansion reads.
+var paramNames = regexp.MustCompile(`\$\{?([A-Za-z_][A-Za-z0-9_]*)`)
+
+// setsName reports whether line names the variable name other than as an
+// expansion ($name, ${name}), where it could set it (name=, read name,
+// for name in, export name ...).
+func setsName(line, name string) bool {
+	for i := 0; i < len(line); {
+		j := strings.Index(line[i:], name)
+		if j < 0 {
+			return false
+		}
+		at := i + j
+		end := at + len(name)
+		before := at == 0 || !isNameRune(rune(line[at-1]))
+		after := end >= len(line) || !isNameRune(rune(line[end]))
+		expansion := at > 0 && line[at-1] == '$' || at > 1 && line[at-1] == '{' && line[at-2] == '$'
+		if before && after && !expansion {
+			return true
+		}
+		i = end
+	}
+	return false
 }
 
 // modeled reports whether the gate reads a command of that name in a way
@@ -947,6 +1033,8 @@ type xword struct {
 	redirect bool
 	// input and here are word's: a redirection that reads, a here-string.
 	input, here bool
+	// rw is word's: a redirection that reads and writes (<>).
+	rw bool
 	// message is set for git's message text (gitMessageText), which is
 	// not placed as a path.
 	message bool
@@ -1026,6 +1114,8 @@ type walker struct {
 	// tooManyWords is set when brace expansion makes more words than
 	// maxBraceLine in a line.
 	tooManyWords bool
+	// text is the command line decided, as given.
+	text string
 	// uncertainWhy says why the gate cannot read the line as bash would
 	// (setUncertain), and runtimeWhy what in it is code built at run time
 	// (setRuntime); "" for none.
@@ -2007,7 +2097,7 @@ func dotRelative(p string) bool {
 // HOME (the gate's own), PWD and OLDPWD (as the line leaves them) and a
 // leading ~. Any other expansion leaves it unknown.
 func (s *setup) expandWord(w word, st cwdState) xword {
-	xw := xword{known: true, redirect: w.redirect, input: w.input, here: w.here}
+	xw := xword{known: true, redirect: w.redirect, input: w.input, here: w.here, rw: w.rw}
 	var text, pattern strings.Builder
 	quotedGlob := false
 	add := func(t string, quoted bool) {
@@ -2640,12 +2730,15 @@ func (s *setup) intoAgentDir(v view) bool {
 	return false
 }
 
-// destinations are the words v writes into: its redirection targets, the
-// destination of cp, mv, ln, install or rsync, the files tee writes and
-// dd's of=. sources are what a copier copies.
+// destinations are the words v writes into: the targets of its output
+// redirections and of <> (not of an input redirection or a here-string),
+// the destination of cp, mv, ln, install or rsync, the files tee writes
+// and dd's of=. sources are what a copier copies.
 func (s *setup) destinations(v view) (dests, sources []xword) {
 	for _, xw := range v.words {
-		if xw.redirect {
+		if xw.redirect && !xw.here && (!xw.input || xw.rw) {
+			// An output redirection, or <>: an input one and a here-string
+			// write nothing.
 			dests = append(dests, xw)
 		}
 	}
