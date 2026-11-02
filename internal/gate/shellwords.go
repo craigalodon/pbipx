@@ -180,6 +180,19 @@ func (t *tokenizer) expansion(kind partKind, text, raw string) {
 	t.parts = append(t.parts, part{kind: kind, text: text, raw: raw, inDouble: t.inDouble})
 }
 
+// splitsQuoted reports whether the expansion raw yields several words even
+// inside double quotes: "$@", "${@:2}", "${a[@]}", "${!p@}", "${!a[@]}".
+// Any ${...} holding @ is taken to. "$*" and "${*}" join into one word.
+func splitsQuoted(raw string) bool {
+	return raw == "$@" || strings.HasPrefix(raw, "${") && strings.Contains(raw, "@")
+}
+
+// globs reports whether the word holds a glob character outside quotes,
+// which the shell expands into the names it matches.
+func (w word) globs() bool {
+	return slices.ContainsFunc(w.parts, func(p part) bool { return p.kind == litPart && !p.quoted && hasGlob(p.text) })
+}
+
 // dropWord forgets the word being read.
 func (t *tokenizer) dropWord() {
 	t.raw.Reset()
@@ -193,7 +206,7 @@ func (t *tokenizer) endWord() {
 	t.flushLit()
 	if t.inWord {
 		splits := slices.ContainsFunc(t.parts, func(p part) bool {
-			return (p.kind == paramPart || p.kind == opaquePart) && !p.inDouble
+			return (p.kind == paramPart || p.kind == opaquePart) && (!p.inDouble || splitsQuoted(p.raw))
 		})
 		t.cur.words = append(t.cur.words, word{
 			text: t.raw.String(), parts: t.parts, quoted: t.quoted, splits: splits,
@@ -610,6 +623,9 @@ func (t *tokenizer) dollar(i int) (int, bool) {
 		if isName(inner) {
 			t.expansion(paramPart, inner, string(rs[i:end+1]))
 		} else {
+			// ${X:-$(cmd)} runs cmd: the substitutions in the body,
+			// nested ${...} included, are the command's own.
+			t.cur.subs = append(t.cur.subs, bodySubs([]rune(inner))...)
 			t.expansion(opaquePart, "", string(rs[i:end+1]))
 		}
 		return end, true

@@ -816,13 +816,13 @@ func psEnv(stmts []psStmt) []string {
 // psArgv is a git call's command line for gitContent, the line's
 // environment assignments first, and the words in it that cannot be told.
 // After --% (stop parsing) PowerShell passes the rest as written, expanding
-// %NAME%: a word holding % cannot be told. splits says, for each of argv,
+// %NAME%: a word holding % cannot be told. shapes says, for each of argv,
 // whether its value may be several arguments: an expansion outside double
 // quotes (psWord.bare), or %NAME% after --%, whose value the program's
-// command line splits.
-func psArgv(c psGitCall, env []string) (argv, unknown []string, splits []bool) {
+// command line splits. PowerShell does not expand globs for a program.
+func psArgv(c psGitCall, env []string) (argv, unknown []string, shapes []argShape) {
 	argv = append(slices.Clone(env), "git")
-	splits = make([]bool, len(argv))
+	shapes = make([]argShape, len(argv))
 	stop := false
 	for _, w := range c.args {
 		if !w.quoted && w.text == "--%" {
@@ -831,12 +831,12 @@ func psArgv(c psGitCall, env []string) (argv, unknown []string, splits []bool) {
 		}
 		argv = append(argv, w.text)
 		pct := stop && strings.Contains(w.text, "%")
-		splits = append(splits, w.bare || pct)
+		shapes = append(shapes, argShape{splits: w.bare || pct})
 		if w.unknown || pct {
 			unknown = append(unknown, w.text)
 		}
 	}
-	return argv, unknown, splits
+	return argv, unknown, shapes
 }
 
 // psJudge judges one git call: from the call's working directory, and when
@@ -844,7 +844,7 @@ func psArgv(c psGitCall, env []string) (argv, unknown []string, splits []bool) {
 // -WorkingDirectory), from each protected root and the repository's root
 // as well, as the Bash rule judges a working directory it cannot tell.
 func (s *setup) psJudge(c psGitCall, env []string, moved bool) *gitDenial {
-	argv, unknown, splits := psArgv(c, env)
+	argv, unknown, shapes := psArgv(c, env)
 	dirs := []string{s.cwd}
 	if moved || c.moved {
 		dirs = append(dirs, s.repo.Root)
@@ -855,7 +855,7 @@ func (s *setup) psJudge(c psGitCall, env []string, moved bool) *gitDenial {
 	for _, d := range dirs {
 		in := *s
 		in.cwd = d
-		if g := in.gitContent(argv, unknown, splits); g != nil {
+		if g := in.gitContent(argv, unknown, shapes); g != nil {
 			return g
 		}
 	}

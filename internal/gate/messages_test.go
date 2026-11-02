@@ -52,7 +52,7 @@ const (
 		"ask a person to remove it in Power BI Desktop or an editor, or to run `pbipx scan` at a terminal."
 	hintSettings      = "Show the person the exact change, for them to make at a terminal."
 	hintPowerShell    = "Use the Read tool for a single file, or the Bash tool with the paths written out."
-	hintGitExpandNote = hintGitExpand + " `git commit -F - <<'EOF'` takes a message from a here-document."
+	hintGitExpandNote = hintGitExpand + " `git commit -F - <<'EOF'` takes the message from a here-document."
 	hintCwd           = "Run it from outside the protected folders; use Read for a single file there."
 	hintNames         = "Leave the protected folders out of the command; use Read for a single file there."
 	hintExpand        = "Write the paths out in full, without variables or command substitutions."
@@ -172,6 +172,11 @@ func TestMessagesNameTheTrigger(t *testing.T) {
 
 		{"git commit with a message option's value unknown", sh(`git commit -Fm "$X"`), gate.ReasonGitContent,
 			[]string{"git commit is given, before --, an argument the gate cannot expand"}, hintGitExpandNote},
+		{"git notes add with a message option's value unknown", sh(`git notes add -Fm "$X"`), gate.ReasonGitContent,
+			[]string{"git notes is given, before --, an argument the gate cannot expand"},
+			hintGitExpand + " `git notes add -F - <<'EOF'` takes the message from a here-document."},
+		{"git stash with an argument unknown", sh(`git stash $X`), gate.ReasonGitContent,
+			[]string{"git stash is given, before --, an argument the gate cannot expand"}, hintGitExpand},
 
 		// The gate cannot read PowerShell.
 		{"PowerShell", gate.Event{Tool: gate.PowerShell, Command: "Get-Date"}, gate.ReasonFinding,

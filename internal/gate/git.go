@@ -125,17 +125,28 @@ var gitNeverContent = map[string]bool{
 // unknownOption reports whether one of args, sub's words before "--", is
 // one that cannot be told (unknown) and could be an option: any but a
 // message (gitMessageArgs), for a subcommand whose -m takes one (git
-// commit -m "$(cat <<EOF ...)", git commit -am "$MSG"). A message holding
-// an expansion the shell splits into words (splits(i) for args[i]: git
-// commit -m $MSG) could hold options too.
-func unknownOption(sub string, args, unknown []string, splits func(int) bool) bool {
+// commit -m "$(cat <<EOF ...)", git commit -am "$MSG"). A message the
+// shell makes several words (shape(i) for args[i]: git commit -m $MSG,
+// -m "$@", -m *) could hold options too.
+func unknownOption(sub string, args, unknown []string, shape func(int) argShape) bool {
 	msg, _ := gitMessageArgs(sub, args)
 	for i, a := range args {
-		if (!msg[i] || splits(i)) && slices.Contains(unknown, a) {
+		sh := shape(i)
+		if msg[i] && sh.glob {
+			return true
+		}
+		if (!msg[i] || sh.splits) && slices.Contains(unknown, a) {
 			return true
 		}
 	}
 	return false
+}
+
+// argShape is how the shell may turn one argument into several: splits
+// for an expansion it splits into words (unquoted, or "$@" and the like),
+// glob for a glob character outside quotes.
+type argShape struct {
+	splits, glob bool
 }
 
 // gitMessageSubs are the subcommands whose -m and --message take a message.
@@ -307,11 +318,14 @@ func (o gitOptions) cluster(a, next string) (c gitCluster, ok bool) {
 }
 
 // gitExpandHint ends a git refusal for an argument the gate cannot expand:
-// for a subcommand that takes a message, it adds how to give one the gate
-// can read.
+// for a subcommand that reads a message from a file (-F), it adds how to
+// give one the gate can read. stash has no -F.
 func gitExpandHint(sub string) string {
-	if gitMessageSubs[sub] {
-		return hintGitExpand + " `git commit -F - <<'EOF'` takes a message from a here-document."
+	switch sub {
+	case "commit", "merge", "tag":
+		return hintGitExpand + " `git " + sub + " -F - <<'EOF'` takes the message from a here-document."
+	case "notes":
+		return hintGitExpand + " `git notes add -F - <<'EOF'` takes the message from a here-document."
 	}
 	return hintGitExpand
 }
@@ -362,29 +376,53 @@ func gitMessageText(c simple) gitMessage {
 	start := len(args) - len(inv.rest)
 	msg, stdin := gitMessageArgs(inv.sub, inv.args)
 	for i, isMsg := range msg {
-		// A word the shell splits may be more than the message.
+		// A word the shell makes several may be more than the message,
+		// and a ${...} that runs a command is not text.
 		w := idx[start+i]
-		m.words[w] = isMsg && !c.words[w].splits
+		wd := c.words[w]
+		m.words[w] = isMsg && !wd.splits && !wd.globs() && !slices.ContainsFunc(wd.parts, runsInBraces)
 	}
-	m.docs = stdin
-	// The command substitutions in the words, in order, are c.subs.
+	if stdin {
+		// -F - reads standard input: a here-document or a here-string.
+		m.docs = true
+		for i, wd := range c.words {
+			if wd.here && !wd.splits && !slices.ContainsFunc(wd.parts, runsInBraces) {
+				m.words[i] = true
+			}
+		}
+	}
+	// The command substitutions in the words, in order, are c.subs: one
+	// for each $(...) or backtick part, and those a ${...} part holds.
 	k := 0
 	for i, wd := range c.words {
 		for _, p := range wd.parts {
-			if p.kind != opaquePart || (!strings.HasPrefix(p.raw, "$(") && !strings.HasPrefix(p.raw, "`")) {
-				continue
+			n := 0
+			switch {
+			case p.kind != opaquePart:
+			case strings.HasPrefix(p.raw, "$("), strings.HasPrefix(p.raw, "`"):
+				n = 1
+			case strings.HasPrefix(p.raw, "${"):
+				n = len(bodySubs([]rune(p.raw[2 : len(p.raw)-1])))
 			}
-			if k >= len(c.subs) {
-				return gitMessage{words: m.words, subs: make([]bool, len(c.subs)), docs: m.docs}
+			for range n {
+				if k >= len(c.subs) {
+					return gitMessage{words: m.words, subs: make([]bool, len(c.subs)), docs: m.docs}
+				}
+				m.subs[k] = n == 1 && strings.HasPrefix(p.raw, "$(") && m.words[i] && catHeredoc(c.subs[k]) != nil
+				k++
 			}
-			m.subs[k] = m.words[i] && catHeredoc(c.subs[k]) != nil
-			k++
 		}
 	}
 	if k != len(c.subs) {
 		m.subs = make([]bool, len(c.subs))
 	}
 	return m
+}
+
+// runsInBraces reports whether p is a ${...} whose body runs a command.
+func runsInBraces(p part) bool {
+	return p.kind == opaquePart && strings.HasPrefix(p.raw, "${") &&
+		(strings.Contains(p.raw, "$(") || strings.Contains(p.raw, "`"))
 }
 
 // catHeredoc is the here-document a command line reads when the line is
@@ -812,7 +850,7 @@ func (g gitDenial) message() string {
 // returns why the command is denied, and nil otherwise. unknown are git's
 // arguments that cannot be told: with any, a subcommand that prints
 // content is denied, as one whose pathspecs are unprovable.
-func (s *setup) gitContent(args, unknown []string, splits []bool) *gitDenial {
+func (s *setup) gitContent(args, unknown []string, shapes []argShape) *gitDenial {
 	name, rest := program(args)
 	if name != "git" {
 		return nil
@@ -845,10 +883,13 @@ func (s *setup) gitContent(args, unknown []string, splits []bool) *gitDenial {
 		return &gitDenial{inv.sub, inv.unsafeWhy, "Drop that global option, or use --stat."}
 	}
 	inv.unknown = len(unknown) > 0
-	if !gitNeverContent[inv.sub] && unknownOption(inv.sub, inv.args, unknown, func(i int) bool {
+	if !gitNeverContent[inv.sub] && unknownOption(inv.sub, inv.args, unknown, func(i int) argShape {
 		fromEnd := len(inv.rest) - i
 		j := len(args) - fromEnd
-		return fromEnd <= given && j >= 0 && j < len(splits) && splits[j]
+		if fromEnd <= given && j >= 0 && j < len(shapes) {
+			return shapes[j]
+		}
+		return argShape{}
 	}) {
 		// Before "--" a word that cannot be told could be an option that
 		// turns content on: -p, -v, --cc, a stash or reflog subcommand.

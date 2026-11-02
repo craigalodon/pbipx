@@ -662,6 +662,18 @@ func TestShellExeNames(t *testing.T) {
 func TestShellGitMessageText(t *testing.T) {
 	isolateSearch(t)
 	runBoth(t, []both{
+		// A substitution in ${...} runs, and is judged as any other.
+		{"-m of ${...} holding a cat of the root", sh(`git commit --allow-empty -m "${X:-$(cat pbip/x)}"`), "", gate.ReasonFinding},
+		{"-m of ${...} holding backticks that cat the root", sh("git commit --allow-empty -m \"${X:-`cat pbip/x`}\""), "", gate.ReasonFinding},
+		{"-m of nested ${...} holding a cat of the root", sh(`git commit -m "${X:-${Y:-$(cat pbip/x)}}"`), "", gate.ReasonFinding},
+		{"a reader given ${...} holding a cat of the root", sh(`cat "${X:-$(cat pbip/x)}"`), "", gate.ReasonFinding},
+		{"echo of ${...} holding a cat of the root", sh(`echo "${X:-$(cat pbip/x)}"`), "", gate.ReasonFinding},
+		{"arithmetic holding a cat of the root", sh(`echo $(( $(cat pbip/x | wc -l) + 1 ))`), "", gate.ReasonFinding},
+		{"a here-document's ${...} holding a cat of the root", sh("git commit -F - <<EOF\n${X:-$(cat pbip/x)}\nEOF"), "", gate.ReasonFinding},
+		// A here-string read by -F - is the message.
+		{"-F- of a here-string naming the root", sh(`git commit -F- <<<"Leave pbip alone"`), "", ""},
+		{"--file=- of a here-string naming the root", sh(`git commit --file=- <<< 'Leave pbip alone'`), "", ""},
+		{"a here-string to git without -F -", sh(`git commit -F msg.txt <<<"pbip"`), "", gate.ReasonFinding},
 		{"-m of a here-document naming the root",
 			sh("git commit -m \"$(cat <<'EOF'\nNote a check\n\nThis leaves pbip/ alone.\nEOF\n)\""), "", ""},
 		{"-m of an unquoted here-document naming the root",

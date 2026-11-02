@@ -646,8 +646,10 @@ path, is denied with `event-error`: the call cannot be judged.
     long options that take a value such as `--rcfile`), `script -c`,
     `flock FILE -c`, `watch` (its words, joined), `env -S`, GNU `parallel`
     (its template with each argument after `:::`, or each argument alone),
-    `eval` and every command substitution are read as nested lines, at
-    most four deep, with every rule applied to them. So is the script a
+    `eval` and every command substitution (one inside a `${...}`, as in
+    `${X:-$(cmd)}`, nested ones and those in `$((...))` included) are
+    read as nested lines, at most four deep, with every rule applied to
+    them. So is the script a
     shell reads from a here-document, a here-string (`<<<`), `source
     /dev/stdin`, or a pipe from a here-document, a here-string, `echo` or
     `printf`; a shell reading any other pipe runs a script built at run
@@ -753,9 +755,16 @@ path, is denied with `event-error`: the call cannot be judged.
        is one only when every expansion in it (`$X`, `${...}`, `$(...)`,
        backticks, `$1`) is inside double quotes: outside them the shell
        splits its value into words, which could be options (`--dry-run
-       -v` prints the staged diff). So `git commit -m $X`, `-am $X`,
-       `-m$X`, `--message=$X`, `-m "$X"$Y` and `-m $(cat <<'EOF' ...)`
-       are denied, while `-m "$X"` and `-m "fix: $X done"` are not. In
+       -v` prints the staged diff). Some expansions are several words
+       even inside double quotes: `"$@"`, and any `${...}` holding `@`
+       (`"${@:2}"`, `"${a[@]}"`, `"${!p@}"`, `"${!a[@]}"`); they are
+       taken to split wherever they are (`"$*"` and `"${*}"` are one
+       word). A glob character outside quotes expands to the names it
+       matches, so a message word holding one is denied as well. So `git
+       commit -m $X`, `-am $X`, `-m$X`, `--message=$X`, `-m "$X"$Y`, `-m
+       $(cat <<'EOF' ...)`, `-m "$@"`, `-qm "${a[@]}"`, `-m *` and `-m
+       "$X"*` are denied, while `-m "$X"`, `-m "$*"`, `-m "fix *"` and
+       `-m "fix: $X done"` are not. In
        PowerShell the message must likewise be a double-quoted string
        (`"..."` or a here-string): an unquoted variable, subexpression,
        group or splat may be an array, passed as several arguments, and
@@ -894,7 +903,10 @@ path, is denied with `event-error`: the call cannot be judged.
      one command is `cat` with no argument reading a here-document
      (`git commit -m "$(cat <<'EOF' ...)"`), that here-document's body;
      and the here-documents of git reading its message from standard
-     input (`-F -`, `--file=-`, `--file -`). Only git run under no
+     input (`-F -`, `--file=-`, `--file -`), and its here-strings
+     (`git commit -F- <<<"..."`). A message word that is several words
+     (above), or that holds a `${...}` running a command
+     (`"${X:-$(cat f)}"`), is not message text. Only git run under no
      wrapper counts: under `xargs`, say, its input and words are not what
      the line shows. The command substitutions an
      unquoted such body runs are still read as nested lines, and so is any
@@ -1212,9 +1224,11 @@ run `pbipx scan` at a terminal."; for a search, "Name the files to search
 explicitly, or exclude the protected folders."; for git, "Limit the paths
 (`-- src`) or use --stat."; for git given an argument the gate cannot
 expand, "Write git's arguments out in full, without variables or command
-substitutions.", followed for `commit`, `merge`, `tag`, `stash` and
-`notes` by "`git commit -F - <<'EOF'` takes a message from a
-here-document."; for a PowerShell command, which the gate cannot read
+substitutions.", followed for `commit`, `merge` and `tag`, which read a
+message from a file with `-F`, by "`git <subcommand> -F - <<'EOF'` takes
+the message from a here-document." (for `notes`, "`git notes add -F -
+<<'EOF'`"; `stash` has no `-F`); for a PowerShell command, which the gate
+cannot read
 whatever the working directory, "Use the Read tool for a single file, or
 the Bash tool with the paths written out."; and for `agent-settings`,
 "Show the person the exact change, for them to make at a terminal."

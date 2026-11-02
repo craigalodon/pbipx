@@ -387,10 +387,10 @@ type view struct {
 	words []xword
 	// argv are the expanded arguments, redirection targets left out and
 	// leading reserved words stripped; argvKnown says which are known,
-	// argvSplits which hold an expansion the shell splits into words.
+	// argvShapes how the shell may make each several words.
 	argv       []string
 	argvKnown  []bool
-	argvSplits []bool
+	argvShapes []argShape
 	// name is the command run, rest its arguments and under the wrappers
 	// it runs under (command); restKnown says which of rest are known.
 	name      string
@@ -725,7 +725,8 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 func (s *setup) viewOf(c simple, st cwdState) view {
 	v := view{cwd: st.clone(), pipeIn: c.pipeIn}
 	var args []string
-	var known, splits []bool
+	var known []bool
+	var shapes []argShape
 	msg := gitMessageText(c)
 	for i, wd := range c.words {
 		xw := s.expandWord(wd, v.cwd)
@@ -734,12 +735,12 @@ func (s *setup) viewOf(c simple, st cwdState) view {
 		if !xw.redirect {
 			args = append(args, xw.text)
 			known = append(known, xw.known)
-			splits = append(splits, wd.splits)
+			shapes = append(shapes, argShape{splits: wd.splits, glob: wd.globs()})
 		}
 	}
 	v.argv = stripKeywords(args)
 	v.argvKnown = known[len(known)-len(v.argv):]
-	v.argvSplits = splits[len(splits)-len(v.argv):]
+	v.argvShapes = shapes[len(shapes)-len(v.argv):]
 	v.name, v.rest, v.under = command(v.argv)
 	v.restKnown = v.argvKnown[len(v.argvKnown)-len(v.rest):]
 	return v
@@ -1810,7 +1811,7 @@ func (s *setup) gitRule(v view) *gitDenial {
 	for _, d := range dirs {
 		in := *s
 		in.cwd = d
-		if g := in.gitContent(v.argv, unknown, v.argvSplits); g != nil {
+		if g := in.gitContent(v.argv, unknown, v.argvShapes); g != nil {
 			return g
 		}
 	}

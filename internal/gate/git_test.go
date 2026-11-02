@@ -282,6 +282,20 @@ func TestShellGitUnknownWords(t *testing.T) {
 		{"commit -m of a positional parameter", sh(`git commit -m $1`), git},
 		{"commit -m of a variable within text", sh(`git commit -m "fix: $X done"`), ""},
 		{"commit -m of a literal", sh(`git commit -m 'literal'`), ""},
+		// Some expansions split inside double quotes too: all positional
+		// parameters, all array elements, all matching names.
+		{"commit -m of quoted $@", sh(`set -- x --amend --dry-run -v; git commit -m "$@"`), git},
+		{"commit -qm of a quoted array", sh(`a=(--dry-run -v); git commit -qm "${a[@]}"`), git},
+		{"commit -m of quoted ${@:2}", sh(`git commit -m "${@:2}"`), git},
+		{"commit -m of quoted ${!p@}", sh(`git commit -m "${!p@}"`), git},
+		{"commit -m of a quoted array's keys", sh(`git commit -m "${!a[@]}"`), git},
+		{"commit -m of quoted $*", sh(`git commit -m "$*"`), ""},
+		{"commit -m of quoted ${*}", sh(`git commit -m "${*}"`), ""},
+		// An unquoted glob expands to several words.
+		{"commit -m of a glob", sh(`git commit -m *`), git},
+		{"commit -m of a variable and a glob", sh(`git commit -m "$X"*`), git},
+		{"commit -m of a name and a glob", sh(`git commit -m pbip*`), git},
+		{"commit -m of a quoted glob", sh(`git commit -m "fix *"`), ""},
 		{"commit -m of $\"...\"", sh(`git commit -m $"$X"`), ""},
 		// -m clustered after short options that take no value.
 		{"commit -am of a substitution", sh("git commit -am \"$(cat <<'EOF'\nA message\nEOF\n)\""), ""},
