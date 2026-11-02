@@ -1,0 +1,7 @@
+description = "git commit --amend --dry-run -v prints the index against HEAD's parent, which the staged and unstaged diffs do not show: here HEAD is the root commit, so the whole index, the protected root included, is printed and the command denies with git-content, not a tree scan"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
+known       = "predecessor"

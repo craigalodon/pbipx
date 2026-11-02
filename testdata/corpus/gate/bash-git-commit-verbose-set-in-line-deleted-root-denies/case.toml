@@ -1,0 +1,8 @@
+description = "git config commit.verbose true makes a later git commit -a --dry-run in the same line print the diff, which shows the deleted file under the protected root; the gate reads the configuration before the line runs, so it denies; the value is only in history and the index, the working tree is clean"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
+deleted     = ["pbip/Example.Report/definition/pages/0000/visuals/0001/visual.json"]
+known       = "predecessor"

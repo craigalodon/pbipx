@@ -1,0 +1,8 @@
+description = "bash expands git log {-p,-2} into -p -2, which prints the patch of the commit that holds the protected root; the gate does not expand braces, so the word is unknown and denies before --; the value is only in history, the working tree is clean"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
+deleted     = ["pbip/Example.Report/definition/pages/0000/visuals/0001/visual.json"]
+known       = "predecessor"
