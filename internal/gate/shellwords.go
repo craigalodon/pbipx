@@ -177,9 +177,9 @@ type tokenizer struct {
 	// patternStart is where the pattern being read starts among the
 	// command's words: after "case WORD in" when on the same line.
 	patternStart int
-	// depth is how deeply this tokenizer's text is nested in command
-	// substitutions (substEnd).
-	depth int
+	// sc is how deeply this tokenizer's text is nested in command
+	// substitutions (substEnd), with the memo the line's readers share.
+	sc lineScan
 	// uncertain is set when the tokenizer cannot be sure what the line
 	// runs (a here-document never closed).
 	uncertain bool
@@ -633,11 +633,67 @@ func (t *tokenizer) endCommand() {
 // tokenize is splitCommands for a line whose quotes balance; ok is false
 // when they do not.
 func tokenize(line string) (cmds []simple, ok bool) {
-	t := &tokenizer{rs: []rune(line)}
+	t := &tokenizer{rs: []rune(line), sc: newScan()}
 	if _, ok := t.run(0, false); !ok {
 		return nil, false
 	}
 	return t.finish(), true
+}
+
+// lineScan is what the readers of one line share: how deeply the text read is
+// nested in command substitutions, and the memo of the ends already
+// found, keyed by the address of the first rune read, so that nested
+// constructs are read once each, in linear time, however a reader that
+// failed (an arithmetic expression that turns out to be a subshell)
+// hands the text to another.
+type lineScan struct {
+	depth int
+	memo  *scanMemo
+}
+
+// scanMemo remembers each reader's answer for a start in the line and a
+// depth. An end is kept as an offset from the start, since readers are
+// handed slices of the line.
+type scanMemo struct {
+	subst map[scanKey]substResult
+	arith map[scanKey]arithResult
+	brace map[scanKey]int
+}
+
+type scanKey struct {
+	at    *rune
+	depth int
+}
+
+type substResult struct {
+	end           int
+	uncertain, ok bool
+}
+
+type arithResult struct {
+	end int
+	ok  bool
+}
+
+func newScan() lineScan {
+	return lineScan{memo: &scanMemo{
+		subst: map[scanKey]substResult{}, arith: map[scanKey]arithResult{}, brace: map[scanKey]int{},
+	}}
+}
+
+// key is the memo's key for a reader starting at rs[i], ok false past the
+// end.
+func (sc lineScan) key(rs []rune, i int) (scanKey, bool) {
+	if i < 0 || i >= len(rs) || sc.memo == nil {
+		return scanKey{}, false
+	}
+	return scanKey{&rs[i], sc.depth}, true
+}
+
+// deeper is sc one command substitution deeper.
+func (sc lineScan) deeper() lineScan {
+	sc.depth++
+	return sc
 }
 
 // maxSubstDepth bounds how deeply command substitutions nest in what one
@@ -651,16 +707,27 @@ const maxSubstDepth = 64
 // case patterns are all read as they are elsewhere, and the ")" that ends
 // it is the first one at the body's top level. It returns that index.
 // uncertain is set when the body does not end at its plain top level.
-func substEnd(rs []rune, i, depth int) (end int, uncertain, ok bool) {
-	if depth > maxSubstDepth {
+func substEnd(rs []rune, i int, sc lineScan) (end int, uncertain, ok bool) {
+	if sc.depth > maxSubstDepth {
 		return 0, false, false
 	}
-	t := &tokenizer{rs: rs, depth: depth}
+	key, memo := sc.key(rs, i)
+	if memo {
+		if r, seen := sc.memo.subst[key]; seen {
+			return i + r.end, r.uncertain, r.ok
+		}
+	}
+	t := &tokenizer{rs: rs, sc: sc}
 	end, ok = t.run(i, true)
-	if !ok {
-		return 0, false, false
+	if ok {
+		uncertain = t.uncertain || t.cases > 0 || t.casePattern || len(t.pending) > 0
+	} else {
+		end = 0
 	}
-	return end, t.uncertain || t.cases > 0 || t.casePattern || len(t.pending) > 0, true
+	if memo {
+		sc.memo.subst[key] = substResult{end - i, uncertain, ok}
+	}
+	return end, uncertain, ok
 }
 
 // run reads rs from start. With sub set it reads a command substitution's
@@ -688,9 +755,9 @@ func (t *tokenizer) run(start int, sub bool) (int, bool) {
 			}
 			if !t.inWord && !proc && i+1 < len(rs) && rs[i+1] == '(' {
 				// ((...)) is an arithmetic command: << in it is a shift.
-				if end, ok := arithEnd(rs, i, t.depth); ok {
+				if end, ok := arithEnd(rs, i, t.sc); ok {
 					t.endCommand()
-					t.cur.subs = append(t.cur.subs, bodySubs(rs[i+2:end-1], t.depth)...)
+					t.cur.subs = append(t.cur.subs, bodySubs(rs[i+2:end-1], t.sc)...)
 					t.endCommand()
 					i = end
 					continue
@@ -940,7 +1007,7 @@ func (t *tokenizer) bodies(i int) int {
 		i = next
 		p.doc.body = body
 		if !p.doc.quoted {
-			p.doc.subs = bodySubs([]rune(body), t.depth)
+			p.doc.subs = bodySubs([]rune(body), t.sc)
 		}
 	}
 	t.pending = nil
@@ -1055,22 +1122,22 @@ func readBody(rs []rune, i int, delim string, strip bool) (body string, next int
 // bodySubs are the command substitutions, $(...) and `...`, in an unquoted
 // here-document's body, which run when the body is expanded. One that does
 // not close runs to the end of the body.
-func bodySubs(rs []rune, depth int) []string {
+func bodySubs(rs []rune, sc lineScan) []string {
 	var subs []string
 	for j := 0; j < len(rs); j++ {
 		switch {
 		case rs[j] == '\\':
 			j++
 		case rs[j] == '$' && j+2 < len(rs) && rs[j+1] == '(' && rs[j+2] == '(':
-			if end, ok := arithEnd(rs, j+1, depth); ok {
+			if end, ok := arithEnd(rs, j+1, sc); ok {
 				// $((...)): only the substitutions in it run.
-				subs = append(subs, bodySubs(rs[j+3:end-1], depth)...)
+				subs = append(subs, bodySubs(rs[j+3:end-1], sc)...)
 				j = end
 				continue
 			}
 			fallthrough
 		case rs[j] == '$' && j+1 < len(rs) && rs[j+1] == '(':
-			end, _, ok := substEnd(rs, j+2, depth+1)
+			end, _, ok := substEnd(rs, j+2, sc.deeper())
 			if !ok {
 				return append(subs, string(rs[j+2:]))
 			}
@@ -1170,15 +1237,15 @@ func (t *tokenizer) dollar(i int) (int, bool) {
 	switch c := rs[i+1]; {
 	case c == '(':
 		if i+2 < len(rs) && rs[i+2] == '(' {
-			if end, ok := arithEnd(rs, i+1, t.depth); ok {
+			if end, ok := arithEnd(rs, i+1, t.sc); ok {
 				// $((...)) is arithmetic: << in it is a shift, and only the
 				// substitutions in it run.
-				t.cur.subs = append(t.cur.subs, bodySubs(rs[i+3:end-1], t.depth)...)
+				t.cur.subs = append(t.cur.subs, bodySubs(rs[i+3:end-1], t.sc)...)
 				t.expansion(opaquePart, "", string(rs[i:end+1]))
 				return end, true
 			}
 		}
-		end, uncertain, ok := substEnd(rs, i+2, t.depth+1)
+		end, uncertain, ok := substEnd(rs, i+2, t.sc.deeper())
 		if !ok {
 			return 0, false
 		}
@@ -1192,11 +1259,11 @@ func (t *tokenizer) dollar(i int) (int, bool) {
 		if end < 0 {
 			return 0, false
 		}
-		t.cur.subs = append(t.cur.subs, bodySubs(rs[i+2:end], t.depth)...)
+		t.cur.subs = append(t.cur.subs, bodySubs(rs[i+2:end], t.sc)...)
 		t.expansion(opaquePart, "", string(rs[i:end+1]))
 		return end, true
 	case c == '{':
-		end := braceEnd(rs, i+1, t.depth)
+		end := braceEnd(rs, i+1, t.sc)
 		if end < 0 {
 			return 0, false
 		}
@@ -1206,7 +1273,7 @@ func (t *tokenizer) dollar(i int) (int, bool) {
 		} else {
 			// ${X:-$(cmd)} runs cmd: the substitutions in the body,
 			// nested ${...} included, are the command's own.
-			t.cur.subs = append(t.cur.subs, bodySubs([]rune(inner), t.depth)...)
+			t.cur.subs = append(t.cur.subs, bodySubs([]rune(inner), t.sc)...)
 			t.expansion(opaquePart, "", string(rs[i:end+1]))
 		}
 		return end, true
@@ -1255,7 +1322,7 @@ func skipQuoted(rs []rune, k int) (int, bool) {
 // is false when the parentheses do not close as "))", as with a subshell
 // in a subshell, or never close. Quotes, backticks, ${...} and nested
 // substitutions in it are skipped as bash reads them.
-func arithEnd(rs []rune, j, depth int) (int, bool) {
+func arithEndRaw(rs []rune, j int, sc lineScan) (int, bool) {
 	d := 0
 	for k := j; k < len(rs); k++ {
 		switch rs[k] {
@@ -1267,19 +1334,19 @@ func arithEnd(rs []rune, j, depth int) (int, bool) {
 			k = e
 		case '$':
 			if k+1 < len(rs) && rs[k+1] == '{' {
-				e := braceEnd(rs, k+1, depth)
+				e := braceEnd(rs, k+1, sc)
 				if e < 0 {
 					return 0, false
 				}
 				k = e
 			} else if k+1 < len(rs) && rs[k+1] == '(' {
 				if k+2 < len(rs) && rs[k+2] == '(' {
-					if e, ok := arithEnd(rs, k+1, depth); ok {
+					if e, ok := arithEnd(rs, k+1, sc); ok {
 						k = e
 						continue
 					}
 				}
-				e, _, ok := substEnd(rs, k+2, depth+1)
+				e, _, ok := substEnd(rs, k+2, sc.deeper())
 				if !ok {
 					return 0, false
 				}
@@ -1303,7 +1370,7 @@ func arithEnd(rs []rune, j, depth int) (int, bool) {
 // braceEnd returns the index of the "}" that closes the ${ whose "{" is at
 // i, or -1. Quotes, backticks, nested ${...} and substitutions in it are
 // skipped as bash reads them; a ) or # in it is text.
-func braceEnd(rs []rune, i, depth int) int {
+func braceEndRaw(rs []rune, i int, sc lineScan) int {
 	d := 0
 	for k := i; k < len(rs); k++ {
 		switch rs[k] {
@@ -1316,12 +1383,12 @@ func braceEnd(rs []rune, i, depth int) int {
 		case '$':
 			if k+1 < len(rs) && rs[k+1] == '(' {
 				if k+2 < len(rs) && rs[k+2] == '(' {
-					if e, ok := arithEnd(rs, k+1, depth); ok {
+					if e, ok := arithEnd(rs, k+1, sc); ok {
 						k = e
 						continue
 					}
 				}
-				e, _, ok := substEnd(rs, k+2, depth+1)
+				e, _, ok := substEnd(rs, k+2, sc.deeper())
 				if !ok {
 					return -1
 				}
@@ -1337,6 +1404,43 @@ func braceEnd(rs []rune, i, depth int) int {
 		}
 	}
 	return -1
+}
+
+// arithEnd is arithEndRaw, remembered for the line (lineScan).
+func arithEnd(rs []rune, j int, sc lineScan) (int, bool) {
+	key, memo := sc.key(rs, j)
+	if memo {
+		if r, seen := sc.memo.arith[key]; seen {
+			return j + r.end, r.ok
+		}
+	}
+	end, ok := arithEndRaw(rs, j, sc)
+	if memo {
+		sc.memo.arith[key] = arithResult{end - j, ok}
+	}
+	return end, ok
+}
+
+// braceEnd is braceEndRaw, remembered for the line (lineScan).
+func braceEnd(rs []rune, i int, sc lineScan) int {
+	key, memo := sc.key(rs, i)
+	if memo {
+		if r, seen := sc.memo.brace[key]; seen {
+			if r < 0 {
+				return -1
+			}
+			return i + r
+		}
+	}
+	end := braceEndRaw(rs, i, sc)
+	if memo {
+		if end < 0 {
+			sc.memo.brace[key] = -1
+		} else {
+			sc.memo.brace[key] = end - i
+		}
+	}
+	return end
 }
 
 // bracketEnd returns the index of the "]" that closes the $[ whose "[" is

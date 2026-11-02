@@ -875,6 +875,19 @@ func TestShellBounded(t *testing.T) {
 		"a brace step at the integer limit":       "echo {1..2..-9223372036854775808} >/dev/null; cat pbip/x",
 		"a brace end past the integer range":      "echo {1..99999999999999999999} >/dev/null; cat pbip/x",
 		"many brace words":                        strings.Repeat("{a,b,c,d}{e,f,g,h}{i,j,k,l} ", 40<<10),
+		// Nested constructs are read in linear time.
+		"nested arithmetic, spaced":    "echo " + strings.Repeat("$(( ", 200) + "1" + strings.Repeat(" ) )", 200),
+		"nested arithmetic":            "echo " + strings.Repeat("$((1+", 200) + "1" + strings.Repeat("))", 200),
+		"nested substitutions, spaced": "echo " + strings.Repeat("$( echo ", 200) + "x" + strings.Repeat(" )", 200),
+		"nested parameter defaults":    "echo " + strings.Repeat("${x:-", 200) + "y" + strings.Repeat("}", 200),
+		"backticks in substitutions":   "echo " + strings.Repeat("$(echo `true` ", 200) + strings.Repeat(")", 200),
+		"case in substitutions":        "echo " + strings.Repeat("$(case x in x) ", 200) + "true" + strings.Repeat(";; esac)", 200),
+		"subshells in arithmetic":      "echo " + strings.Repeat("$(( (", 200) + "1" + strings.Repeat(") ))", 200),
+		// Below the nesting cap, where each level is read.
+		"nested arithmetic, spaced, 60":    "echo " + strings.Repeat("$(( ", 60) + "1" + strings.Repeat(" ) )", 60),
+		"nested substitutions, spaced, 60": "echo " + strings.Repeat("$( echo ", 60) + "x" + strings.Repeat(" )", 60),
+		"case in substitutions, 60":        "echo " + strings.Repeat("$(case x in x) ", 60) + "true" + strings.Repeat(";; esac)", 60),
+		"subshells in arithmetic, 60":      "echo " + strings.Repeat("$(( (", 60) + "1" + strings.Repeat(") ))", 60),
 	} {
 		t.Run(name, func(t *testing.T) {
 			if len(cmd) > 1<<20+16 {

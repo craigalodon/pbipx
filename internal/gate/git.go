@@ -418,7 +418,7 @@ func gitMessageText(c simple) gitMessage {
 			case strings.HasPrefix(p.raw, "$("), strings.HasPrefix(p.raw, "`"):
 				n = 1
 			case strings.HasPrefix(p.raw, "${"):
-				n = len(bodySubs([]rune(p.raw[2:len(p.raw)-1]), 0))
+				n = len(bodySubs([]rune(p.raw[2:len(p.raw)-1]), newScan()))
 			}
 			for range n {
 				if k >= len(c.subs) {
