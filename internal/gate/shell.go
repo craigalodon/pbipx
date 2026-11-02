@@ -65,8 +65,16 @@ func (s *setup) shell(line string) Decision {
 	}
 	// 2. git printing content git history holds.
 	for _, v := range w.views {
+		if v.name == "hub" {
+			// hub runs git with its arguments.
+			v = asGit(v)
+		}
 		if g := s.gitRule(v); g != nil {
 			return deny(ReasonGitContent, "%s", g.message())
+		}
+		if ghPrintsPatch(v) {
+			return deny(ReasonGitContent, "gh pr diff prints the pull request's patch, whose files can be in a "+
+				"protected root; remote history cannot be vetted either. Use gh pr diff --name-only, or gh pr view.")
 		}
 	}
 	// A git command that changes the index or HEAD, then one that could
@@ -343,7 +351,49 @@ func (s *setup) viewDir(v view) string {
 
 // indexChange is indexChangeOf for the git command v.
 func (s *setup) indexChange(v view) string {
+	if v.name == "gh" || v.name == "hub" {
+		// gh pr checkout and the like move HEAD and the index too.
+		return s.treeChange(v)
+	}
 	return s.indexChangeOf(v.argv, s.viewDir(v))
+}
+
+// asGit is v, a hub command, as the git command hub runs.
+func asGit(v view) view {
+	v.argv = slices.Clone(v.argv)
+	for i, a := range v.argv {
+		if progName(a) == "hub" {
+			v.argv[i] = "git"
+			break
+		}
+	}
+	v.name = "git"
+	return v
+}
+
+// ghPrintsPatch reports whether v is gh pr diff printing a patch: any but
+// --name-only.
+func ghPrintsPatch(v view) bool {
+	pos := positional(v.rest)
+	return v.name == "gh" && len(pos) >= 2 && pos[0] == "pr" && pos[1] == "diff" && !slices.Contains(v.rest, "--name-only")
+}
+
+// ghTreeChange names the gh or hub command in v that changes the working
+// tree (gh pr checkout, gh repo sync, gh repo clone, hub checkout and the
+// git commands hub runs that do), "" otherwise.
+func (s *setup) ghTreeChange(v view) string {
+	pos := positional(v.rest)
+	switch {
+	case v.name == "gh" && len(pos) >= 2 && (pos[0] == "pr" && (pos[1] == "checkout" || pos[1] == "co") ||
+		pos[0] == "repo" && (pos[1] == "sync" || pos[1] == "clone")):
+		return "gh " + pos[0] + " " + pos[1]
+	case v.name == "hub" && len(pos) >= 1:
+		// hub wraps git: its git subcommands are judged as git's.
+		if change := s.treeChange(view{name: "git", rest: v.rest, cwd: v.cwd}); change != "" {
+			return "hub " + pos[0]
+		}
+	}
+	return ""
 }
 
 // isTreeChanger reports whether sub is one of git's subcommands that can
@@ -384,6 +434,8 @@ func (s *setup) treeChange(v view) string {
 		if gitChangesTree(inv.sub, inv.rest) {
 			return "git " + inv.sub
 		}
+	case "gh", "hub":
+		return s.ghTreeChange(v)
 	case "tar", "bsdtar", "gtar":
 		if tarExtracts(v.rest) {
 			return v.name + " -x"
@@ -1086,7 +1138,7 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 	// git commands run in order: this one after its substitutions.
 	w.seq++
 	w.views[idx].seq = w.seq
-	if !w.probe && v.name == "git" && w.indexChanged == "" {
+	if !w.probe && (v.name == "git" || v.name == "gh" || v.name == "hub") && w.indexChanged == "" {
 		if change := s.indexChange(v); change != "" {
 			w.indexChanged, w.indexSeq = change, w.seq
 		}

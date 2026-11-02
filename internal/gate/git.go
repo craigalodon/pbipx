@@ -2052,6 +2052,8 @@ func (s *setup) indexChangeOf(argv []string, dir string) string {
 		return ""
 	case gitChangesTree(inv.sub, inv.rest):
 		return "git " + inv.sub
+	case headMoves(inv):
+		return "git " + inv.sub
 	}
 	except, ok := gitIndexChangers[inv.sub]
 	if !ok {
@@ -2064,6 +2066,27 @@ func (s *setup) indexChangeOf(argv []string, dir string) string {
 		return ""
 	}
 	return "git " + inv.sub
+}
+
+// headMoves reports whether inv can point HEAD, or the branch it is on, at
+// other content, other than through gitIndexChangers: git symbolic-ref
+// setting or deleting a ref (one name alone, with -q or --short, reads),
+// git replace but --list (no argument lists too), git fetch with
+// --update-head-ok (-u), and git branch forcing or renaming a branch (-f,
+// --force, -C, -M), which may be the current one.
+func headMoves(inv gitInvocation) bool {
+	pos := positional(inv.args)
+	switch inv.sub {
+	case "symbolic-ref":
+		return len(pos) >= 2 || hasShort(inv.args, 'd', "--delete", "")
+	case "replace":
+		return len(inv.args) > 0 && !hasShort(inv.args, 'l', "--list", "") && !hasFlag(inv.args, []string{"--format"})
+	case "fetch":
+		return hasShort(inv.args, 'u', "--update-head-ok", "")
+	case "branch":
+		return hasShort(inv.args, 'f', "--force", "") || hasShort(inv.args, 'C', "", "") || hasShort(inv.args, 'M', "", "")
+	}
+	return false
 }
 
 // contentCapable reports whether the git command argv, run from dir, could
