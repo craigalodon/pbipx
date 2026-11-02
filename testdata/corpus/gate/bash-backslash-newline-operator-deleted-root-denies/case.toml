@@ -1,8 +1,0 @@
-description = "a backslash-newline between the two characters of &&, which bash joins into one operator, is a join the gate does not follow: it cannot read the line as bash would, so it denies with internal-error and does not scan, in a repository whose finding is in history only"
-command     = "gate"
-args        = []
-policy      = "default"
-exit        = 2
-sentinels   = ["Doe, Jane"]
-deleted     = ["pbip/Example.Report/definition/pages/0000/visuals/0001/visual.json"]
-known       = "predecessor"

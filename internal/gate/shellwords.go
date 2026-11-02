@@ -1,6 +1,7 @@
 package gate
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
 	"strconv"
@@ -107,9 +108,10 @@ type simple struct {
 	arith bool
 	// background is set for a command run in the background (cmd &).
 	background bool
-	// uncertain is set on every command of a line the tokenizer did not
-	// end at the plain top level: what it runs cannot be told.
-	uncertain bool
+	// uncertain says, on every command of a line the tokenizer cannot
+	// read as bash would, which construct it is, in fixed words: what the
+	// line runs cannot be told.
+	uncertain string
 	// procSub is true for a command inside a process substitution,
 	// <(...) or >(...), which starts before or alongside the command it
 	// is given to.
@@ -187,10 +189,29 @@ type tokenizer struct {
 	// sc is how deeply this tokenizer's text is nested in command
 	// substitutions (substEnd), with the memo the line's readers share.
 	sc lineScan
-	// uncertain is set when the tokenizer cannot be sure what the line
-	// runs (a here-document never closed).
-	uncertain bool
+	// uncertain says why the tokenizer cannot be sure what the line runs
+	// (a here-document never closed), "" when it can.
+	uncertain string
 }
+
+// doubt records why the tokenizer cannot read the line as bash would: the
+// first reason given is kept.
+func (t *tokenizer) doubt(why string) {
+	if t.uncertain == "" {
+		t.uncertain = why
+	}
+}
+
+// The constructs the tokenizer cannot read as bash would, in fixed words.
+const (
+	whyUnclosed   = "the command line leaves a case, a parenthesis or a here-document open, so what it runs cannot be told"
+	whyStrayParen = "a ) closes nothing"
+	whyDelim      = "a here-document delimiter holds a $, a backtick or a newline"
+	whyBodyJoin   = "a backslash-newline in an unquoted here-document body changes which line ends it, or splits a $( or a backtick"
+	whyBash52     = "a here-document inside a command substitution has a line that starts with its delimiter, " +
+		"which versions of bash read differently"
+	whyRejoin = "a backslash-newline is left after the lines it joins are joined"
+)
 
 // pendingDoc is a here-document whose body is still to be read.
 type pendingDoc struct {
@@ -639,9 +660,39 @@ func (t *tokenizer) endCommand() {
 
 // tokenize is splitCommands for a line whose quotes balance; ok is false
 // when they do not.
+//
+// A backslash-newline outside single quotes, comments and quoted
+// here-document bodies is removed before bash reads the line, wherever it
+// is: "&&\<newline>x" is "&&x", "&\<newline>&" is "&&" and
+// "$\<newline>(" is "$(". The tokenizer reads the line once and notes
+// each such join where it meets one; when there are any, the line is read
+// again with them removed, as bash reads it.
 func tokenize(line string) (cmds []simple, ok bool) {
-	t := &tokenizer{rs: []rune(line), sc: newScan()}
-	if _, ok := t.run(0, false); !ok {
+	rs := []rune(line)
+	t := &tokenizer{rs: rs, sc: newScan()}
+	_, ok = t.run(0, false)
+	if joins := t.sc.memo.joins; len(joins) > 0 {
+		joined := make([]rune, 0, len(rs))
+		for k := 0; k < len(rs); k++ {
+			if joins[&rs[k]] {
+				k++ // the backslash, then the newline
+				continue
+			}
+			joined = append(joined, rs[k])
+		}
+		doubt := t.sc.memo.joinDoubt
+		t = &tokenizer{rs: joined, sc: newScan()}
+		_, ok = t.run(0, false)
+		if len(t.sc.memo.joins) > 0 {
+			doubt = cmp.Or(doubt, whyRejoin)
+		}
+		if ok && doubt != "" {
+			t.doubt(doubt)
+		}
+	} else if ok {
+		t.doubt(t.sc.memo.joinDoubt)
+	}
+	if !ok {
 		return nil, false
 	}
 	return t.finish(), true
@@ -665,6 +716,11 @@ type scanMemo struct {
 	subst map[scanKey]substResult
 	arith map[scanKey]arithResult
 	brace map[scanKey]int
+	// joins are the backslashes of the backslash-newlines bash removes
+	// (tokenize), by address, and joinDoubt why one of them cannot be
+	// removed safely ("" when all can).
+	joins     map[*rune]bool
+	joinDoubt string
 }
 
 type scanKey struct {
@@ -673,8 +729,9 @@ type scanKey struct {
 }
 
 type substResult struct {
-	end           int
-	uncertain, ok bool
+	end       int
+	uncertain string
+	ok        bool
 }
 
 type arithResult struct {
@@ -685,7 +742,24 @@ type arithResult struct {
 func newScan() lineScan {
 	return lineScan{memo: &scanMemo{
 		subst: map[scanKey]substResult{}, arith: map[scanKey]arithResult{}, brace: map[scanKey]int{},
+		joins: map[*rune]bool{},
 	}}
+}
+
+// doubtJoin records that a backslash-newline in a here-document body
+// cannot be joined safely (bodyJoins).
+func (sc lineScan) doubtJoin() {
+	if sc.memo != nil && sc.memo.joinDoubt == "" {
+		sc.memo.joinDoubt = whyBodyJoin
+	}
+}
+
+// join notes the backslash at rs[i], before a newline, as one bash
+// removes with the newline.
+func (sc lineScan) join(rs []rune, i int) {
+	if sc.memo != nil {
+		sc.memo.joins[&rs[i]] = true
+	}
 }
 
 // key is the memo's key for a reader starting at rs[i], ok false past the
@@ -713,10 +787,11 @@ const maxSubstDepth = 64
 // ${...}, backticks, nested substitutions, comments, here-documents and
 // case patterns are all read as they are elsewhere, and the ")" that ends
 // it is the first one at the body's top level. It returns that index.
-// uncertain is set when the body does not end at its plain top level.
-func substEnd(rs []rune, i int, sc lineScan) (end int, uncertain, ok bool) {
+// uncertain says why when the body cannot be read as bash would (it does
+// not end at its plain top level).
+func substEnd(rs []rune, i int, sc lineScan) (end int, uncertain string, ok bool) {
 	if sc.depth > maxSubstDepth {
-		return 0, false, false
+		return 0, "", false
 	}
 	key, memo := sc.key(rs, i)
 	if memo {
@@ -727,7 +802,10 @@ func substEnd(rs []rune, i int, sc lineScan) (end int, uncertain, ok bool) {
 	t := &tokenizer{rs: rs, sc: sc}
 	end, ok = t.run(i, true)
 	if ok {
-		uncertain = t.uncertain || t.cases > 0 || t.casePattern || len(t.pending) > 0
+		uncertain = t.uncertain
+		if uncertain == "" && (t.cases > 0 || t.casePattern || len(t.pending) > 0) {
+			uncertain = whyUnclosed
+		}
 	} else {
 		end = 0
 	}
@@ -799,7 +877,7 @@ func (t *tokenizer) run(start int, sub bool) (int, bool) {
 				}
 				// A ) that closes nothing: what the line means cannot be
 				// told.
-				t.uncertain = true
+				t.doubt(whyStrayParen)
 			}
 			t.endCommand()
 			if len(t.parens) > 0 {
@@ -892,20 +970,9 @@ func (t *tokenizer) run(start int, sub bool) (int, bool) {
 				t.lit(string(rs[i]), true)
 				continue
 			}
-			// A backslash-newline joins lines. Within a word, or between
-			// words, the gate reads that as bash does; next to an operator
-			// or a $ it could make one bash reads otherwise ((\<nl>( is
-			// arithmetic), so the line is not read.
-			prev, next := ' ', ' '
-			if i >= 2 {
-				prev = rs[i-2]
-			}
-			if i+1 < len(rs) {
-				next = rs[i+1]
-			}
-			if strings.ContainsRune(";&|()<>$`", prev) || strings.ContainsRune(";&|()<>{}", next) {
-				t.uncertain = true
-			}
+			// A backslash-newline bash removes before it reads the line:
+			// noted, and the line read again without it (tokenize).
+			t.sc.join(rs, i-1)
 		case '\'':
 			end := indexRune(rs, i+1, '\'')
 			if end < 0 {
@@ -989,19 +1056,22 @@ func (t *tokenizer) finish() []simple {
 		// The line ends before a body starts: each is empty, as in bash,
 		// and the line is not read to its end.
 		t.bodies(len(t.rs))
-		t.uncertain = true
+		t.doubt(whyUnclosed)
 	}
 	// The tokenizer fails closed on its own uncertainty: a line that does
 	// not end at the plain top level (a case or a parenthesis left open,
 	// a case pattern being read, a here-document never closed, a ) that
-	// closes nothing) is marked, and the walker takes it to touch every
-	// root.
-	if t.uncertain || t.cases > 0 || t.casePattern || len(t.parens) > 0 {
+	// closes nothing), or that it cannot read as bash would, is marked,
+	// and the walker denies it.
+	if t.cases > 0 || t.casePattern || len(t.parens) > 0 {
+		t.doubt(whyUnclosed)
+	}
+	if t.uncertain != "" {
 		if len(t.cmds) == 0 {
 			t.cmds = append(t.cmds, simple{})
 		}
 		for i := range t.cmds {
-			t.cmds[i].uncertain = true
+			t.cmds[i].uncertain = t.uncertain
 		}
 	}
 	return t.cmds
@@ -1017,7 +1087,7 @@ func (t *tokenizer) heredocOp(i int) (int, bool) {
 	}
 	if strings.ContainsAny(delim, "$`\n") {
 		// A delimiter the gate may read other than bash does.
-		t.uncertain = true
+		t.doubt(whyDelim)
 	}
 	doc := &heredoc{quoted: quoted}
 	t.cur.docs = append(t.cur.docs, doc)
@@ -1031,17 +1101,18 @@ func (t *tokenizer) heredocOp(i int) (int, bool) {
 func (t *tokenizer) bodies(i int) int {
 	for _, p := range t.pending {
 		body, next, closed := readBody(t.rs, i, p.delim, p.strip)
-		t.uncertain = t.uncertain || !closed
-		if !p.doc.quoted && strings.Contains(body, "\\\n") {
-			// bash joins a backslash-newline in an unquoted body, which
-			// can make a delimiter line the gate did not see.
-			t.uncertain = true
+		if !closed {
+			t.doubt(whyUnclosed)
+		}
+		if !p.doc.quoted {
+			// bash joins a backslash-newline in an unquoted body.
+			t.bodyJoins(i, next, p)
 		}
 		if t.sc.depth > 0 && bodyLineStarts(body, p.delim, p.strip) {
 			// Inside a command substitution, bash 5.2 ends the body at a
 			// line that starts with the delimiter, and reads the rest of
 			// it as commands.
-			t.uncertain = true
+			t.doubt(whyBash52)
 		}
 		i = next
 		p.doc.body = body
@@ -1051,6 +1122,67 @@ func (t *tokenizer) bodies(i int) int {
 	}
 	t.pending = nil
 	return i
+}
+
+// bodyJoins notes the backslash-newlines bash removes in an unquoted
+// here-document body, rs[i:next] with its delimiter line, so that the line
+// is read again with them joined (tokenize). A join the gate cannot follow
+// so is doubted (whyBodyJoin): one whose next line is the delimiter (bash
+// reads on past it), one that makes a line that is the delimiter (bash
+// ends the body there), and one in a line with a $( or a backtick, or
+// between a $ or a backtick and what follows.
+func (t *tokenizer) bodyJoins(i, next int, p pendingDoc) {
+	rs := t.rs
+	next = min(next, len(rs))
+	isDelim := func(line string) bool {
+		if p.strip {
+			line = strings.TrimLeft(line, "\t")
+		}
+		return line == p.delim
+	}
+	var logical strings.Builder
+	joined, lineStart := false, i
+	for k := i; k < next; k++ {
+		c := rs[k]
+		switch {
+		case c == '\\' && k+1 < next && rs[k+1] == '\n':
+			after := k + 2
+			nl := indexRune(rs, after, '\n')
+			if nl < 0 {
+				nl = len(rs)
+			}
+			line := string(rs[lineStart:k])
+			prev, following := ' ', ' '
+			if k > lineStart {
+				prev = rs[k-1]
+			}
+			if after < len(rs) {
+				following = rs[after]
+			}
+			if isDelim(string(rs[after:nl])) || strings.Contains(line, "$(") || strings.Contains(line, "`") ||
+				prev == '$' || prev == '`' || following == '(' || following == '`' {
+				t.sc.doubtJoin()
+			}
+			t.sc.join(rs, k)
+			joined, lineStart = true, after
+			k++
+		case c == '\\' && k+1 < next:
+			logical.WriteRune(c)
+			logical.WriteRune(rs[k+1])
+			k++
+		case c == '\n':
+			if joined && isDelim(logical.String()) {
+				t.sc.doubtJoin()
+			}
+			logical.Reset()
+			joined, lineStart = false, k+1
+		default:
+			logical.WriteRune(c)
+		}
+	}
+	if joined && isDelim(logical.String()) {
+		t.sc.doubtJoin()
+	}
 }
 
 // readDelim reads a here-document's delimiter word starting at i, just
@@ -1302,7 +1434,7 @@ func (t *tokenizer) dollar(i int) (int, bool) {
 		if !ok {
 			return 0, false
 		}
-		t.uncertain = t.uncertain || uncertain
+		t.doubt(uncertain)
 		t.cur.subs = append(t.cur.subs, string(rs[i+2:end]))
 		t.expansion(opaquePart, "", string(rs[i:end+1]))
 		return end, true

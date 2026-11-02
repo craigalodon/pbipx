@@ -252,7 +252,7 @@ func TestShellGitHistoryGaps(t *testing.T) {
 		// CR, backslash-newline and time (F8, F9, F10).
 		{"a CRLF here-document", sh("cat <<E\r\nx\r\nE\r\ngit log -p"), git},
 		{"a delimiter joined across lines", sh("cat <<E\\\nF\nx\nEF\ngit log -p"), gate.ReasonInternalError},
-		{"(\\<nl>( arithmetic", sh("(\\\n(x<<true))\ngit log -p\ntrue"), gate.ReasonInternalError},
+		{"(\\<nl>( arithmetic", sh("(\\\n(x<<true))\ngit log -p\ntrue"), git},
 		{"a delimiter line joined in the body", sh("cat <<E\nx\nE\\\n\ngit log -p\nE"), gate.ReasonInternalError},
 		{"a continued command line", sh("git log \\\n  --oneline -1"), ""},
 		{"time with groups", sh("time { { git log -p; }; }"), git},

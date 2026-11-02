@@ -1,0 +1,6 @@
+description = "backslash-newline continuations after &&, | and ;, and before &&, are removed as bash removes them, and the commands read nothing under the protected root, which holds a finding: the line is allowed"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = ["Doe, Jane"]

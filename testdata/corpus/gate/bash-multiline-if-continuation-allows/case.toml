@@ -1,0 +1,6 @@
+description = "a multi-line if whose lines end in backslash-newline continuations is read as bash reads it; the protected root holds a finding the line does not read, so it is allowed"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = ["Doe, Jane"]
