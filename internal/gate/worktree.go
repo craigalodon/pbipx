@@ -81,10 +81,12 @@ func gitTreeRewrite(v view) bool {
 
 // worktreeSpecsAvoid reports whether v, a git command that prints the
 // working tree, is limited to pathspecs that provably avoid every root, as
-// rule 2 proves them without asking git (specsAvoid): those after "--",
-// or, with none, its operands that name existing paths (git diff
-// src/main.go), the others being revisions. No pathspec, one the gate
-// cannot tell, --no-index or --pathspec-from-file leave it unproven.
+// rule 2 proves them without asking git (specsAvoid): the pathspecs after
+// "--", which honour them in their patch (checked against git 2.53).
+// status is left out: its -v diff ignores the pathspec. Without a "--"
+// the proof fails, since an option's value can be read as a pathspec (git
+// diff -I src/main.go); so does a cannot-tell word, --no-index or
+// --pathspec-from-file.
 func (s *setup) worktreeSpecsAvoid(v view) bool {
 	name, rest := program(v.argv)
 	if name != "git" || len(unknownArgs(v)) > 0 {
@@ -95,32 +97,19 @@ func (s *setup) worktreeSpecsAvoid(v view) bool {
 		return false
 	}
 	switch inv.sub {
-	case "diff", "diff-files", "diff-index", "status", "add", "stage", "grep":
+	case "diff", "diff-files", "diff-index", "add", "stage", "grep":
 	default:
 		return false
 	}
-	if inv.elsewhere || inv.oddSpecs || hasFlag(inv.args, []string{"--no-index", "--pathspec-from-file"}) {
+	if !inv.dashdash || len(inv.specs) == 0 || inv.elsewhere || inv.oddSpecs ||
+		hasFlag(inv.args, []string{"--no-index", "--pathspec-from-file"}) {
 		return false
 	}
 	s.locate(&inv)
 	if inv.place != gitHere {
 		return false
 	}
-	specs := inv.specs
-	if !inv.dashdash {
-		if inv.sub == "grep" {
-			return false // its first operand is the pattern
-		}
-		for _, a := range positional(inv.args) {
-			if s.isPath(inv, a) {
-				specs = append(specs, a)
-			}
-		}
-	}
-	if len(specs) == 0 {
-		return false
-	}
-	return s.specsAvoid(inv, s.parseSpecs(inv, specs)) == ""
+	return s.specsAvoid(inv, s.parseSpecs(inv, inv.specs)) == ""
 }
 
 // gitHooks are git's subcommands that run hooks, which can write files:
