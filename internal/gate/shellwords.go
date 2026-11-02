@@ -171,6 +171,15 @@ type tokenizer struct {
 	// closes no parenthesis.
 	cases       int
 	casePattern bool
+	// patternParen is set when the case pattern being read opened with
+	// "(": then esac in it is a pattern, not the case's end.
+	patternParen bool
+	// patternStart is where the pattern being read starts among the
+	// command's words: after "case WORD in" when on the same line.
+	patternStart int
+	// depth is how deeply this tokenizer's text is nested in command
+	// substitutions (substEnd).
+	depth int
 	// uncertain is set when the tokenizer cannot be sure what the line
 	// runs (a here-document never closed).
 	uncertain bool
@@ -534,6 +543,11 @@ func (t *tokenizer) endWord() {
 			t.cur.words = append(t.cur.words, w)
 		default:
 			for _, toks := range words {
+				if len(toks) == 0 {
+					// bash drops a word brace expansion leaves empty:
+					// {grep,} -r x is grep -r x, then -r x.
+					continue
+				}
 				x := w
 				x.parts, x.text = braceParts(toks)
 				x.splits = wordSplits(x.parts)
@@ -556,7 +570,7 @@ func (t *tokenizer) caseWord() {
 	last := ws[len(ws)-1]
 	switch {
 	case last.quoted:
-	case last.text == "esac" && t.cases > 0 &&
+	case last.text == "esac" && t.cases > 0 && !t.patternParen &&
 		(leadingKeywords(ws[:len(ws)-1]) == len(ws)-1 || t.casePattern && len(ws) >= 2 && ws[len(ws)-2].text == "in"):
 		// esac as a command word, or right after "case WORD in".
 		t.cases--
@@ -565,7 +579,7 @@ func (t *tokenizer) caseWord() {
 		leadingKeywords(ws[:len(ws)-3]) == len(ws)-3:
 		// case as the command word, after any reserved words.
 		t.cases++
-		t.casePattern = true
+		t.casePattern, t.patternStart = true, len(ws)
 	}
 }
 
@@ -620,8 +634,41 @@ func (t *tokenizer) endCommand() {
 // when they do not.
 func tokenize(line string) (cmds []simple, ok bool) {
 	t := &tokenizer{rs: []rune(line)}
+	if _, ok := t.run(0, false); !ok {
+		return nil, false
+	}
+	return t.finish(), true
+}
+
+// maxSubstDepth bounds how deeply command substitutions nest in what one
+// tokenizer reads: past it the line does not tokenize, and is split on
+// whitespace instead (splitFields), which fails closed.
+const maxSubstDepth = 64
+
+// substEnd reads the body of a command substitution, $(...), starting at
+// i just after "$(", with the tokenizer itself, as bash reads it: quotes,
+// ${...}, backticks, nested substitutions, comments, here-documents and
+// case patterns are all read as they are elsewhere, and the ")" that ends
+// it is the first one at the body's top level. It returns that index.
+// uncertain is set when the body does not end at its plain top level.
+func substEnd(rs []rune, i, depth int) (end int, uncertain, ok bool) {
+	if depth > maxSubstDepth {
+		return 0, false, false
+	}
+	t := &tokenizer{rs: rs, depth: depth}
+	end, ok = t.run(i, true)
+	if !ok {
+		return 0, false, false
+	}
+	return end, t.uncertain || t.cases > 0 || t.casePattern || len(t.pending) > 0, true
+}
+
+// run reads rs from start. With sub set it reads a command substitution's
+// body and stops at the ")" that closes it, whose index it returns; ok is
+// false when it never comes, or a quote does not close.
+func (t *tokenizer) run(start int, sub bool) (int, bool) {
 	rs := t.rs
-	for i := 0; i < len(rs); i++ {
+	for i := start; i < len(rs); i++ {
 		c := rs[i]
 		switch c {
 		case ' ', '\t', '\r':
@@ -634,9 +681,20 @@ func tokenize(line string) (cmds []simple, ok bool) {
 		case '(':
 			// <(...) and >(...): a redirection with no target yet.
 			proc := t.redirect && !t.inWord
-			if t.casePattern && !t.inWord && len(t.cur.words) == 0 {
+			if t.casePattern && !t.inWord && len(t.cur.words) == t.patternStart {
 				// A case pattern's optional opening parenthesis.
+				t.patternParen = true
 				continue
+			}
+			if !t.inWord && !proc && i+1 < len(rs) && rs[i+1] == '(' {
+				// ((...)) is an arithmetic command: << in it is a shift.
+				if end, ok := arithEnd(rs, i, t.depth); ok {
+					t.endCommand()
+					t.cur.subs = append(t.cur.subs, bodySubs(rs[i+2:end-1], t.depth)...)
+					t.endCommand()
+					i = end
+					continue
+				}
 			}
 			if t.definesFunction(i) {
 				t.endWord()
@@ -645,13 +703,23 @@ func tokenize(line string) (cmds []simple, ok bool) {
 			t.endCommand()
 			t.parens = append(t.parens, proc)
 		case ')':
+			// The word before ends first: an esac there closes the case.
+			t.endWord()
 			if t.casePattern {
 				// The end of a case pattern: its words are no command.
-				t.endWord()
-				t.cur.words = nil
+				t.cur.words = t.cur.words[:min(t.patternStart, len(t.cur.words))]
 				t.endCommand()
-				t.casePattern = false
+				t.casePattern, t.patternParen = false, false
 				continue
+			}
+			if len(t.parens) == 0 {
+				if sub {
+					t.endCommand()
+					return i, true
+				}
+				// A ) that closes nothing: what the line means cannot be
+				// told.
+				t.uncertain = true
 			}
 			t.endCommand()
 			if len(t.parens) > 0 {
@@ -666,7 +734,7 @@ func tokenize(line string) (cmds []simple, ok bool) {
 				if i+1 < len(rs) && rs[i] == ';' && rs[i+1] == '&' {
 					i++
 				}
-				t.casePattern = true
+				t.casePattern, t.patternStart = true, 0
 			}
 		case '&':
 			if i+1 < len(rs) && rs[i+1] == '>' {
@@ -686,6 +754,11 @@ func tokenize(line string) (cmds []simple, ok bool) {
 				t.cmds[len(t.cmds)-1].background = true
 			}
 		case '|':
+			if t.casePattern {
+				// a|b in a case pattern: another pattern, not a pipe.
+				t.endWord()
+				continue
+			}
 			t.endCommand()
 			t.pipe = true
 			if i+1 < len(rs) && rs[i+1] == '|' {
@@ -697,14 +770,15 @@ func tokenize(line string) (cmds []simple, ok bool) {
 		case '<', '>':
 			// A word of digits just before is the descriptor: part of the
 			// operator, not an argument.
-			if t.inWord && !t.quoted && isDigits(t.raw.String()) {
+			// So is a {name} just before (bash's named descriptor).
+			if t.inWord && !t.quoted && (isDigits(t.raw.String()) || isNamedFd(t.raw.String())) {
 				t.dropWord()
 			}
 			t.endWord()
 			if c == '<' && i+1 < len(rs) && rs[i+1] == '<' && (i+2 >= len(rs) || rs[i+2] != '<') {
 				end, ok := t.heredocOp(i + 2)
 				if !ok {
-					return nil, false
+					return 0, false
 				}
 				i = end
 				continue
@@ -731,7 +805,7 @@ func tokenize(line string) (cmds []simple, ok bool) {
 			}
 		case '\\':
 			if i+1 >= len(rs) {
-				return nil, false
+				return 0, false
 			}
 			i++
 			if rs[i] != '\n' { // a backslash-newline joins lines
@@ -740,27 +814,27 @@ func tokenize(line string) (cmds []simple, ok bool) {
 		case '\'':
 			end := indexRune(rs, i+1, '\'')
 			if end < 0 {
-				return nil, false
+				return 0, false
 			}
 			t.lit(string(rs[i+1:end]), true)
 			i = end
 		case '"':
 			end, ok := t.double(i + 1)
 			if !ok {
-				return nil, false
+				return 0, false
 			}
 			i = end
 		case '`':
 			end, ok := t.backtick(i + 1)
 			if !ok {
-				return nil, false
+				return 0, false
 			}
 			i = end
 		case '$':
 			if i+1 < len(rs) && rs[i+1] == '\'' {
 				s, end, ok := ansiC(rs, i+2)
 				if !ok {
-					return nil, false
+					return 0, false
 				}
 				t.lit(s, true)
 				i = end
@@ -769,14 +843,14 @@ func tokenize(line string) (cmds []simple, ok bool) {
 			if i+1 < len(rs) && rs[i+1] == '"' {
 				end, ok := t.double(i + 2)
 				if !ok {
-					return nil, false
+					return 0, false
 				}
 				i = end
 				continue
 			}
 			end, ok := t.dollar(i)
 			if !ok {
-				return nil, false
+				return 0, false
 			}
 			i = end
 		case '~':
@@ -800,15 +874,33 @@ func tokenize(line string) (cmds []simple, ok bool) {
 			t.lit(string(c), false)
 		}
 	}
+	if sub {
+		return 0, false
+	}
+	return len(rs), true
+}
+
+// isNamedFd reports whether w is {name}, a redirection's named descriptor
+// ({fd}>/dev/null).
+func isNamedFd(w string) bool {
+	return len(w) > 2 && w[0] == '{' && w[len(w)-1] == '}' && isName(w[1:len(w)-1])
+}
+
+// finish ends the line run read: its last command, its pending
+// here-documents, and the uncertain mark.
+func (t *tokenizer) finish() []simple {
 	t.endCommand()
 	if len(t.pending) > 0 {
-		// The line ends before a body starts: each is empty, as in bash.
-		t.bodies(len(rs))
+		// The line ends before a body starts: each is empty, as in bash,
+		// and the line is not read to its end.
+		t.bodies(len(t.rs))
+		t.uncertain = true
 	}
 	// The tokenizer fails closed on its own uncertainty: a line that does
 	// not end at the plain top level (a case or a parenthesis left open,
-	// a case pattern being read, a here-document never closed) is marked,
-	// and the walker takes it to touch every root.
+	// a case pattern being read, a here-document never closed, a ) that
+	// closes nothing) is marked, and the walker takes it to touch every
+	// root.
 	if t.uncertain || t.cases > 0 || t.casePattern || len(t.parens) > 0 {
 		if len(t.cmds) == 0 {
 			t.cmds = append(t.cmds, simple{})
@@ -817,7 +909,7 @@ func tokenize(line string) (cmds []simple, ok bool) {
 			t.cmds[i].uncertain = true
 		}
 	}
-	return t.cmds, true
+	return t.cmds
 }
 
 // heredocOp reads a here-document operator's delimiter, after the "<<" that
@@ -827,6 +919,10 @@ func (t *tokenizer) heredocOp(i int) (int, bool) {
 	delim, strip, quoted, end, ok := readDelim(t.rs, i)
 	if !ok {
 		return 0, false
+	}
+	if strings.ContainsAny(delim, "$`") {
+		// A delimiter the gate may read other than bash does.
+		t.uncertain = true
 	}
 	doc := &heredoc{quoted: quoted}
 	t.cur.docs = append(t.cur.docs, doc)
@@ -844,7 +940,7 @@ func (t *tokenizer) bodies(i int) int {
 		i = next
 		p.doc.body = body
 		if !p.doc.quoted {
-			p.doc.subs = bodySubs([]rune(body))
+			p.doc.subs = bodySubs([]rune(body), t.depth)
 		}
 	}
 	t.pending = nil
@@ -867,6 +963,34 @@ func readDelim(rs []rune, i int) (delim string, strip, quoted bool, end int, ok 
 	start := i
 	for ; i < len(rs) && !strings.ContainsRune(" \t\r\n;&|()<>", rs[i]); i++ {
 		switch rs[i] {
+		case '$':
+			// $'...' and $"..." are quoting, which bash removes: <<$'E'
+			// ends at a line E.
+			if i+1 < len(rs) && rs[i+1] == '\'' {
+				s, k, ok := ansiC(rs, i+2)
+				if !ok {
+					return "", false, false, 0, false
+				}
+				b.WriteString(s)
+				quoted, i = true, k
+				continue
+			}
+			if i+1 < len(rs) && rs[i+1] == '"' {
+				i++
+				k := i + 1
+				for ; k < len(rs) && rs[k] != '"'; k++ {
+					if rs[k] == '\\' && k+1 < len(rs) {
+						k++
+					}
+					b.WriteRune(rs[k])
+				}
+				if k >= len(rs) {
+					return "", false, false, 0, false
+				}
+				quoted, i = true, k
+				continue
+			}
+			b.WriteRune(rs[i])
 		case '\'':
 			k := indexRune(rs, i+1, '\'')
 			if k < 0 {
@@ -931,15 +1055,23 @@ func readBody(rs []rune, i int, delim string, strip bool) (body string, next int
 // bodySubs are the command substitutions, $(...) and `...`, in an unquoted
 // here-document's body, which run when the body is expanded. One that does
 // not close runs to the end of the body.
-func bodySubs(rs []rune) []string {
+func bodySubs(rs []rune, depth int) []string {
 	var subs []string
 	for j := 0; j < len(rs); j++ {
 		switch {
 		case rs[j] == '\\':
 			j++
+		case rs[j] == '$' && j+2 < len(rs) && rs[j+1] == '(' && rs[j+2] == '(':
+			if end, ok := arithEnd(rs, j+1, depth); ok {
+				// $((...)): only the substitutions in it run.
+				subs = append(subs, bodySubs(rs[j+3:end-1], depth)...)
+				j = end
+				continue
+			}
+			fallthrough
 		case rs[j] == '$' && j+1 < len(rs) && rs[j+1] == '(':
-			end := matchClose(rs, j+1, '(', ')')
-			if end < 0 {
+			end, _, ok := substEnd(rs, j+2, depth+1)
+			if !ok {
 				return append(subs, string(rs[j+2:]))
 			}
 			subs = append(subs, string(rs[j+2:end]))
@@ -1037,20 +1169,34 @@ func (t *tokenizer) dollar(i int) (int, bool) {
 	}
 	switch c := rs[i+1]; {
 	case c == '(':
-		end := matchClose(rs, i+1, '(', ')')
+		if i+2 < len(rs) && rs[i+2] == '(' {
+			if end, ok := arithEnd(rs, i+1, t.depth); ok {
+				// $((...)) is arithmetic: << in it is a shift, and only the
+				// substitutions in it run.
+				t.cur.subs = append(t.cur.subs, bodySubs(rs[i+3:end-1], t.depth)...)
+				t.expansion(opaquePart, "", string(rs[i:end+1]))
+				return end, true
+			}
+		}
+		end, uncertain, ok := substEnd(rs, i+2, t.depth+1)
+		if !ok {
+			return 0, false
+		}
+		t.uncertain = t.uncertain || uncertain
+		t.cur.subs = append(t.cur.subs, string(rs[i+2:end]))
+		t.expansion(opaquePart, "", string(rs[i:end+1]))
+		return end, true
+	case c == '[':
+		// $[...] is bash's old arithmetic.
+		end := bracketEnd(rs, i+1)
 		if end < 0 {
 			return 0, false
 		}
-		body := string(rs[i+2 : end])
-		if strings.HasPrefix(body, "(") && strings.HasSuffix(body, ")") {
-			// $((...)) is arithmetic; what it holds is read all the same.
-			body = body[1 : len(body)-1]
-		}
-		t.cur.subs = append(t.cur.subs, body)
+		t.cur.subs = append(t.cur.subs, bodySubs(rs[i+2:end], t.depth)...)
 		t.expansion(opaquePart, "", string(rs[i:end+1]))
 		return end, true
 	case c == '{':
-		end := matchClose(rs, i+1, '{', '}')
+		end := braceEnd(rs, i+1, t.depth)
 		if end < 0 {
 			return 0, false
 		}
@@ -1060,7 +1206,7 @@ func (t *tokenizer) dollar(i int) (int, bool) {
 		} else {
 			// ${X:-$(cmd)} runs cmd: the substitutions in the body,
 			// nested ${...} included, are the command's own.
-			t.cur.subs = append(t.cur.subs, bodySubs([]rune(inner))...)
+			t.cur.subs = append(t.cur.subs, bodySubs([]rune(inner), t.depth)...)
 			t.expansion(opaquePart, "", string(rs[i:end+1]))
 		}
 		return end, true
@@ -1079,63 +1225,132 @@ func (t *tokenizer) dollar(i int) (int, bool) {
 	return i, true
 }
 
-// matchClose returns the index of the close that matches the open at i,
-// skipping quoted text, escapes, comments and here-document bodies, or -1.
-func matchClose(rs []rune, i int, open, close rune) int {
-	depth := 0
-	type doc struct {
-		delim string
-		strip bool
+// skipQuoted returns the index of the last rune of the quoted text, the
+// escape or the backtick substitution starting at k, or k when there is
+// none there; ok is false when it does not close.
+func skipQuoted(rs []rune, k int) (int, bool) {
+	switch rs[k] {
+	case '\\':
+		return min(k+1, len(rs)-1), true
+	case '\'':
+		e := indexRune(rs, k+1, '\'')
+		return e, e >= 0
+	case '"', '`':
+		q := rs[k]
+		for e := k + 1; e < len(rs); e++ {
+			switch rs[e] {
+			case '\\':
+				e++
+			case q:
+				return e, true
+			}
+		}
+		return 0, false
 	}
-	var pending []doc
-	for j := i; j < len(rs); j++ {
-		switch rs[j] {
-		case '\n':
-			for _, d := range pending {
-				_, next, _ := readBody(rs, j+1, d.delim, d.strip)
-				j = next - 1
+	return k, true
+}
+
+// arithEnd reads an arithmetic expression ((...)) whose first "(" is at j
+// (after a $, or as a command), and returns the index of its last ")". ok
+// is false when the parentheses do not close as "))", as with a subshell
+// in a subshell, or never close. Quotes, backticks, ${...} and nested
+// substitutions in it are skipped as bash reads them.
+func arithEnd(rs []rune, j, depth int) (int, bool) {
+	d := 0
+	for k := j; k < len(rs); k++ {
+		switch rs[k] {
+		case '\\', '\'', '"', '`':
+			e, ok := skipQuoted(rs, k)
+			if !ok {
+				return 0, false
 			}
-			pending = nil
-		case '#':
-			if j > i && strings.ContainsRune(" \t\n;&|(", rs[j-1]) {
-				for j+1 < len(rs) && rs[j+1] != '\n' {
-					j++
+			k = e
+		case '$':
+			if k+1 < len(rs) && rs[k+1] == '{' {
+				e := braceEnd(rs, k+1, depth)
+				if e < 0 {
+					return 0, false
 				}
+				k = e
+			} else if k+1 < len(rs) && rs[k+1] == '(' {
+				if k+2 < len(rs) && rs[k+2] == '(' {
+					if e, ok := arithEnd(rs, k+1, depth); ok {
+						k = e
+						continue
+					}
+				}
+				e, _, ok := substEnd(rs, k+2, depth+1)
+				if !ok {
+					return 0, false
+				}
+				k = e
 			}
-		case '<':
-			if j+1 < len(rs) && rs[j+1] == '<' && (j+2 >= len(rs) || rs[j+2] != '<') && rs[j-1] != '<' {
-				delim, strip, _, end, ok := readDelim(rs, j+2)
+		case '(':
+			d++
+		case ')':
+			d--
+			if d == 1 {
+				return k + 1, k+1 < len(rs) && rs[k+1] == ')'
+			}
+			if d == 0 {
+				return 0, false
+			}
+		}
+	}
+	return 0, false
+}
+
+// braceEnd returns the index of the "}" that closes the ${ whose "{" is at
+// i, or -1. Quotes, backticks, nested ${...} and substitutions in it are
+// skipped as bash reads them; a ) or # in it is text.
+func braceEnd(rs []rune, i, depth int) int {
+	d := 0
+	for k := i; k < len(rs); k++ {
+		switch rs[k] {
+		case '\\', '\'', '"', '`':
+			e, ok := skipQuoted(rs, k)
+			if !ok {
+				return -1
+			}
+			k = e
+		case '$':
+			if k+1 < len(rs) && rs[k+1] == '(' {
+				if k+2 < len(rs) && rs[k+2] == '(' {
+					if e, ok := arithEnd(rs, k+1, depth); ok {
+						k = e
+						continue
+					}
+				}
+				e, _, ok := substEnd(rs, k+2, depth+1)
 				if !ok {
 					return -1
 				}
-				pending = append(pending, doc{delim, strip})
-				j = end
+				k = e
 			}
-		case '\\':
-			j++
-		case '\'':
-			k := indexRune(rs, j+1, '\'')
-			if k < 0 {
-				return -1
+		case '{':
+			d++
+		case '}':
+			d--
+			if d == 0 {
+				return k
 			}
-			j = k
-		case '"':
-			k := j + 1
-			for ; k < len(rs) && rs[k] != '"'; k++ {
-				if rs[k] == '\\' {
-					k++
-				}
-			}
-			if k >= len(rs) {
-				return -1
-			}
-			j = k
-		case open:
-			depth++
-		case close:
-			depth--
-			if depth == 0 {
-				return j
+		}
+	}
+	return -1
+}
+
+// bracketEnd returns the index of the "]" that closes the $[ whose "[" is
+// at i, or -1.
+func bracketEnd(rs []rune, i int) int {
+	d := 0
+	for k := i; k < len(rs); k++ {
+		switch rs[k] {
+		case '[':
+			d++
+		case ']':
+			d--
+			if d == 0 {
+				return k
 			}
 		}
 	}

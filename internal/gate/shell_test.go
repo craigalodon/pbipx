@@ -655,6 +655,31 @@ func TestShellTokenizerFailsClosed(t *testing.T) {
 		{"a parenthesis left open", shIn("sql", "(echo hi"), "", gate.ReasonFinding},
 		{"a here-document never closed", shIn("sql", "cat <<EOF\nhi"), "", gate.ReasonFinding},
 		{"a here-document closed", shIn("sql", "cat <<EOF\nhi\nEOF"), "", ""},
+		// A: a ) inside ${...} inside $(...) does not end the substitution.
+		{"${...} with ) in $(...)", sh("echo $(echo ${x/) #/}; grep -r . .)"), "", gate.ReasonFinding},
+		{"${...} with ) in $(...) in ${...}", sh("echo ${x:-$(echo ${y/)/}; grep -r . .)}"), "", gate.ReasonFinding},
+		{"a quoted ) in $(...)", sh(`echo "$(echo ')'; grep -r . .)"`), "", gate.ReasonFinding},
+		// B: a here-document delimiter quoted with $'...' or $"...".
+		{"a delimiter $'E'", sh("cat <<$'E'\nx\nE\ngrep -r . ."), "", gate.ReasonFinding},
+		{`a delimiter $"E"`, sh("cat <<$\"E\"\nx\nE\ngrep -r . ."), "", gate.ReasonFinding},
+		// C: << in arithmetic is a shift.
+		{"<< in an arithmetic command", sh("((x<<true))\ngrep -r . .\ntrue"), "", gate.ReasonFinding},
+		{"<< in $[...]", sh("echo $[1<<2]\ngrep -r . .\n2]"), "", gate.ReasonFinding},
+		{"a shift in $((...))", sh("echo $((1<<2))"), "", ""},
+		{"a shift in ((...))", sh("((x<<1))"), "", ""},
+		{"a shift in an assignment", sh("n=1; n=$((n << 1))"), "", ""},
+		{"a subshell in a subshell", sh("( (echo hi) )"), "", ""},
+		// D: a case pattern in $(...), and | between patterns.
+		{"a case pattern in $(...)", sh("echo $(case esac in a|esac) grep -r . .;; esac)"), "", gate.ReasonFinding},
+		{"a case with a glob pattern in $(...)", sh("echo $(case x in (esac|*) echo hi;; esac)"), "", ""},
+		// E: a word brace expansion leaves empty is dropped.
+		{"{grep,} -r", sh("{grep,} -r Doe"), "", gate.ReasonFinding},
+		{"{rg,}", sh("{rg,} Doe"), "", gate.ReasonFinding},
+		{"if {rg,}", sh("if {rg,} Doe; then :; fi"), "", gate.ReasonFinding},
+		// A ) that closes nothing.
+		{"a stray )", shIn("sql", "echo hi )"), "", gate.ReasonFinding},
+		// A named descriptor is part of the redirection.
+		{"a named descriptor", shIn("sql", "grep x clean.sql {fd}>/dev/null"), "", ""},
 		// A function defined after reserved words.
 		{"a function in an if", shIn("sql", "if true; then f() { cat clean.sql; }; fi; git checkout HEAD~1 -- .; f"),
 			gate.ReasonGitContent, gate.ReasonGitContent},

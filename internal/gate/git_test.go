@@ -237,6 +237,10 @@ func TestShellGitHistoryGaps(t *testing.T) {
 		{"log of more brace words than the gate expands", sh("git log --oneline x{1..100}"), git},
 		{"log of an invalid brace", sh("git log --oneline {a}"), ""},
 		{"case words echoed, then git log -p", sh("echo case x in; (git log -p)"), git},
+		{"a case pattern in $(...), then git log -p", sh("echo $(case esac in a|esac) git --no-pager log -p;; esac)"), git},
+		{"<< in arithmetic, then git log -p", sh("((x<<true))\ngit log -p\ntrue"), git},
+		{"a delimiter $'E', then git log -p", sh("cat <<$'E'\nx\nE\ngit log -p"), git},
+		{"{git,} log", sh("{git,} log --oneline -2"), ""},
 	})
 }
 
