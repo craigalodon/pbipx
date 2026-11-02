@@ -61,6 +61,21 @@ func TestShellSplitHeredocOperator(t *testing.T) {
 	})
 }
 
+// TestShellFedScriptJoins: the script echo or printf feeds a shell is what
+// it prints, its backslash-newlines joined as bash joins them.
+func TestShellFedScriptJoins(t *testing.T) {
+	root, _ := historyRepo(t)
+	sh := func(cmd string) gate.Event { return gate.Event{Tool: gate.Shell, Command: cmd} }
+	git := gate.ReasonGitContent
+	run(t, root, []decideCase{
+		{"printf of a continued line into bash", sh(`printf '%s\n' 'git log \' '-p -1' | bash`), git},
+		{"printf with an escaped newline into sh", sh(`printf 'git log \\\n-p -1\n' | sh`), git},
+		{"echo -e of a continued line into bash", sh(`echo -e 'git log \\\n-p' | bash`), git},
+		{"printf of a plain line into bash", sh(`printf '%s\n' 'git log --oneline -1' | bash`), ""},
+		{"printf with %d into bash", sh(`printf '%d\n' 1 | bash`), git},
+	})
+}
+
 // TestShellUnreadableMessages: each construct the gate cannot read as bash
 // would is named in its own fixed words.
 func TestShellUnreadableMessages(t *testing.T) {

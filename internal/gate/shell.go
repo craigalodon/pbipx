@@ -1321,8 +1321,12 @@ func (w *walker) pipedScript(prev *simple, v view, depth int) {
 		}
 	}
 	if !fed && (pv.name == "echo" || pv.name == "printf") {
-		w.nested(strings.Join(pv.rest, " "), !slices.Contains(pv.restKnown, false), v.cwd.clone(), depth)
-		fed = true
+		// The script is what echo or printf prints, read as any line is
+		// (its backslash-newlines joined): printf '%s\n' 'git log \' -p.
+		if text, ok := printed(pv.name, pv.rest); ok {
+			w.nested(text, !slices.Contains(pv.restKnown, false), v.cwd.clone(), depth)
+			fed = true
+		}
 	}
 	if !fed {
 		w.setRuntime(whyPipedScript, hintPlain)
