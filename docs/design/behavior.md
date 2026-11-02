@@ -509,10 +509,12 @@ policy loads, before the baseline or the tool is looked at, is its approval
 `pbipx policy approve` for this clone on this machine. With no approval,
 or a policy changed since (a comment or whitespace edit included), every call
 is denied with `policy-unapproved`. An approval store that cannot be found
-or read denies with `internal-error`. A policy that fails to load still
-denies with `policy-error`, since that check runs first. The predecessor has
-no integrity check; the corpus cases for it are marked
-`known = "predecessor"`.
+or read denies with `internal-error`, and so does one whose directory, or
+a directory above it, is a file: that store is broken, not empty, on every
+platform (Windows reports a path through a file as missing). A policy
+that fails to load still denies with `policy-error`, since that check runs
+first. The predecessor has no integrity check; the corpus cases for it are
+marked `known = "predecessor"`.
 
 `pbipx policy approve` is refused with a usage error (exit 4) unless stdin
 and stdout are terminals and none of `CI`, `PRE_COMMIT` and
@@ -1014,7 +1016,9 @@ path, is denied with `event-error`: the call cannot be judged.
     `<user config dir>/pbipx` in any case (layer 6; a forged record would
     approve a weakened policy);
   - a user-level Claude Code settings file: a file named `settings*.json`
-    (case ignored) directly in `$CLAUDE_CONFIG_DIR` or in `~/.claude`;
+    (case ignored) directly in `$CLAUDE_CONFIG_DIR` or in `~/.claude`
+    (on Windows under both `%USERPROFILE%` and `%HOME%`, which Git Bash
+    may set as `/c/Users/me`, read as `C:\Users\me`);
   - inside Claude Code's managed settings directory (`/etc/claude-code`,
     `/Library/Application Support/ClaudeCode` or
     `C:\Program Files\ClaudeCode`), `managed-settings.json` and the

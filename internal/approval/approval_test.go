@@ -3,11 +3,13 @@ package approval
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -575,5 +577,67 @@ func TestVersion2Record(t *testing.T) {
 	approve(t, s, r, policyPath)
 	if roots, _, err := s.Roots(); err != nil || !slices.Equal(roots, []string{r.Root}) {
 		t.Errorf("Roots after an approval = %v, %v", roots, err)
+	}
+}
+
+// readAsWindows makes the store read a path through a file as Windows
+// does: as missing, where Unix reports ENOTDIR.
+func readAsWindows(t *testing.T) {
+	t.Helper()
+	oldFile, oldDir := readFile, readDir
+	t.Cleanup(func() { readFile, readDir = oldFile, oldDir })
+	asMissing := func(path string, err error) error {
+		if errors.Is(err, syscall.ENOTDIR) {
+			return &fs.PathError{Op: "open", Path: path, Err: fs.ErrNotExist}
+		}
+		return err
+	}
+	readFile = func(path string) ([]byte, error) {
+		data, err := oldFile(path)
+		return data, asMissing(path, err)
+	}
+	readDir = func(path string) ([]os.DirEntry, error) {
+		entries, err := oldDir(path)
+		return entries, asMissing(path, err)
+	}
+}
+
+// TestStoreUnderAFile checks that a store whose directory, or one above
+// it, is a file is an error, not an empty store, however the platform
+// reports a path through a file.
+func TestStoreUnderAFile(t *testing.T) {
+	for _, windows := range []bool{false, true} {
+		for name, below := range map[string]string{
+			"records directory is a file": approvedDir,
+			"store is a file":             "",
+			"store is under a file":       "pbipx",
+		} {
+			t.Run(fmt.Sprintf("%s, as Windows %v", name, windows), func(t *testing.T) {
+				if windows {
+					readAsWindows(t)
+				}
+				r, policyPath, _ := setup(t)
+				file := filepath.Join(t.TempDir(), "file")
+				s := &Store{Dir: file}
+				if below == approvedDir {
+					s.Dir = t.TempDir()
+					file = filepath.Join(s.Dir, approvedDir)
+				} else if below != "" {
+					s.Dir = filepath.Join(file, below)
+				}
+				if err := os.WriteFile(file, nil, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := s.Status(r, policyPath); !errors.Is(err, ErrStoreNotDir) {
+					t.Errorf("Status error = %v, want ErrStoreNotDir", err)
+				}
+				if _, err := s.Adopted(r); !errors.Is(err, ErrStoreNotDir) {
+					t.Errorf("Adopted error = %v, want ErrStoreNotDir", err)
+				}
+				if _, _, err := s.Roots(); !errors.Is(err, ErrStoreNotDir) {
+					t.Errorf("Roots error = %v, want ErrStoreNotDir", err)
+				}
+			})
+		}
 	}
 }

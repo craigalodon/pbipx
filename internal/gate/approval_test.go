@@ -66,6 +66,11 @@ func TestRequireApproval(t *testing.T) {
 			write(t, dir, "approved", "")
 			return &approval.Store{Dir: dir}
 		}, gate.ReasonInternalError},
+		{"store under a file", func(t *testing.T, _ string, _ *approval.Store) *approval.Store {
+			dir := t.TempDir()
+			write(t, dir, "file", "")
+			return &approval.Store{Dir: filepath.Join(dir, "file", "pbipx")}
+		}, gate.ReasonInternalError},
 		{"broken policy", func(t *testing.T, root string, store *approval.Store) *approval.Store {
 			write(t, root, ".pbipx.toml", "version = 2\nallow = [\""+allowedSentinel+"\"]\n")
 			return store

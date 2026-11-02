@@ -97,14 +97,31 @@ func UserSettingsDirs() []string {
 		dirs = append(dirs, filepath.Join(home, ".claude"))
 	}
 	// Claude Code takes $HOME first on Windows too, where os.UserHomeDir
-	// is %USERPROFILE%.
-	if home := os.Getenv("HOME"); runtime.GOOS == "windows" && filepath.IsAbs(home) {
+	// is %USERPROFILE%. Git Bash sets it in its own form, /c/Users/me.
+	if home := windowsHome(os.Getenv("HOME")); runtime.GOOS == "windows" && filepath.IsAbs(home) {
 		if d := filepath.Join(home, ".claude"); !slices.Contains(dirs, d) {
 			dirs = append(dirs, d)
 		}
 	}
 	return dirs
 }
+
+// windowsHome is home as Windows names it: a Git Bash drive path, "/c" or
+// "/c/rest", is "C:\" or "C:\rest", with backslashes, as the gate reads one
+// (gate's gitBashDrive); any other home is returned as it is.
+func windowsHome(home string) string {
+	p := home
+	if len(p) < 2 || p[0] != '/' || !isASCIILetter(p[1]) || (len(p) > 2 && p[2] != '/') {
+		return home
+	}
+	rest := ""
+	if len(p) > 3 {
+		rest = strings.ReplaceAll(p[3:], "/", `\`)
+	}
+	return strings.ToUpper(p[1:2]) + `:\` + rest
+}
+
+func isASCIILetter(c byte) bool { return 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' }
 
 // IsUserSettingsName reports whether name is a file name Claude Code reads
 // user-level settings from, or one like it: settings*.json, compared without
