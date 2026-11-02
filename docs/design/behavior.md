@@ -462,7 +462,11 @@ repositories a call is the gate's to judge
   and a repository that has not adopted pbipx, nested in one that has,
   leaves its paths to the one around it. An indexed work tree below a
   Grep's path or a Bash word counts too, since those can reach under it;
-  the working directory alone does not reach below itself. When the call
+  the working directory alone does not reach below itself. Every linked
+  work tree of an indexed clone counts as indexed, as `git worktree list`
+  reports them (read from the clone's `worktrees/*/gitdir` files, without
+  running git): `grep -rn X ..` from a clone reaches a sibling made by
+  `git worktree add ../wt`. When the call
   touches something that cannot be placed (the shell rule's "touches
   every root": a working directory that cannot be told, a reading
   command's word that cannot be placed, a line built
@@ -667,7 +671,14 @@ path, is denied with `event-error`: the call cannot be judged.
     or a pipeline continued after `|` reads as one line. In an unquoted
     here-document body the lines are joined too, as bash joins them
     (`RUN apt-get update && \<newline>  apt-get install ...` in a
-    Dockerfile written with `cat <<EOF`);
+    Dockerfile written with `cat <<EOF`). The gate reads the line once to
+    find the joins and again with them removed; each join removed must
+    fall where the second reading reads code, not inside single quotes,
+    `$'...'`, a comment or the body of a here-document with a quoted
+    delimiter (a join that splits `<<` makes the text after it such a
+    body: `cat <\<newline><'E'`). The script `echo` or `printf` feeds a
+    shell is the text it prints (printf's `%s`, `%b` and escapes), read
+    the same way, joins included;
   - the tokenizer fails closed on its own uncertainty. These are lines the
     gate cannot read as bash would, each named in the deny in its own
     fixed words: a line it does not end at the plain top level (a `case`
@@ -678,8 +689,11 @@ path, is denied with `event-error`: the call cannot be judged.
     here-document delimiter that holds `$`, a backtick or a newline, a
     backslash-newline in an unquoted here-document body that changes
     which line ends it (the line after it is the delimiter, or the
-    joined line is) or that is in a line with a `$(` or a backtick, and
-    a here-document inside a command substitution with a line that starts
+    joined line is) or that is in a line with a `$(` or a backtick, a
+    backslash-newline next to `<` or `>` (one that can split a
+    redirection or a here-document operator), a join that the second
+    reading finds inside quotes, a comment or a quoted here-document
+    body, and a here-document inside a command substitution with a line that starts
     with its delimiter (bash 5.2 ends the body there, later versions do
     not). Such a line is denied outright with `internal-error`, with a
     fixed message naming the construct and asking for the command line
@@ -756,9 +770,13 @@ path, is denied with `event-error`: the call cannot be judged.
     -v`, `read`, `mapfile`, `declare -n`, `let` or `unset`, a variable
     declared with `-i` (`declare`, `typeset`, `local`, `export`,
     `readonly`), whose every assignment is evaluated, an operand of `[[`
-    with `-eq`, `-ne`, `-lt`, `-le`, `-gt` or `-ge`, arithmetic naming a
-    variable, `((...))` with a name, or a `${x@P}` or `${x@E}`
-    expansion), setting a variable whose value bash
+    with `-eq`, `-ne`, `-lt`, `-le`, `-gt` or `-ge`, or any arithmetic
+    context that names a variable or holds an expansion, anywhere in the
+    line, a case pattern included: `$((...))`, `$[...]`, `((...))`, a
+    subscript in an expansion (`${a[x]}`, `${b[$x]}`) or in an assignment
+    (`b[x]=1`, `a=([x]=1)`), a substring offset (`${PWD:x:1}`, `${@:x}`),
+    or a `${x@P}` or `${x@E}` expansion), setting a variable whose value
+    bash
     runs later (`PS0`, `PS1`, `PS2`, `PS4`, `PROMPT_COMMAND`, `BASH_ENV`,
     `ENV`, `SHELLOPTS`, `BASHOPTS`, after reserved words such as `time`
     and under a wrapper such as `env` included), `tmux send-keys`, `at
@@ -1057,8 +1075,9 @@ path, is denied with `event-error`: the call cannot be judged.
        `fetch`, `tag`, `push`, `remote` and `branch`, which move refs only.
        That diff was judged before the line (`git add src && git diff`,
        `git stash && git diff`, `git fetch && git diff`). `git reset` and
-       `git restore --staged` make it grow, and still deny. The rule for
-       a command that may write files (below) applies to it too.
+       `git restore --staged` make it grow, and still deny. The rules for
+       a command that may write files (below) apply to it too: a writer
+       after a stash denies (`git stash && make fmt && git diff`).
      In PowerShell HEAD is not taken to stay a commit. **Known
      over-blocks:** `git fetch && git diff --cached`, `git branch
      --contains X && git diff --cached`, and `git switch main && git
@@ -1082,24 +1101,45 @@ path, is denied with `event-error`: the call cannot be judged.
      top of rule 2: a block or an error anywhere denies, a clean tree
      allows (`make fmt && git diff` denies while a root holds a finding).
      The git commands that print the working tree are `diff` but
-     `--cached` or a summary alone (with or without a revision), `status
-     -v -v`, `add`, `checkout`, `reset` and `restore` with `-p` (and `add
-     -i`, `-e`), a dry run of `commit` with `-v` and `-a`, `-o`, `-i` or
-     paths, `stash show`, `difftool`, `mergetool`, `blame`, `annotate`,
-     `grep` but `--cached`, and any subcommand that is not git's own.
-     Index-only and history-only forms (`diff --cached`, `log -p`, `show`)
-     are left to the rules above. The commands known to write nothing are
-     an assignment alone, git in a read-only form (above), and programs
-     that print, list, read or search or set the shell's state (`echo`,
+     `--cached` or a summary alone (with or without a revision),
+     `diff-files` with a patch, `diff-index` with a patch but `--cached`,
+     `status -v -v`, `add`, `checkout`, `reset` and `restore` with `-p`
+     (and `add -i`, `-e`), a dry run of `commit` with `-v` and `-a`,
+     `-o`, `-i` or paths, `stash show`, `difftool`, `mergetool`, `blame`,
+     `annotate`, `grep` but `--cached`, and any subcommand that is not
+     git's own. Index-only and history-only forms (`diff --cached`, `log
+     -p`, `show`) are left to the rules above. A print whose pathspecs
+     provably avoid every root, as rule 2 proves them without asking git
+     (those after `--`, or else the operands that name existing paths:
+     `git diff src/main.go`), is left out: `make fmt && git diff -- src`
+     is allowed. The commands known to write nothing are an assignment
+     alone; a git command that runs no hook and changes no working tree
+     (`add`, `stash`, `fetch`, `tag`, `branch`, `remote`, `notes`,
+     `config`, `update-ref` and the read-only forms); and programs that
+     print, list, read or search or set the shell's state (`echo`,
      `printf`, `cd`, `ls`, `cat`, `head`, `grep`, `rg`, `jq`, `wc`, `find`
      without `-exec` or `-delete`, `fd` without `-x`, `sort` without `-o`
      and the like), each with no output redirection but to `/dev/null`
-     or a descriptor. Every other command, a git command that changes
-     anything (it can run hooks), and a function or alias, may write.
-     **Known limitation:** a command after such a write that reads a file
-     by name, other than git (`make && cat pbip/x`, where the file did not
-     exist before), is judged against the tree as it was. (Decided
-     2026-11-02.)
+     or a descriptor. Every other command may write: a git command that
+     runs hooks (`commit`, `merge`, `rebase`, `pull`, `am`, `checkout`,
+     `switch`, `cherry-pick`, `revert`, `push`, `clone`, `worktree`, `gc`)
+     or changes the working tree, any other program, and a function or
+     alias. So `git add src && git diff` and `git stash && git diff` are
+     allowed while a root holds a finding.
+
+     A git command that puts content from history in the working tree (a
+     stash, a checkout or restore of paths, a reset `--hard`, a switch, a
+     merge, a pull, a rebase, a cherry-pick, a revert, `am`, `apply`),
+     then a command that may write files, then a git command that prints
+     the working tree, denies with `git-content`, the message naming the
+     git command: the writer may rewrite what history put back, and the
+     tree scan sees the tree as it was before both (`git stash && make
+     fmt && git diff`, while HEAD holds a finding its staged fix hides).
+     With no writer between, the print stays judged as above (`git stash
+     && git diff` prints nothing). **Known limitation:** a command after
+     such a write that reads a file by name, other than git (`make && cat
+     pbip/x`, where the file did not exist before), is judged against the
+     tree as it was. (Decided 2026-11-02.)
 
      The tokenizer fails closed on its own uncertainty: a line that does
      not end at the plain top level (a `case` left open, a case pattern
@@ -2002,7 +2042,8 @@ behavior (2026-10-29).
   redirection's or `<>`'s target, or a copy's destination, holding an
   expansion: `>> "$(git rev-parse --git-path config)"`), counts as a
   configuration write too. An input redirection and a here-string write
-  nothing (`cat < "$f"; git status`, `read -r x <<< "$(git log
+  nothing, under a `.git` directory too (`cat < "$f"; git status`, `cat <
+  .git/config; git status`, `read -r x <<< "$(git log
   --oneline -1)"`).
   **Known limitation:** a configuration file a git configuration
   includes (`include.path`, `includeIf`) outside a git directory, written
@@ -2086,7 +2127,13 @@ behavior (2026-10-29).
   - `echo pbip` and `printf` naming a root, which scan the tree;
   - a git command that prints the working tree after any command not
     known to write nothing, while a root holds a finding (`make fmt &&
-    git diff`), even when that command wrote nothing;
+    git diff`), even when that command wrote nothing, unless the print's
+    pathspecs provably avoid every root;
+  - a git command that puts history in the working tree, then any
+    command that may write, then a working-tree print (`git checkout
+    main && make && git diff`), whatever the tree holds;
+  - a backslash-newline next to `<` or `>` (`echo x >\<newline>>
+    log`), which can split an operator (`internal-error`);
   - a write to a target that cannot be told before git (`echo x >
     "$LOG"; git log --oneline -1`, `go test | tee "$LOG"; git status`),
     which may be git's configuration;
