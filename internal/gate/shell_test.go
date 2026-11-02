@@ -526,6 +526,49 @@ func TestShellTreeChangeThenRead(t *testing.T) {
 		{"a loop with no read, then a change", sh("for f in a b; do echo $f; done && git switch main"), "", ""},
 		{"a change, then a loop with no read", sh("git switch main && for f in a b; do echo $f; done"), "", ""},
 
+		// cat may not be cat.
+		{"checkout, then cat redefined of a here-document",
+			shIn("sql", "cat() { sh; }; git checkout main && cat <<'EOF'\nhead clean.sql\nEOF"),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"checkout, then cat hashed of a here-document",
+			shIn("sql", "hash -p /bin/sh cat; git checkout main && cat <<'EOF'\nhead clean.sql\nEOF"),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+
+		// A case pattern's ) does not close a process substitution.
+		{"a case pattern in a process substitution that changes the tree",
+			shIn("sql", "{ sleep 1; cat clean.sql; } < <(case a in a) git checkout HEAD~1 -- .;; esac; echo)"),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+
+		// Loops and functions in other forms.
+		{"a loop in a group", shIn("sql", "{ for i in 1 2; { cat clean.sql; git checkout -q HEAD~1 -- .; }; }"),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a negated loop", shIn("sql", "! for i in 1 2; do cat clean.sql; git checkout -q HEAD~1 -- .; done"),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a function named with @", shIn("sql", "r@() { cat clean.sql; }; git checkout HEAD~1 -- .; r@"),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a function named with a non-ASCII letter", shIn("sql", "lé() { cat clean.sql; }; git checkout HEAD~1 -- .; lé"),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a function name in quotes", sh(`grep -n "foo()" README.md && git checkout -b x`), "", ""},
+
+		// Reads that run later than their place in the line.
+		{"a trap", shIn("sql", "trap 'cat clean.sql' EXIT; git checkout HEAD~1 -- ."), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a background read", shIn("sql", "(sleep 1; cat clean.sql) & git checkout HEAD~1 -- ."),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a pipeline with the change", shIn("sql", "{ sleep 1; cat clean.sql >&2; } | git checkout HEAD~1 -- ."),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"an output process substitution before the change",
+			shIn("sql", "cat > >(sleep 1; cat clean.sql >&2) </dev/null; git checkout HEAD~1 -- ."),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"xargs running the change",
+			shIn("sql", "printf 'a\\nb\\n' | xargs -I{} sh -c 'cat clean.sql; git checkout HEAD~1 -- .'"),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"find -exec running the change",
+			shIn("sql", "find . -name '*.sql' -exec sh -c 'cat clean.sql; git checkout HEAD~1 -- .' \\;"),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"coproc", shIn("sql", "coproc { sleep 1; cat clean.sql; }; git checkout HEAD~1 -- ."),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a pipeline with no change", shIn("sql", "cat clean.sql | wc -l"), "", ""},
+
 		// cat of a here-document alone reads no file.
 		{"stash pop, then a commit with a here-document message",
 			shIn("sql", "git stash pop && git commit -am \"$(cat <<'EOF'\nA message\nEOF\n)\""), "", ""},

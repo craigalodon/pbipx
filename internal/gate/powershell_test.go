@@ -183,6 +183,13 @@ func TestPowerShellGitHistory(t *testing.T) {
 		{"commit -m with one unquoted part", ps(`git commit -m "$m"$n`), git},
 		{"Start-Process, a message from a variable", ps(`Start-Process git -ArgumentList 'commit','-m',"$m"`), git},
 		{"commit -m of a quoted variable", ps(`git commit -m "$m"`), ""},
+		// A double quote in an argument can split it again on the way to
+		// git, under PowerShell's legacy argument passing.
+		{"commit -m of a literal holding double quotes", ps(`git commit --dry-run -m 'a" -v "b'`), git},
+		{"log of a literal holding a double quote", ps(`git log --oneline 'x" -p "y'`), git},
+		{"commit -m of a variable, legacy passing", ps(`$PSNativeCommandArgumentPassing = 'Legacy'; git commit -m "$m"`), git},
+		{"commit -m of a variable, Windows passing", ps(`$PSNativeCommandArgumentPassing = "Windows"; git commit -m "$m"`), git},
+		{"commit -m of a variable, standard passing", ps(`$PSNativeCommandArgumentPassing = 'Standard'; git commit -m "$m"`), ""},
 		{"commit -m of a literal", ps(`git commit -m 'literal'`), ""},
 		{"commit -m of a here-string", ps("git commit -m @\"\n$m\n\"@"), ""},
 		{"commit -pm of a variable", ps(`git commit -pm "$x"`), git},

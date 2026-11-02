@@ -263,6 +263,11 @@ func TestShellGitAbbreviations(t *testing.T) {
 		{"--no-verify with a message", sh("git commit --no-verify -m msg"), ""},
 		{"--mess", sh(`git commit --allow-empty --mess "$MSG"`), ""},
 		{"--no-verb", sh("git commit --amend --dry-run -v --no-verb"), ""},
+		// -- as an option's value hides later options.
+		{"log --grep --", sh("git log --grep -- -p"), git},
+		{"log -n --", sh("git log -n -- -p"), git},
+		{"log, an unknown option before --", sh("git log --frobnicate -- -p"), git},
+		{"log -- of a path", sh("git log --oneline -- README.md"), ""},
 	})
 
 	// The finding staged: the staged diff shows it.
@@ -281,6 +286,28 @@ func TestShellGitAbbreviations(t *testing.T) {
 		{"commit --dry-run --verb", sh("git commit --dry-run --verb"), git},
 		{"status --short", sh("git status --short"), ""},
 		{"status --no-verb", sh("git status --verbose --no-verb"), ""},
+		// -- as an option's value is no end of the options.
+		{"-m --", sh("git commit --dry-run -m -- -v"), git},
+		{"--message --", sh("git commit --dry-run --message -- -v"), git},
+		{"--trailer --", sh("git commit --dry-run --trailer -- -v"), git},
+		{"--template --", sh("git commit --dry-run --template -- -v"), git},
+		{"-t --", sh("git commit --dry-run -t -- -v"), git},
+		{"-m -- -p", sh("git commit -m -- -p"), git},
+		{"-- after a message", sh("git commit --dry-run -m msg -- -v"), ""},
+		// The short and porcelain formats print no diff with -v.
+		{"status --short -v", sh("git status --short -v"), ""},
+		{"status -s -v", sh("git status -sv"), ""},
+		{"status --porcelain -v", sh("git status --porcelain -v"), ""},
+		{"status --porcelain=v2 -vv", sh("git status --porcelain=v2 -vv"), ""},
+		{"status --short --long -v", sh("git status --short --long -v"), git},
+		{"commit --short -v", sh("git commit --short -v"), ""},
+		{"commit --porcelain -v", sh("git commit --porcelain -v"), ""},
+		{"commit --long -v", sh("git commit --long -v"), git},
+		// A false value turns nothing on.
+		{"-c commit.verbose=false", sh("git -c commit.verbose=false commit --dry-run"), ""},
+		{"-c commit.verbose=0", sh("git -c commit.verbose=0 commit --dry-run"), ""},
+		{"-c commit.verbose=true", sh("git -c commit.verbose=true commit --dry-run"), git},
+		{"-c stash.showPatch=false", sh("git -c stash.showPatch=false stash show"), ""},
 	})
 }
 
@@ -337,6 +364,16 @@ func TestShellGitCommitVerboseConfig(t *testing.T) {
 		{"GIT_CONFIG_PARAMETERS assigned", sh("GIT_CONFIG_PARAMETERS=\"'commit.verbose'='1'\"; git commit -a --dry-run"), git},
 		{"export GIT_CONFIG_GLOBAL", sh("export GIT_CONFIG_GLOBAL=x.cfg && git status"), git},
 		{"export of an identity", sh("export GIT_AUTHOR_NAME=x; git commit -m msg"), ""},
+		// The configuration written other than by git config.
+		{"printf appending to .git/config", sh(`printf '[commit]\n\tverbose = true\n' >> .git/config && git commit -a --dry-run`), git},
+		{"sed -i of .git/config", sh("sed -i 's/x/y/' .git/config && git status"), git},
+		{"cp onto .git/config", sh("cp other.cfg .git/config && git status"), git},
+		{"tee into .git/config", sh("tee -a .git/config < other.cfg && git status"), git},
+		{"a write from inside the git directory", sh("cd .git && printf x >> config && cd .. && git status"), git},
+		{"HOME assigned before git", sh("HOME=/tmp/h git commit -a --dry-run"), git},
+		{"HOME exported", sh("export HOME=/tmp/h; git status"), git},
+		{"XDG_CONFIG_HOME assigned", sh("XDG_CONFIG_HOME=/tmp/x; git commit -a --dry-run"), git},
+		{"a read of .git/config", sh("cat .git/config && git status"), ""},
 		{"commit.verbose set in the line, PowerShell", ps("git config commit.verbose true; git commit -a --dry-run"), git},
 		{"commit.verbose unset in the line", sh("git config --unset commit.verbose && git commit -a --dry-run"), git},
 		{"a key from a variable", sh(`git config "$K" true && git status`), git},

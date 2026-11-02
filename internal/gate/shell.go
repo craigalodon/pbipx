@@ -5,7 +5,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -83,7 +82,8 @@ func (s *setup) shell(line string) Decision {
 	}
 	// git config setting a key a git command anywhere in the line reads:
 	// the gate read the configuration as it is before the line runs.
-	if slices.ContainsFunc(w.views, func(v view) bool { return configWrite(v.argv, unknownArgs(v)) }) {
+	if lineSets(w.views, "HOME", "XDG_CONFIG_HOME") ||
+		slices.ContainsFunc(w.views, func(v view) bool { return configWrite(v.argv, unknownArgs(v)) || s.writesGitDir(v) }) {
 		for _, v := range w.views {
 			if sub := afterConfig(v.argv); sub != "" {
 				return deny(ReasonGitContent, "%s", gitDenial{sub, whyAfterConfig, hintAfterConfig}.message())
@@ -191,9 +191,45 @@ func redefines(c simple, v view) bool {
 	return false
 }
 
-// funcDefinition matches a shell function definition, name(), anywhere in
-// a line (in quotes too, which only makes the gate stricter).
-var funcDefinition = regexp.MustCompile(`(^|[\s;&|(){}])[A-Za-z_][\w.:-]*\s*\(\s*\)`)
+// loopWords are the reserved words that start a loop, or its body, or a
+// function definition.
+var loopWords = map[string]bool{
+	"for": true, "while": true, "until": true, "select": true, "do": true, "function": true,
+}
+
+// unordered reports whether c makes the line's commands run in an order
+// other than their place in it, so that a read can run after a tree
+// change written later: a loop (for, while, until, select, after any
+// grouping or reserved words), a function definition, a background job,
+// a pipeline stage, trap, coproc, a process substitution, and xargs,
+// find -exec, fd -x, parallel or watch, which run a command repeatedly.
+func unordered(c simple, v view) bool {
+	if c.funcDef || c.background || c.pipeIn || c.procSub {
+		return true
+	}
+	for _, wd := range c.words {
+		if wd.quoted || wd.redirect {
+			break
+		}
+		if loopWords[wd.text] || wd.text == "coproc" {
+			return true
+		}
+		if !keywords[wd.text] {
+			break
+		}
+	}
+	switch v.name {
+	case "trap", "coproc", "parallel", "watch":
+		return true
+	case "find":
+		return len(findExecs(v.rest)) > 0
+	case "fd", "fdfind":
+		execs, _ := fdArgs(v.rest)
+		return len(execs) > 0
+	}
+	return slices.Contains(v.under, "xargs") || slices.Contains(v.under, "coproc") ||
+		slices.Contains(v.under, "watch") || slices.Contains(v.under, "parallel")
+}
 
 // lineEnvUnsafe reports whether a command of the line sets or exports a
 // variable git reads that is not known to be harmless (unsafeEnv): a
@@ -405,7 +441,7 @@ var silent = map[string]bool{
 // git's own reads are judged by rule 2.
 func (w *walker) reads(v view) bool {
 	s := w.s
-	if v.name == "cat" && len(v.rest) == 0 && len(v.under) == 0 && v.docOnly {
+	if v.name == "cat" && len(v.rest) == 0 && len(v.under) == 0 && v.docOnly && !w.redefines {
 		// cat of a here-document alone reads no file; the substitutions
 		// an unquoted one runs are commands of their own.
 		return false
@@ -576,9 +612,6 @@ func (w *walker) commands(line string, cmds []simple, st *cwdState, depth int) {
 		return
 	}
 	w.lines = append(w.lines, line)
-	if funcDefinition.MatchString(line) {
-		w.loopy = true
-	}
 	var lister *view // a find or fd whose output this pipeline carries
 	var prev *simple // the command before, in this pipeline
 	for i, c := range cmds {
@@ -786,7 +819,7 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 		w.inProc++
 		defer func() { w.inProc-- }()
 	}
-	if len(c.words) > 0 && !c.words[0].quoted && slices.Contains([]string{"for", "while", "until", "select", "do", "function"}, c.words[0].text) {
+	if unordered(c, v) {
 		w.loopy = true
 	}
 
@@ -869,6 +902,19 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 	case "eval":
 		// eval runs in this shell: a cd in it moves the commands after it.
 		w.nestedIn(strings.Join(v.rest, " "), known(), st, depth)
+	case "trap":
+		// trap 'command' SIGNAL...: the command runs later, in this shell.
+		i := 0
+		for i < len(v.rest) && strings.HasPrefix(v.rest[i], "-") && v.rest[i] != "-" {
+			if v.rest[i] == "--" {
+				i++
+				break
+			}
+			i++
+		}
+		if i < len(v.rest) && v.rest[i] != "-" {
+			w.nested(v.rest[i], v.restKnown[i], v.cwd.clone(), depth)
+		}
 	case "watch":
 		// watch runs its words, joined, with sh -c.
 		w.nested(strings.Join(watchCommand(v.rest), " "), known(), v.cwd.clone(), depth)
@@ -1808,6 +1854,78 @@ func mayWriteAll(v view) []bool {
 		out[i] = w.redirect || strings.HasPrefix(w.text, "-") || !ro || lead < 0 || leading[w]
 	}
 	return out
+}
+
+// writesGitDir reports whether v could write a path inside a git
+// directory: one with a .git component, or inside this repository's
+// common git directory, where git keeps its configuration. A word could
+// be written as for the files that control the gate (mayWriteAll, and the
+// destinations of cp, mv, tee and the like). git's own commands are left
+// to rule 2 (git config).
+func (s *setup) writesGitDir(v view) bool {
+	if v.name == "git" {
+		return false
+	}
+	common := s.commonDir()
+	writable := mayWriteAll(v)
+	var words []xword
+	for i, xw := range v.words {
+		if writable[i] {
+			words = append(words, xw)
+		}
+	}
+	dests, _ := s.destinations(v)
+	for _, xw := range append(words, dests...) {
+		abss, _ := s.wordSpellings(v, xw)
+		for _, a := range abss {
+			if slices.Contains(strings.Split(filepath.ToSlash(a), "/"), ".git") {
+				return true
+			}
+			if _, ok := relTo(common, a, s.fold); common != "" && ok {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// commonDir is this repository's common git directory, "" when git cannot
+// tell it.
+func (s *setup) commonDir() string {
+	if s.repo == nil {
+		return ""
+	}
+	common, err := s.git().commonDir(s.repo.Root) // asked once a decision
+	if err != nil {
+		return ""
+	}
+	return common
+}
+
+// lineSets reports whether a command of the line sets or exports one of
+// names: an assignment before a command or alone, or an export, declare,
+// typeset, local or readonly of it.
+func lineSets(views []view, names ...string) bool {
+	for _, v := range views {
+		for _, a := range v.argv {
+			name, _, ok := strings.Cut(a, "=")
+			if !ok || !isName(name) {
+				break
+			}
+			if slices.Contains(names, name) {
+				return true
+			}
+		}
+		switch v.name {
+		case "export", "declare", "typeset", "local", "readonly":
+			for _, a := range v.rest {
+				if name, _, _ := strings.Cut(a, "="); slices.Contains(names, name) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // reachesControl reports whether v names a path outside the repository

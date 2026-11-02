@@ -555,6 +555,10 @@ type gitInvocation struct {
 	// ambiguous is set when a long option abbreviates more than one of
 	// the subcommand's options (expandLong).
 	ambiguous bool
+	// dashHidden is set when a "--" right after an option that may take
+	// it as its value is read as the end of the options, and a word after
+	// it looks like an option: it could be one (dashDash).
+	dashHidden bool
 	// oddSpecs is true when a global option changes how every pathspec
 	// matches (--literal-pathspecs, --glob-pathspecs, --icase-pathspecs).
 	oddSpecs bool
@@ -642,9 +646,11 @@ func (inv gitInvocation) parse(words []string) (gitInvocation, bool) {
 	inv.sub = words[i]
 	inv.rest, inv.ambiguous = expandLong(inv.sub, words[i+1:])
 	inv.args, inv.specs, inv.dashdash = inv.rest, nil, false
-	if k := slices.Index(inv.rest, "--"); k >= 0 {
+	k, hidden := dashDash(inv.sub, inv.rest)
+	if k >= 0 {
 		inv.args, inv.specs, inv.dashdash = inv.rest[:k], inv.rest[k+1:], true
 	}
+	inv.dashHidden = hidden
 	return inv, true
 }
 
@@ -664,6 +670,9 @@ func safeConfig(kv string) bool {
 		return safePager(value) || isBool(value)
 	}
 	switch key {
+	case "commit.verbose", "stash.showpatch":
+		// Off turns nothing on.
+		return isFalse(value)
 	case "core.pager":
 		return safePager(value)
 	case "core.editor", "sequence.editor":
@@ -805,6 +814,15 @@ const hintAfterConfig = "Run git config on its own, then the git command as a se
 
 // safePager reports whether a pager setting only passes git's output on.
 func safePager(v string) bool { return v == "" || v == "cat" }
+
+// isFalse reports whether v is a value git reads as false.
+func isFalse(v string) bool {
+	switch strings.ToLower(v) {
+	case "false", "no", "off", "0":
+		return true
+	}
+	return false
+}
 
 func isBool(v string) bool {
 	switch strings.ToLower(v) {
@@ -1029,6 +1047,10 @@ func (s *setup) gitContent(args, unknown []string, shapes []argShape) *gitDenial
 	if inv.ambiguous && !gitNeverContent[inv.sub] {
 		return &gitDenial{inv.sub, "is given an abbreviated long option that could stand for more than one of its options, " +
 			"one of which could print content", "Write each long option out in full."}
+	}
+	if inv.dashHidden && !gitNeverContent[inv.sub] {
+		return &gitDenial{inv.sub, "is given -- right after an option that may take it as its value, " +
+			"and a word after it that could then be an option that prints content", "Give the option its value with =, or drop the --."}
 	}
 	inv.unknown = len(unknown) > 0
 	shapeOf := func(i int) argShape {
@@ -1466,6 +1488,10 @@ func (s *setup) gitSpecs(inv gitInvocation) gitCheck {
 	case "grep":
 		return s.grepCheck(inv)
 	case "status":
+		if shortFormat(inv.args, true) {
+			// The short and porcelain formats print no diff with -v.
+			return noContent()
+		}
 		return s.verboseCheck(inv, verbosity(inv.args, "u"), false)
 	case "add", "stage":
 		if !hasShort(inv.args, 'p', "--patch", "") && !hasShort(inv.args, 'i', "--interactive", "") {
@@ -1996,11 +2022,39 @@ func verbosity(args []string, withValue string) int {
 	return n
 }
 
+// shortFormat reports whether git status (status true) or git commit's
+// dry run prints the short or porcelain format, which shows no diff
+// whatever -v says: the last of --short, --porcelain[=v1|v2] and --long
+// given decides, and for status -s and -z (alone or in a cluster) and
+// --null are short formats too.
+// With none given, it is the long format (a configured status.short is
+// not read: the gate errs towards the diff).
+func shortFormat(args []string, status bool) bool {
+	short := false
+	for _, a := range args {
+		name, _, _ := strings.Cut(a, "=")
+		switch {
+		case name == "--short" || name == "--porcelain":
+			short = true
+		case name == "--long":
+			short = false
+		case status && name == "--null",
+			status && len(a) > 1 && a[0] == '-' && a[1] != '-' && strings.ContainsAny(a[1:], "sz"):
+			short = true
+		}
+	}
+	return short
+}
+
 // commitVerbosity is how verbose git commit is: -v counted, or with no
 // -v, --verbose or --no-verbose given, commit.verbose (a boolean or a
 // level), as git reads it. A value git cannot read as a boolean, or a
 // failed lookup, counts as verbose.
 func (s *setup) commitVerbosity(inv gitInvocation) int {
+	if shortFormat(inv.args, false) {
+		// The short and porcelain formats print no diff with -v.
+		return 0
+	}
 	if hasFlag(inv.args, []string{"--verbose", "--no-verbose"}) || hasShort(inv.args, 'v', "", "mFCcSt") {
 		return verbosity(inv.args, "mFCcSt")
 	}

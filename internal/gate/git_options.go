@@ -233,3 +233,102 @@ func longOption(opts []string, name string) (full string, takesNext bool, n int)
 	}
 	return match[0], takes[0], 1
 }
+
+// gitShortValues are the short options that take a value (attached, or
+// the next word when the letter ends its cluster) of the subcommands with
+// a long-option list and no message (gitMessageOptions has those). A
+// letter not listed there takes none.
+var gitShortValues = map[string]string{
+	"checkout": "bBU", "switch": "cC", "restore": "sU", "reset": "U", "add": "U",
+	"grep": "efABCm", "rebase": "xsXC", "merge-file": "LX", "merge-tree": "X", "am": "CpS",
+	"apply": "pC", "cat-file": "", "status": "", "config": "f",
+}
+
+// takesNext is whether an option takes the next word as its value: yes,
+// no, or unknown when the gate has no list of the subcommand's options.
+type takesNext int
+
+const (
+	takesNo takesNext = iota
+	takesYes
+	takesUnknown
+)
+
+// dashDash finds the "--" that ends sub's options in rest: the first one
+// in option position, not one an option takes as its value (git commit
+// -m -- -v is a message "--" and -v). k is -1 with none. For a subcommand
+// whose options the gate does not list (log, diff, show ...), an option it
+// cannot tell takes no value, right before a "--", leaves that "--"
+// either: hidden is set when a word after it looks like an option.
+func dashDash(sub string, rest []string) (k int, hidden bool) {
+	key, start := gitOptionKey(sub, rest)
+	for i := start; i < len(rest); i++ {
+		a := rest[i]
+		if a == "--" {
+			return i, false
+		}
+		if len(a) < 2 || a[0] != '-' {
+			continue
+		}
+		switch optionTakesNext(sub, key, a) {
+		case takesYes:
+			i++
+		case takesUnknown:
+			if i+1 < len(rest) && rest[i+1] == "--" {
+				return i + 1, slices.ContainsFunc(rest[i+2:], func(w string) bool { return len(w) > 1 && w[0] == '-' })
+			}
+		case takesNo:
+		}
+	}
+	return -1, false
+}
+
+// optionTakesNext is whether option a of sub (keyed in gitLongOptions as
+// key) takes the next word as its value.
+func optionTakesNext(sub, key, a string) takesNext {
+	opts, listed := gitLongOptions[key]
+	msg, isMsg := gitMessageOptions[sub]
+	if strings.HasPrefix(a, "--") {
+		name, _, hasValue := strings.Cut(a[2:], "=")
+		switch {
+		case hasValue:
+			return takesNo
+		case listed:
+			if _, takes, n := longOption(opts, name); n == 1 && takes {
+				return takesYes
+			}
+			return takesNo
+		case gitRevValueOpts[a]:
+			return takesYes
+		case slices.Contains(gitPatchFlags, a) || slices.Contains(gitSummaryFlags, a) ||
+			gitStripNames[a] && !gitStripNext[a]:
+			return takesNo
+		}
+		return takesUnknown
+	}
+	values, known := gitShortValues[sub]
+	if isMsg {
+		values, known = msg.value, true
+	}
+	if !known && !listed {
+		switch {
+		case gitRevValueOpts[a]:
+			return takesYes
+		case slices.Contains(gitPatchFlags, a) || slices.Contains(gitSummaryFlags, a):
+			return takesNo
+		}
+		return takesUnknown
+	}
+	for j := 1; j < len(a); j++ {
+		if isMsg && strings.IndexByte(msg.optional, a[j]) >= 0 {
+			return takesNo
+		}
+		if strings.IndexByte(values, a[j]) >= 0 {
+			if j == len(a)-1 {
+				return takesYes
+			}
+			return takesNo
+		}
+	}
+	return takesNo
+}

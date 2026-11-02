@@ -98,6 +98,8 @@ type simple struct {
 	// overflow is set when brace expansion in the line made more words
 	// than the gate judges (maxBraceLine).
 	overflow bool
+	// background is set for a command run in the background (cmd &).
+	background bool
 	// procSub is true for a command inside a process substitution,
 	// <(...) or >(...), which starts before or alongside the command it
 	// is given to.
@@ -161,6 +163,11 @@ type tokenizer struct {
 	parens []bool
 	// braceWords counts the words brace expansion made in the line.
 	braceWords int
+	// cases counts the case commands open (after "case WORD in", before
+	// "esac"), and casePattern is set while a pattern is read, whose ")"
+	// closes no parenthesis.
+	cases       int
+	casePattern bool
 }
 
 // pendingDoc is a here-document whose body is still to be read.
@@ -494,7 +501,10 @@ func (t *tokenizer) endWord() {
 		}
 		// Brace expansion makes the word several, each a word of its own;
 		// past maxBraceWords it is one the gate does not expand.
-		toks := braceToks(t.parts)
+		var toks []btok
+		if strings.Contains(w.text, "{") {
+			toks = braceToks(t.parts)
+		}
 		words, ok := [][]btok{toks}, true
 		switch {
 		case !slices.ContainsFunc(toks, func(b btok) bool { return b.is('{') }):
@@ -524,10 +534,28 @@ func (t *tokenizer) endWord() {
 			}
 		}
 		t.redirect, t.input, t.here = false, false, false
+		t.caseWord()
 	}
 	t.raw.Reset()
 	t.parts = nil
 	t.inWord, t.quoted = false, false
+}
+
+// caseWord follows case commands from the word just read: "case WORD in"
+// opens one, whose patterns follow, and "esac" as a command's first word
+// closes it.
+func (t *tokenizer) caseWord() {
+	ws := t.cur.words
+	last := ws[len(ws)-1]
+	switch {
+	case last.quoted:
+	case last.text == "esac" && len(ws) == 1 && t.cases > 0:
+		t.cases--
+		t.casePattern = false
+	case last.text == "in" && len(ws) >= 3 && ws[len(ws)-3].text == "case" && !ws[len(ws)-3].quoted:
+		t.cases++
+		t.casePattern = true
+	}
 }
 
 // definesFunction reports whether the "(" at i, after a command of one
@@ -584,6 +612,10 @@ func tokenize(line string) (cmds []simple, ok bool) {
 		case '(':
 			// <(...) and >(...): a redirection with no target yet.
 			proc := t.redirect && !t.inWord
+			if t.casePattern && !t.inWord && len(t.cur.words) == 0 {
+				// A case pattern's optional opening parenthesis.
+				continue
+			}
 			if t.definesFunction(i) {
 				t.endWord()
 				t.cur.funcDef = true
@@ -591,6 +623,14 @@ func tokenize(line string) (cmds []simple, ok bool) {
 			t.endCommand()
 			t.parens = append(t.parens, proc)
 		case ')':
+			if t.casePattern {
+				// The end of a case pattern: its words are no command.
+				t.endWord()
+				t.cur.words = nil
+				t.endCommand()
+				t.casePattern = false
+				continue
+			}
 			t.endCommand()
 			if len(t.parens) > 0 {
 				t.parens = t.parens[:len(t.parens)-1]
@@ -598,6 +638,14 @@ func tokenize(line string) (cmds []simple, ok bool) {
 		case ';':
 			t.endCommand()
 			t.pipe = false
+			if t.cases > 0 && i+1 < len(rs) && (rs[i+1] == ';' || rs[i+1] == '&') {
+				// ;; ;& ;;& end a case branch: a pattern follows.
+				i++
+				if i+1 < len(rs) && rs[i] == ';' && rs[i+1] == '&' {
+					i++
+				}
+				t.casePattern = true
+			}
 		case '&':
 			if i+1 < len(rs) && rs[i+1] == '>' {
 				// &> and &>> redirect both outputs to the target.
@@ -606,10 +654,14 @@ func tokenize(line string) (cmds []simple, ok bool) {
 				t.redirect = true
 				continue
 			}
+			n := len(t.cmds)
 			t.endCommand()
 			t.pipe = false
 			if i+1 < len(rs) && rs[i+1] == '&' {
 				i++
+			} else if len(t.cmds) > 0 && n <= len(t.cmds) {
+				// A background job runs alongside what follows.
+				t.cmds[len(t.cmds)-1].background = true
 			}
 		case '|':
 			t.endCommand()
