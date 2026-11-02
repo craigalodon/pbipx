@@ -1007,7 +1007,7 @@ func command(args []string) (name string, rest []string, under []string) {
 			i++
 			continue
 		}
-		base := baseName(w)
+		base := progName(w)
 		wr, ok := wrappers[base]
 		if !ok {
 			if !inert[base] && !judged(base) {
@@ -1015,7 +1015,7 @@ func command(args []string) (name string, rest []string, under []string) {
 				for j < len(args) && strings.HasPrefix(args[j], "-") {
 					j++
 				}
-				if j < len(args) && judged(baseName(args[j])) {
+				if j < len(args) && judged(progName(args[j])) {
 					under = append(under, base)
 					i = j
 					continue
@@ -1079,4 +1079,20 @@ func baseName(w string) string {
 		return w[i+1:]
 	}
 	return w
+}
+
+// progName is the name the rules know the program w by: its base name
+// without a trailing ".exe" in any case (Windows runs rg.exe for rg, and
+// Git Bash and WSL run a .exe by its full name), folded to lower case where
+// the file system finds a program regardless of case (foldCase). Elsewhere
+// LS is not ls.
+func progName(w string) string {
+	b := baseName(w)
+	if n := len(b) - len(".exe"); n > 0 && strings.EqualFold(b[n:], ".exe") {
+		b = b[:n]
+	}
+	if foldCase {
+		b = strings.ToLower(b)
+	}
+	return b
 }

@@ -656,7 +656,7 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 				w.reachesIn(v.cwd, ".", "parallel runs a reader on the file names its input carries")
 			}
 		}
-	case "pwsh", "pwsh.exe", "powershell", "powershell.exe", "cmd", "cmd.exe":
+	case "pwsh", "powershell", "cmd":
 		// No parser for these: a command string, or a script on the
 		// input, could read anything.
 		if v.pipeIn || len(v.rest) > 0 && !versionOnly(v.rest) {
@@ -860,7 +860,7 @@ func envSplit(v view) (line string, known, ok bool) {
 		return "", false, false
 	}
 	for j := 0; j < len(v.argv); j++ {
-		if baseName(v.argv[j]) != "env" {
+		if progName(v.argv[j]) != "env" {
 			continue
 		}
 		for k := j + 1; k < len(v.argv); k++ {
@@ -1731,14 +1731,14 @@ func (s *setup) restWords(v view) []xword {
 // terminal approval asks for.
 func selfApproval(v view) bool {
 	switch v.name {
-	case toolName, toolName + ".exe":
+	case toolName:
 		return policyApprove(v.rest)
 	case "script", "expect", "unbuffer":
 		tokens := strings.FieldsFunc(strings.Join(v.rest, " "), func(r rune) bool {
 			return strings.ContainsRune(" \t\r\n;&|'\"{}[]()", r)
 		})
 		for i, t := range tokens {
-			if b := baseName(t); b == toolName || b == toolName+".exe" {
+			if progName(t) == toolName {
 				if policyApprove(tokens[i+1:]) {
 					return true
 				}

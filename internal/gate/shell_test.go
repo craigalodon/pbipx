@@ -592,3 +592,41 @@ func TestShellBounded(t *testing.T) {
 	ok := strings.Repeat("ls notes;", 19000) + "git log -p"
 	check(t, gate.Decide(shIn(root, ok), gate.Options{}), gate.ReasonGitContent)
 }
+
+// TestShellExeNames: a program is known by its name without ".exe", as
+// Windows, Git Bash and WSL run it; its case is folded only where the
+// file system folds case.
+func TestShellExeNames(t *testing.T) {
+	isolateSearch(t)
+	runBoth(t, []both{
+		{"rg.exe", sh("rg.exe Jane"), "", gate.ReasonFinding},
+		{"rg.exe by its path", sh("/usr/bin/rg.exe Jane"), "", gate.ReasonFinding},
+		{"rg.EXE", sh("rg.EXE Jane"), "", gate.ReasonFinding},
+		{"grep.exe -r", sh("grep.exe -r Jane"), "", gate.ReasonFinding},
+		{"cat.exe of a leak", sh("cat.exe pbip/B.Report/" + leakInReport), "", gate.ReasonFinding},
+		{"bash.exe -c", sh(`bash.exe -c "rg Jane"`), "", gate.ReasonFinding},
+		{"git.exe log -p", sh("git.exe log -p"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a name that only ends in exe", sh("rgexe Jane"), "", ""},
+		{"a bare .exe", sh(".exe Jane"), "", ""},
+	})
+	root, _ := historyRepo(t)
+	run(t, root, []decideCase{
+		{"git.exe show of the leaky commit", sh("git.exe show HEAD~1"), gate.ReasonGitContent},
+		{"git.exe show --stat", sh("git.exe show --stat HEAD~1"), ""},
+	})
+	leaky := newRepo(t, leakyFiles())
+	for _, fold := range []bool{true, false} {
+		restore := gate.SetFoldCase(fold)
+		// Where names are told apart by case, RG is not rg.
+		want, gitWant := "", ""
+		if fold {
+			want, gitWant = gate.ReasonFinding, gate.ReasonGitContent
+		}
+		run(t, leaky, []decideCase{
+			{"RG.EXE", sh("RG.EXE Jane"), want},
+			{"Rg", sh("Rg Jane"), want},
+		})
+		run(t, root, []decideCase{{"GIT.EXE log -p", sh("GIT.EXE log -p"), gitWant}})
+		restore()
+	}
+}
