@@ -1,0 +1,8 @@
+description = "git add -A stages the untracked file under the protected root, and git diff --cached after it prints it: the gate judges the index as it is before the line runs, so a content-printing git command after a change to the index denies with git-content, although no root is named"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
+untracked   = ["pbip/Example.Report/definition/pages/0000/visuals/0001/visual.json"]
+known       = "predecessor"

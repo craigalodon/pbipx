@@ -1,0 +1,6 @@
+description = "case W in given to echo opens no case: the subshell after it is a command, whose cat of a file under the protected root is judged, so the tree is scanned and its finding denies"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]

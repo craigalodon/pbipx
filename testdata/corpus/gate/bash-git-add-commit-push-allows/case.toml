@@ -1,0 +1,6 @@
+description = "git add, commit with a message and push change the index and HEAD, but nothing after them prints file content, so the line is allowed. Plants no value"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = []
