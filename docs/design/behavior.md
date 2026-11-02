@@ -824,7 +824,17 @@ path, is denied with `event-error`: the call cannot be judged.
      git's own reads are judged by rule 2. The change alone, with nothing
      reading after it, is allowed: the next call is judged against the
      changed tree. `git stash` stays a change: the read after it sees
-     HEAD's content, which is history.
+     HEAD's content, which is history. The command substitutions
+     (`$(...)`, backticks) in a command's own words and here-documents run
+     before the command, so they are judged as before its change, and a
+     change in one counts before the command: `git merge -m "$(cat <<'EOF'
+     ...)" main` and `git stash push -m "$(cat <<'EOF' ...)"` are allowed,
+     and so is `git merge -m "$(cat notes.txt)" topic`, while `cat f
+     "$(git checkout old)"` is denied. A process substitution (`<(...)`,
+     `>(...)`) runs alongside the command and counts as after it, and a
+     substitution in any later command counts as after the change. In a
+     PowerShell line, a subexpression in git's arguments is read as a
+     statement before git's, so it is judged the same way.
   3. If the working directory is inside a protected root, or the command
      names a root as a whole word, the protected tree is scanned as for Grep.
      In pbipx the tree is scanned too when:

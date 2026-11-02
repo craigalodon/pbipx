@@ -475,6 +475,30 @@ func TestShellTreeChangeThenRead(t *testing.T) {
 		{"restore --staged then read", shIn("sql", "git restore --staged x && cat clean.sql"), "", ""},
 		{"apply --check then read", shIn("sql", "git apply --check p.diff && cat clean.sql"), "", ""},
 		{"tar -c then read", shIn("sql", "tar -cf /tmp/a.tar . && cat clean.sql"), "", ""},
+
+		// A command substitution in the change's own words, or in its
+		// here-documents, runs before the change.
+		{"merge with a message from a here-document",
+			shIn("sql", "git merge --no-ff -m \"$(cat <<'EOF'\nMerge topic\nEOF\n)\" main"), "", ""},
+		{"stash push with a message from a here-document",
+			shIn("sql", "git stash push -m \"$(cat <<'EOF'\nWork in progress\nEOF\n)\""), "", ""},
+		{"a read in the change's own substitution", shIn("sql", `git merge -m "$(cat clean.sql)" topic`), "", ""},
+		{"a read in the change's own backticks", shIn("sql", "git merge -m \"`head -1 clean.sql`\" topic"), "", ""},
+		{"a read in the change's own here-document", shIn("sql", "git am <<EOF\n$(cat clean.sql)\nEOF"), "", ""},
+		// Anything after the change still counts.
+		{"a here-document message, then a read",
+			shIn("sql", "git merge -m \"$(cat <<'EOF'\nMerge topic\nEOF\n)\" main && cat clean.sql"),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a substitution in a later command", shIn("sql", `git merge topic && echo "$(cat clean.sql)"`),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a process substitution of the change", shIn("sql", "git merge topic <(cat clean.sql)"),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a process substitution of the change, output", shIn("sql", "git merge topic >(cat clean.sql)"),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a change inside the substitution, then a read", shIn("sql", `git commit -m "$(git checkout old; cat clean.sql)"`),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a change in a substitution, then the command reads", shIn("sql", `cat clean.sql "$(git checkout old)"`),
+			gate.ReasonGitContent, gate.ReasonGitContent},
 	})
 }
 

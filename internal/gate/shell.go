@@ -444,17 +444,6 @@ func (w *walker) commands(line string, cmds []simple, st *cwdState, depth int) {
 			prev = nil
 		}
 		v := w.simple(c, st, depth)
-		for _, sub := range c.subs {
-			// A substitution runs in a subshell, in this directory.
-			sst := v.cwd.clone()
-			w.line(sub, &sst, depth+1)
-		}
-		for _, doc := range c.docs {
-			for _, sub := range doc.subs {
-				sst := v.cwd.clone()
-				w.line(sub, &sst, depth+1)
-			}
-		}
 		if c.fallback && (judged(v.name) || strings.Contains(line, "$(") || strings.Contains(line, "`")) {
 			// The line did not tokenize: what a reading command reads, or
 			// what a substitution runs, cannot be told.
@@ -603,6 +592,22 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 	v := s.viewOf(c, *st)
 	v.cache = w.cache
 	w.views = append(w.views, v)
+
+	// The command substitutions in its words and here-documents run
+	// before it, each in a subshell in this directory: a read in one is
+	// not after this command's own change to the tree, and a change in
+	// one comes before this command. A process substitution, <(...) or
+	// >(...), runs alongside it and is read as a command after it.
+	for _, sub := range c.subs {
+		sst := v.cwd.clone()
+		w.line(sub, &sst, depth+1)
+	}
+	for _, doc := range c.docs {
+		for _, sub := range doc.subs {
+			sst := v.cwd.clone()
+			w.line(sub, &sst, depth+1)
+		}
+	}
 
 	// Every command after one that changes the working tree is judged
 	// for reading; the first change is the one named. A probe judges
