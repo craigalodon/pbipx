@@ -98,6 +98,9 @@ type simple struct {
 	// overflow is set when brace expansion in the line made more words
 	// than the gate judges (maxBraceLine).
 	overflow bool
+	// procArg is set for a command given a process substitution (cmd
+	// <(...)), which it reads or writes as a file.
+	procArg bool
 	// background is set for a command run in the background (cmd &).
 	background bool
 	// uncertain is set on every command of a line the tokenizer did not
@@ -748,6 +751,10 @@ func (t *tokenizer) run(start int, sub bool) (int, bool) {
 		case '(':
 			// <(...) and >(...): a redirection with no target yet.
 			proc := t.redirect && !t.inWord
+			if proc {
+				// The command it is given to reads a process substitution.
+				t.cur.procArg = true
+			}
 			if t.casePattern && !t.inWord && len(t.cur.words) == t.patternStart {
 				// A case pattern's optional opening parenthesis.
 				t.patternParen = true

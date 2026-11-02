@@ -961,8 +961,8 @@ func TestShellGitMessageText(t *testing.T) {
 		// cat, or git, may not be the program it names: then a message is
 		// not text.
 		{"cat redefined as a function", sh("cat() { sh; };" + body), "", gate.ReasonFinding},
-		{"cat hashed to a shell", sh("hash -p /bin/sh cat;" + body), "", gate.ReasonFinding},
-		{"cat aliased to a shell", sh("shopt -s expand_aliases; alias cat=sh;" + body), "", gate.ReasonFinding},
+		{"cat hashed to a shell", sh("hash -p /bin/sh cat;" + body), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"cat aliased to a shell", sh("shopt -s expand_aliases; alias cat=sh;" + body), gate.ReasonGitContent, gate.ReasonGitContent},
 		{"PATH assigned", sh("PATH=/tmp/x:$PATH;" + body), "", gate.ReasonFinding},
 		{"PATH exported", sh("export PATH=/tmp/x:$PATH;" + body), "", gate.ReasonFinding},
 		{"a script sourced", sh(". ./env.sh;" + body), "", gate.ReasonFinding},

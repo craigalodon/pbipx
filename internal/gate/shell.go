@@ -187,6 +187,59 @@ var gitTreeChangers = map[string][]string{
 	"merge-file":      {"-p", "--stdout"},
 }
 
+// unknownProgram says why v runs a program the gate cannot tell, "" when it
+// can: a command word that holds an expansion ($(which git) log -p,
+// ${GIT:-git}, git${X}, $G) or an unquoted glob (/usr/bin/g[i]t), given
+// arguments or split into words, which could be git; or a name the line
+// made stand for another program with hash -p or alias. It also records
+// such names for the commands after it.
+func (w *walker) unknownProgram(c simple, v view) string {
+	if v.name == "" {
+		return ""
+	}
+	if v.name == "hash" && slices.ContainsFunc(v.rest, func(a string) bool { return strings.HasPrefix(a, "-") && strings.Contains(a, "p") }) ||
+		v.name == "alias" {
+		for _, a := range v.rest {
+			name, _, isAlias := strings.Cut(a, "=")
+			if v.name == "alias" && isAlias || v.name == "hash" && !strings.HasPrefix(a, "-") && !strings.Contains(a, "/") {
+				if w.hashed == nil {
+					w.hashed = map[string]bool{}
+				}
+				w.hashed[progName(name)] = true
+			}
+		}
+	}
+	if w.hashed[v.name] {
+		return "a command runs a name the line made stand for another program (hash -p, alias), which could be git"
+	}
+	// The program's word among the command's words.
+	var args []int
+	for i, wd := range c.words {
+		if !wd.redirect {
+			args = append(args, i)
+		}
+	}
+	// The words that name what runs: the first command word (an unknown
+	// one can be taken for a wrapper of the program after it) up to the
+	// program's.
+	first := len(args) - len(v.argv)
+	for first < len(args) && isAssignment(c.words[args[first]].text) {
+		first++
+	}
+	k := len(args) - len(v.rest) - 1
+	for j := first; j <= k && j >= 0 && j < len(args); j++ {
+		wd := c.words[args[j]]
+		known := v.argvKnown[j-(len(args)-len(v.argv))]
+		switch {
+		case !known && (j < len(args)-1 || wd.splits):
+			return "a command word the gate cannot expand (a variable or a command substitution) runs a program it cannot tell"
+		case wd.globs() && wd.text != "[" && wd.text != "[[" && j < len(args)-1:
+			return "a command word with a glob runs a program the gate cannot tell"
+		}
+	}
+	return ""
+}
+
 // redefiners are the commands that can make a name run another program:
 // an alias, a hashed path, a builtin turned off or loaded, and a script
 // or text run in the shell itself, which can define a function.
@@ -842,7 +895,10 @@ type walker struct {
 	// out of the root-name tests. message are the indexes in lines of the
 	// lines that are cat reading a here-document that is git's message.
 	redefines bool
-	message   map[int]bool
+	// hashed are the names the line made stand for another program (hash
+	// -p, alias): a command that runs one runs what the gate cannot tell.
+	hashed  map[string]bool
+	message map[int]bool
 	// anywhere names a change after which every read in the line counts,
 	// wherever it is: one in a process substitution, which starts before
 	// or alongside the command it is given to, and any change in a line
@@ -1155,6 +1211,9 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 	if redefines(c, v) {
 		w.redefines = true
 	}
+	if why := w.unknownProgram(c, v); why != "" {
+		w.setRuntime(why, hintPlain)
+	}
 	if c.procSub {
 		// What it runs, nested lines included, is in the process
 		// substitution too.
@@ -1233,8 +1292,16 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 	}
 	switch v.name {
 	case "source", ".":
-		// source /dev/stdin reads its script from a here-document.
-		if len(v.rest) > 0 && slices.Contains([]string{"/dev/stdin", "-", "/proc/self/fd/0", "/dev/fd/0"}, v.rest[0]) {
+		// source and . alike. source /dev/stdin reads its script from a
+		// here-document; from a pipe, or from a process substitution
+		// (source <(...)), the script is built at run time.
+		stdin := len(v.rest) > 0 && slices.Contains([]string{"/dev/stdin", "-", "/proc/self/fd/0", "/dev/fd/0"}, v.rest[0])
+		switch {
+		case c.procArg || len(v.rest) > 0 && strings.HasPrefix(v.rest[0], "/dev/fd/") && !stdin:
+			w.setRuntime("source or . reads a script built at run time (a process substitution)", hintPlain)
+		case stdin && c.pipeIn:
+			w.setRuntime("source or . reads its script from a pipe", hintPlain)
+		case stdin:
 			w.fedScript(c, v, depth)
 		}
 	case "script":

@@ -237,6 +237,23 @@ func TestShellGitHistoryGaps(t *testing.T) {
 		{"log of more brace words than the gate expands", sh("git log --oneline x{1..100}"), git},
 		{"log of an invalid brace", sh("git log --oneline {a}"), ""},
 		{"case words echoed, then git log -p", sh("echo case x in; (git log -p)"), git},
+		// A command word the gate cannot tell (F1).
+		{"$(which git) log -p", sh("$(which git) log -p"), git},
+		{"${GIT:-git} log -p", sh("${GIT:-git} log -p"), git},
+		{"git${X} log -p", sh("git${X} log -p"), git},
+		{"$G show", sh("G=git; $G show HEAD~1"), git},
+		{"$(command -v git) diff", sh("$(command -v git) diff HEAD~1"), git},
+		{"a glob command word", sh("/usr/bin/g[i]t log -p"), git},
+		{"hash -p a name for git", sh("hash -p /usr/bin/git g; g log -p"), git},
+		{"an alias for git", sh("alias g=git; g log -p"), git},
+		{"$(echo git log -p) as a command", sh("$(echo git log -p)"), git},
+		{"hash of git alone", sh("hash git; git log --oneline -1"), ""},
+		// source and . alike (F2), and code built at run time (F3).
+		{"source of a process substitution", sh("source <(echo 'git log -p')"), git},
+		{". of a process substitution", sh(". <(echo 'git log -p')"), git},
+		{"eval of a variable", sh(`x='git log -p'; eval "$x"`), git},
+		{"bash -c of a variable", sh(`bash -c "$CMD"`), git},
+		{"eval of a tool's output (over-blocked)", sh(`eval "$(pyenv init -)"`), git},
 		// HEAD moved other than by a checkout.
 		{"symbolic-ref HEAD, then diff --cached", sh("git symbolic-ref HEAD refs/heads/old && git diff --cached"), git},
 		{"replace HEAD, then diff --cached", sh("git replace HEAD HEAD~1 && git diff --cached"), git},
