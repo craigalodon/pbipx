@@ -27,7 +27,9 @@ func printed(name string, args []string, mayEscape bool) (string, bool) {
 				case 'e':
 					escapes, explicit = true, true
 				case 'E':
-					escapes, explicit = false, true
+					// -E is an option only to bash and zsh: sh (dash) prints
+					// it as a word and reads the escapes of the text.
+					escapes, explicit = false, !mayEscape
 				}
 			}
 			args = args[1:]

@@ -113,7 +113,8 @@ func TestShellEchoShells(t *testing.T) {
 		// A top-level echo: the shell may be zsh.
 		{"top-level echo with an escape, fed to bash", sh(`echo 'git log \055p' | bash`), git},
 		{"top-level echo with an escape and -e, fed to bash", sh(`echo -e 'git log \055p' | bash`), git},
-		{"top-level echo with an escape and -E, fed to bash", sh(`echo -E 'git log --oneline -1 \055p' | bash`), ""},
+		{"top-level echo with an escape and -E, fed to bash", sh(`echo -E 'x\ngit log -p' | sh`), git},
+		{"-E in bash -c, an escape, fed to bash", sh(`bash -c "echo -E 'git log --oneline \\055p' | bash"`), ""},
 		{"top-level echo with no backslash", sh(`echo 'git log --oneline -1' | bash`), ""},
 		{"top-level echo -n with no backslash", sh(`echo -n 'git log --oneline -1' | sh`), ""},
 		// A nested line: the shell running echo is the one -c names.
