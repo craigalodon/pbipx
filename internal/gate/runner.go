@@ -69,6 +69,14 @@ var parallelPlaceholders = func() []string {
 	return out
 }()
 
+// otherRunners are programs like xargs that run a command on words read
+// from input, whose options the gate does not read: any word of the
+// command they run may be an input word.
+var otherRunners = map[string]bool{
+	"rush": true, "rargs": true, "xe": true, "entr": true, "sem": true, "env_parallel": true,
+	"xapply": true, "xjobs": true, "pexec": true, "ppss": true,
+}
+
 // fedAll stands in a runner's placeholders for "every word": the gate
 // could not read the runner's options completely, so any word of the
 // command it runs, nested lines included, may be an input word.
@@ -84,6 +92,12 @@ func feedOf(argv []string, known []bool) runnerFeed {
 	// Only a wrapper of the command or its program is a runner: an
 	// argument that happens to be named xargs or parallel is a word.
 	name, rest, under := command(argv)
+	// Runners the gate does not read the options of feed every word.
+	for _, n := range append(slices.Clone(under), name) {
+		if otherRunners[n] {
+			return unsureFeed(runnerFeed{runner: n})
+		}
+	}
 	if !slices.Contains(under, "xargs") && !slices.Contains(under, "parallel") &&
 		name != "xargs" && name != "parallel" {
 		return runnerFeed{}

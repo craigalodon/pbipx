@@ -1406,6 +1406,13 @@ func (w *walker) pipedScript(prev *simple, v view, depth int) {
 		return
 	}
 	pv := w.s.viewOf(*prev, v.cwd, w.ph)
+	if f := feedOf(pv.argv, pv.argvKnown); f.runner != "" && f.fromInput {
+		// A runner adds the words it reads to what it runs, or puts them
+		// in its command: what it prints, a script for the shell, is
+		// built from input.
+		w.setRuntime(whyPipedScript, hintPlain)
+		return
+	}
 	fed := false
 	for _, doc := range prev.docs {
 		w.nested(doc.body, docKnown(doc), v.cwd.clone(), depth)
@@ -1697,9 +1704,14 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 		}
 	case "script":
 		// script -c 'command' runs the command under a terminal.
+		// The option may end a cluster (-qc), or carry its value (--command=).
 		for i, a := range v.rest {
-			if (a == "-c" || a == "--command") && i+1 < len(v.rest) {
+			cluster := strings.HasPrefix(a, "-") && !strings.HasPrefix(a, "--") && strings.HasSuffix(a, "c")
+			switch {
+			case (a == "-c" || a == "--command" || cluster) && i+1 < len(v.rest):
 				w.nested(v.rest[i+1], v.restKnown[i+1], v.cwd.clone(), depth)
+			case strings.HasPrefix(a, "--command="):
+				w.nested(strings.TrimPrefix(a, "--command="), v.restKnown[i], v.cwd.clone(), depth)
 			}
 		}
 	case "-c", "--command":
