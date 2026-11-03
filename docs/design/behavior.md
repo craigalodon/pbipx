@@ -2407,6 +2407,12 @@ separate issue tracker.
 Fixed in the predecessor since, and unmarked: SQL backslash escapes and `#`
 comments (2026-10-29).
 
+Re-run 2026-11-03 over 355 cases (the `explain` cases are not run there):
+no new predecessor bug. Four failures were documented divergences not yet
+marked (adoption, and git's name-only check) and are now marked; eight
+marked cases the predecessor passes, mostly because it denies every git
+command that prints content, are now unmarked.
+
 | Case | What the predecessor misses |
 |---|---|
 | `tmdl/dax-function-body-blocks` | a DAX user-defined function body is judged as free text, without its columns |
