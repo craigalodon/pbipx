@@ -785,7 +785,7 @@ func tokenize(line string) (cmds []simple, ok bool) {
 		var at []int
 		for k := 0; k < len(rs); k++ {
 			if joins[&rs[k]] {
-				if k > 0 && (rs[k-1] == '<' || rs[k-1] == '>') || k+2 < len(rs) && (rs[k+2] == '<' || rs[k+2] == '>') {
+				if k > 0 && k+2 < len(rs) && splitsRedirect(rs[k-1], rs[k+2]) {
 					// A redirection or here-document operator split: what
 					// follows may be a body bash does not join.
 					doubt = cmp.Or(doubt, whySplitRedirect)
@@ -819,6 +819,15 @@ func tokenize(line string) (cmds []simple, ok bool) {
 		return nil, false
 	}
 	return t.finish(), true
+}
+
+// splitsRedirect reports whether a backslash-newline between before and
+// after can join them into one redirection operator (<<, >>, <>, >&, <&,
+// &>, >|, <(, >(, <<-): an operator character on both sides, one of them
+// < or >. A blank on either side splits nothing.
+func splitsRedirect(before, after rune) bool {
+	return strings.ContainsRune("<>&", before) && strings.ContainsRune("<>&|(-", after) &&
+		(before == '<' || before == '>' || after == '<' || after == '>')
 }
 
 // lineJoins are the backslashes of the backslash-newlines bash removes in

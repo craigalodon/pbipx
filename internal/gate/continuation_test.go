@@ -60,6 +60,15 @@ func TestShellSplitHeredocOperator(t *testing.T) {
 		{"a join in a quoted body read as code first", sh("cat <<'E'\nx\\\nE\ngit log -p -1\nE"), gate.ReasonGitContent},
 		{"a join after a single-quoted word", sh("echo 'a'\\\n && git log --oneline -1"), ""},
 		{"a join in a comment", sh("true # x \\\ngit log --oneline -1"), ""},
+		// The backstop fires only where the join can make one operator of
+		// two characters; elsewhere a redirection after a continuation is
+		// read as bash reads it.
+		{"a continuation, then a redirection", sh("go test ./... \\\n> notes/out.txt"), ""},
+		{"a continuation, then an append", sh("go test ./... \\\n>> notes/out.txt"), ""},
+		{"a redirection, then a continuation", sh("go test ./... > \\\nnotes/out.txt"), ""},
+		{"> split from >", sh("echo x >\\\n> notes/out.txt; git log -p -1"), unread},
+		{"& split from >", sh("echo x &\\\n> notes/out.txt; git log -p -1"), unread},
+		{"< split from (", sh("cat <\\\n(git log -p -1)"), unread},
 	})
 }
 
