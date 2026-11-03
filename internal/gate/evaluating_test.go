@@ -43,7 +43,15 @@ func TestShellArithmeticContexts(t *testing.T) {
 		{"an assignment's subscript", sh(set + `b[x]=1`), git},
 		{"a compound assignment's subscript", sh(set + `a=([x]=1)`), git},
 		{"another assignment's subscript", sh(set + `m[x]=1`), git},
+		{"a substring after an @ subscript", sh(set + `echo ${a[@]:x}`), git},
+		{"a substring after an index", sh(set + `echo ${a[0]:x}`), git},
+		{"a substring length after a * subscript", sh(set + `echo "${a[*]:1:x}"`), git},
+		{"a substring in a default", sh(set + `echo ${y:-${s:x}}`), git},
+		{"a substring in a pattern removal", sh(set + `echo ${s#${s:x}}`), git},
+		{"a substring in a replacement", sh(set + `echo ${s/a/${s:x}}`), git},
+		{"a subscript in a default", sh(set + `echo ${y:-${b[x]}}`), git},
 		{"a literal subscript", sh(`a[0]=1; echo ${a[0]} ${PWD:1:2}`), ""},
+		{"literal substrings after subscripts and in defaults", sh(`echo ${a[@]:1:2} ${y:-${s:0:1}}`), ""},
 		{"quoted code with no arithmetic", sh(`git commit -m 'use $(foo)'`), ""},
 	})
 }

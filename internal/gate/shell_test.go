@@ -888,6 +888,8 @@ func TestShellBounded(t *testing.T) {
 		"nested arithmetic":            "echo " + strings.Repeat("$((1+", 200) + "1" + strings.Repeat("))", 200),
 		"nested substitutions, spaced": "echo " + strings.Repeat("$( echo ", 200) + "x" + strings.Repeat(" )", 200),
 		"nested parameter defaults":    "echo " + strings.Repeat("${x:-", 200) + "y" + strings.Repeat("}", 200),
+		"nested substring defaults":    "echo " + strings.Repeat("${x:-${s:0:1}", 200) + strings.Repeat("}", 200),
+		"many expansions in a default": "echo ${x:-" + strings.Repeat("${a[0]:1}", 20000) + "}",
 		"backticks in substitutions":   "echo " + strings.Repeat("$(echo `true` ", 200) + strings.Repeat(")", 200),
 		"case in substitutions":        "echo " + strings.Repeat("$(case x in x) ", 200) + "true" + strings.Repeat(";; esac)", 200),
 		"subshells in arithmetic":      "echo " + strings.Repeat("$(( (", 200) + "1" + strings.Repeat(") ))", 200),

@@ -290,12 +290,54 @@ func arithContext(raw string) bool {
 			}
 		}
 		rest := inner[k:]
-		switch {
-		case strings.HasPrefix(rest, "["):
+		if strings.HasPrefix(rest, "[") {
 			end := strings.IndexByte(rest, ']')
-			return end > 0 && named(rest[1:end])
-		case strings.HasPrefix(rest, ":") && len(rest) > 1 && !strings.ContainsRune("-=?+", rune(rest[1])):
-			return named(rest[1:])
+			if end < 0 || named(rest[1:end]) {
+				// A subscript the gate cannot end is taken to evaluate.
+				return true
+			}
+			rest = rest[end+1:] // ${a[@]:x}: a substring may follow
+		}
+		if strings.HasPrefix(rest, ":") && len(rest) > 1 && !strings.ContainsRune("-=?+", rune(rest[1])) && named(rest[1:]) {
+			return true
+		}
+		// An operator's operand may hold expansions of its own:
+		// ${x:-${s:v}}, ${s#${s:v}}, ${s/x/${s:v}}.
+		return nestedArith(rest)
+	}
+	return false
+}
+
+// nestedArith reports whether s, an expansion's operand, holds an
+// arithmetic context (arithContext) in a nested ${...}, $((...)) or
+// $[...]. A nested ${ whose end cannot be found is taken to hold one.
+func nestedArith(s string) bool {
+	for k := 0; k < len(s); k++ {
+		switch {
+		case strings.HasPrefix(s[k:], "$((") || strings.HasPrefix(s[k:], "$["):
+			if arithContext(s[k:]) {
+				return true
+			}
+		case strings.HasPrefix(s[k:], "${"):
+			depth, end := 0, -1
+			for j := k + 1; j < len(s) && end < 0; j++ {
+				switch s[j] {
+				case '{':
+					depth++
+				case '}':
+					depth--
+					if depth == 0 {
+						end = j
+					}
+				}
+			}
+			if end < 0 {
+				return true
+			}
+			if arithContext(s[k : end+1]) {
+				return true
+			}
+			k = end // read once: the nested one scanned its own operands
 		}
 	}
 	return false
