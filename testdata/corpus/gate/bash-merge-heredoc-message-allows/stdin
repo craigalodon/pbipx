@@ -1,0 +1,8 @@
+{
+  "hook_event_name": "PreToolUse",
+  "cwd": "{root}",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "git merge --no-ff -m \"$(cat <<'EOF'\nMerge the example branch\nEOF\n)\" example"
+  }
+}

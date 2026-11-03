@@ -124,25 +124,329 @@ var gitNeverContent = map[string]bool{
 
 // unknownOption reports whether one of args, sub's words before "--", is
 // one that cannot be told (unknown) and could be an option: any but a
-// message, the value of -m or --message given apart or attached, for a
-// subcommand whose -m takes one (git commit -m "$(cat <<EOF ...)").
-func unknownOption(sub string, args, unknown []string) bool {
-	takesMessage := gitMessageSubs[sub]
+// message (gitMessageArgs), for a subcommand whose -m takes one (git
+// commit -m "$(cat <<EOF ...)", git commit -am "$MSG"). A message the
+// shell makes several words (shape(i) for args[i]: git commit -m $MSG,
+// -m "$@", -m *) could hold options too.
+func unknownOption(sub string, args, unknown []string, shape func(int) argShape) bool {
+	msg, _ := gitMessageArgs(sub, args)
 	for i, a := range args {
-		if !slices.Contains(unknown, a) {
-			continue
+		sh := shape(i)
+		if msg[i] && sh.glob {
+			return true
 		}
-		message := strings.HasPrefix(a, "--message=") || (strings.HasPrefix(a, "-m") && !strings.HasPrefix(a, "--")) ||
-			(i > 0 && (args[i-1] == "-m" || args[i-1] == "--message"))
-		if !takesMessage || !message {
+		if (!msg[i] || sh.splits) && slices.Contains(unknown, a) {
 			return true
 		}
 	}
 	return false
 }
 
+// argShape is how the shell may turn one argument into several: splits
+// for an expansion it splits into words (unquoted, or "$@" and the like),
+// glob for a glob character outside quotes.
+type argShape struct {
+	splits, glob bool
+}
+
 // gitMessageSubs are the subcommands whose -m and --message take a message.
 var gitMessageSubs = map[string]bool{"commit": true, "merge": true, "stash": true, "notes": true, "tag": true}
+
+// gitOptions are a subcommand's options, as far as the gate reads them to
+// tell a message from an option: the short options that take no value
+// (plain), that take one attached or as the next word (value, m among
+// them), and that take one only attached (optional); and the long options
+// known to take no value (long) and to take the next word as their value
+// unless given with "=" (longValue). An option in none of these could take
+// the next word or not: the words after it cannot be read.
+type gitOptions struct {
+	plain, value, optional string
+	long, longValue        map[string]bool
+}
+
+// gitMessageOptions are the options of each subcommand in gitMessageSubs,
+// from git's documentation.
+var gitMessageOptions = map[string]gitOptions{
+	"commit": {plain: "apsneiovqz", value: "cCFmt", optional: "Su", longValue: setOf(
+		"--file", "--message", "--template", "--reuse-message", "--reedit-message", "--fixup",
+		"--squash", "--author", "--date", "--cleanup", "--trailer", "--pathspec-from-file"), long: setOf(
+		"--all", "--patch", "--interactive", "--signoff", "--no-signoff", "--verbose", "--no-verbose",
+		"--quiet", "--dry-run", "--short", "--branch", "--porcelain", "--long", "--null", "--amend",
+		"--no-edit", "--edit", "--reset-author", "--allow-empty", "--allow-empty-message", "--no-verify",
+		"--verify", "--include", "--only", "--status", "--no-status", "--gpg-sign", "--no-gpg-sign",
+		"--no-post-rewrite", "--untracked-files", "--ahead-behind", "--no-ahead-behind",
+		"--pathspec-file-nul")},
+	"merge": {plain: "nevq", value: "sXFm", optional: "S", longValue: setOf(
+		"--file", "--message", "--strategy", "--strategy-option", "--into-name", "--cleanup"), long: setOf(
+		"--commit", "--no-commit", "--edit", "--no-edit", "--ff", "--no-ff", "--ff-only", "--stat",
+		"--no-stat", "--summary", "--no-summary", "--log", "--no-log", "--squash", "--no-squash",
+		"--signoff", "--no-signoff", "--verify", "--no-verify", "--verify-signatures",
+		"--no-verify-signatures", "--quiet", "--verbose", "--progress", "--no-progress",
+		"--allow-unrelated-histories", "--rerere-autoupdate", "--no-rerere-autoupdate", "--autostash",
+		"--no-autostash", "--overwrite-ignore", "--no-overwrite-ignore", "--gpg-sign", "--no-gpg-sign")},
+	"stash": {plain: "pSkuaq", value: "m", longValue: setOf("--message", "--pathspec-from-file"), long: setOf(
+		"--patch", "--staged", "--keep-index", "--no-keep-index", "--include-untracked",
+		"--no-include-untracked", "--all", "--quiet", "--pathspec-file-nul")},
+	"notes": {plain: "f", value: "FmcC", longValue: setOf(
+		"--file", "--message", "--reuse-message", "--reedit-message"), long: setOf(
+		"--force", "--allow-empty", "--stripspace", "--no-stripspace", "--separator", "--no-separator")},
+	"tag": {plain: "asfe", value: "umF", optional: "n", longValue: setOf(
+		"--file", "--message", "--local-user", "--cleanup"), long: setOf(
+		"--annotate", "--sign", "--no-sign", "--force", "--edit", "--no-edit")},
+}
+
+func setOf(names ...string) map[string]bool {
+	m := make(map[string]bool, len(names))
+	for _, n := range names {
+		m[n] = true
+	}
+	return m
+}
+
+// gitMessageArgs reads args, sub's words before "--", as git reads them,
+// and marks each that is a message, or holds one attached: the word after
+// -m or --message, a word -m<text> or --message=<text>, and the same after
+// a cluster of short options that take no value (-am, -am<text>). An m
+// after a letter that takes a value is that value (-Fm), and a -m that is
+// itself the value of the option before it (-F -m, --author -m) starts no
+// message. After an option the gate does not know (an abbreviation
+// included) given without "=", whether the next word is its value cannot
+// be told, so no later word is a message. stdin is set when -F or --file reads the
+// message from standard input ("-"). Only commit, merge, tag, stash push
+// (or stash given options alone) and notes add and append take a message.
+func gitMessageArgs(sub string, args []string) (msg []bool, stdin bool) {
+	msg = make([]bool, len(args))
+	if !gitMessageSubs[sub] {
+		return msg, false
+	}
+	opts := gitMessageOptions[sub]
+	start := 0
+	switch sub {
+	case "stash":
+		if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+			if args[0] != "push" {
+				return msg, false
+			}
+			start = 1
+		}
+	case "notes":
+		if len(args) == 0 || (args[0] != "add" && args[0] != "append") {
+			return msg, false
+		}
+		start = 1
+	}
+	for i := start; i < len(args); i++ {
+		a := args[i]
+		next := ""
+		if i+1 < len(args) {
+			next = args[i+1]
+		}
+		name, value, hasValue := strings.Cut(a, "=")
+		switch {
+		case strings.HasPrefix(a, "--"):
+			switch {
+			case !opts.longValue[name] && !opts.long[name]:
+				if !hasValue {
+					return msg, stdin
+				}
+				// With "=" it takes no other word.
+			case opts.long[name]:
+			case name == "--message":
+				if hasValue {
+					msg[i] = true
+				} else if i+1 < len(args) {
+					msg[i+1] = true
+				}
+			case name == "--file":
+				stdin = stdin || (hasValue && value == "-") || (!hasValue && next == "-")
+			}
+			if opts.longValue[name] && !hasValue {
+				i++
+			}
+		case len(a) > 1 && a[0] == '-':
+			c, ok := opts.cluster(a, next)
+			if !ok {
+				return msg, stdin
+			}
+			msg[i] = c.attached
+			stdin = stdin || c.stdin
+			if c.nextMsg && i+1 < len(args) {
+				msg[i+1] = true
+			}
+			if c.nextValue {
+				i++
+			}
+		}
+	}
+	return msg, stdin
+}
+
+// gitCluster is what a cluster of short options says of the message:
+// whether it holds one attached (-am<text>), whether the next word is a
+// value (nextValue), the message among them (nextMsg), and whether -F
+// reads the message from standard input.
+type gitCluster struct {
+	attached, nextMsg, nextValue, stdin bool
+}
+
+// cluster reads a, a cluster of short options, followed by the word next.
+// ok is false when a holds a letter the gate does not know.
+func (o gitOptions) cluster(a, next string) (c gitCluster, ok bool) {
+	for j := 1; j < len(a); j++ {
+		letter, rest := a[j], a[j+1:]
+		switch {
+		case strings.IndexByte(o.plain, letter) >= 0:
+			continue
+		case strings.IndexByte(o.optional, letter) >= 0:
+			// The rest of the cluster is its value.
+			return c, true
+		case strings.IndexByte(o.value, letter) >= 0:
+			value := rest
+			if rest == "" {
+				value = next
+				c.nextValue = true
+			}
+			c.attached = letter == 'm' && rest != ""
+			c.nextMsg = letter == 'm' && rest == ""
+			c.stdin = letter == 'F' && value == "-"
+			return c, true
+		default:
+			return c, false
+		}
+	}
+	return c, true
+}
+
+// gitExpandHint ends a git refusal for an argument the gate cannot expand:
+// for a subcommand that reads its message from standard input with -F -,
+// it adds how to give one the gate can read. merge reads no message from
+// "-", and stash has no -F.
+func gitExpandHint(sub string) string {
+	switch sub {
+	case "commit", "tag":
+		return hintGitExpand + " `git " + sub + " -F - <<'EOF'` takes the message from a here-document."
+	case "notes":
+		return hintGitExpand + " `git notes add -F - <<'EOF'` takes the message from a here-document."
+	}
+	return hintGitExpand
+}
+
+// gitMessage is what of a simple command is git's message text, read by
+// gitMessageText: prose, not paths, so a protected root's name in it does
+// not make the command reach the root. words and subs are indexed as the
+// command's words and command substitutions.
+type gitMessage struct {
+	// words are the message words: the value of -m or --message given
+	// apart, or a word holding it attached (gitMessageArgs).
+	words []bool
+	// subs are the command substitutions in a message word whose one
+	// command is cat reading a here-document: its body is the message.
+	subs []bool
+	// docs is set when git reads its message from standard input (-F -,
+	// --file=-): the command's here-documents are the message.
+	docs bool
+}
+
+// gitMessageText reads c, when it runs git with a message: which of its
+// words, command substitutions and here-documents are message text. A
+// command that does not, or whose words do not line up as the gate reads
+// them, has none.
+func gitMessageText(c simple) gitMessage {
+	m := gitMessage{words: make([]bool, len(c.words)), subs: make([]bool, len(c.subs))}
+	if c.fallback {
+		return m
+	}
+	var idx []int // the index in c.words of each argument
+	var args []string
+	for i, wd := range c.words {
+		if !wd.redirect {
+			idx = append(idx, i)
+			args = append(args, wd.text)
+		}
+	}
+	// Under a wrapper (xargs, say) git's input or its words may be other
+	// than the line shows.
+	name, rest, under := command(args)
+	if name != "git" || len(under) > 0 || !isSuffix(args, rest) {
+		return m
+	}
+	inv, ok := parseGit(rest, "")
+	if !ok || !gitMessageSubs[inv.sub] || !isSuffix(rest, inv.rest) {
+		return m
+	}
+	start := len(args) - len(inv.rest)
+	msg, stdin := gitMessageArgs(inv.sub, inv.args)
+	for i, isMsg := range msg {
+		// A word the shell makes several may be more than the message,
+		// and a ${...} that runs a command is not text.
+		w := idx[start+i]
+		wd := c.words[w]
+		m.words[w] = isMsg && !wd.splits && !wd.globs() && !slices.ContainsFunc(wd.parts, runsInBraces)
+	}
+	if stdin && inv.sub != "merge" {
+		// -F - reads standard input: a here-document or a here-string. git
+		// merge takes "-" for a file name.
+		m.docs = true
+		for i, wd := range c.words {
+			if wd.here && !wd.splits && !slices.ContainsFunc(wd.parts, runsInBraces) {
+				m.words[i] = true
+			}
+		}
+	}
+	// The command substitutions in the words, in order, are c.subs: one
+	// for each $(...) or backtick part, and those a ${...} part holds.
+	k := 0
+	for i, wd := range c.words {
+		for _, p := range wd.parts {
+			n := 0
+			switch {
+			case p.kind != opaquePart:
+			case strings.HasPrefix(p.raw, "$("), strings.HasPrefix(p.raw, "`"):
+				n = 1
+			case strings.HasPrefix(p.raw, "${"):
+				n = len(bodySubs([]rune(p.raw[2 : len(p.raw)-1])))
+			}
+			for range n {
+				if k >= len(c.subs) {
+					return gitMessage{words: m.words, subs: make([]bool, len(c.subs)), docs: m.docs}
+				}
+				m.subs[k] = n == 1 && strings.HasPrefix(p.raw, "$(") && m.words[i] && catHeredoc(c.subs[k]) != nil
+				k++
+			}
+		}
+	}
+	if k != len(c.subs) {
+		m.subs = make([]bool, len(c.subs))
+	}
+	return m
+}
+
+// runsInBraces reports whether p is a ${...} whose body runs a command.
+func runsInBraces(p part) bool {
+	return p.kind == opaquePart && strings.HasPrefix(p.raw, "${") &&
+		(strings.Contains(p.raw, "$(") || strings.Contains(p.raw, "`"))
+}
+
+// catHeredoc is the here-document a command line reads when the line is
+// one command, cat with no argument, reading one here-document; nil
+// otherwise.
+func catHeredoc(line string) *heredoc {
+	cmds := splitCommands(line)
+	if len(cmds) != 1 {
+		return nil
+	}
+	c := cmds[0]
+	if c.fallback || c.pipeIn || len(c.subs) > 0 || len(c.docs) != 1 || len(c.words) != 1 ||
+		c.words[0].redirect || c.words[0].text != "cat" {
+		return nil
+	}
+	return c.docs[0]
+}
+
+// isSuffix reports whether tail is a suffix of words.
+func isSuffix(words, tail []string) bool {
+	return len(tail) <= len(words) && slices.Equal(words[len(words)-len(tail):], tail)
+}
 
 // whyUnknownSpec is why git given an argument that cannot be told is
 // denied when that argument could be a pathspec, a revision or a
@@ -548,7 +852,7 @@ func (g gitDenial) message() string {
 // returns why the command is denied, and nil otherwise. unknown are git's
 // arguments that cannot be told: with any, a subcommand that prints
 // content is denied, as one whose pathspecs are unprovable.
-func (s *setup) gitContent(args, unknown []string) *gitDenial {
+func (s *setup) gitContent(args, unknown []string, shapes []argShape) *gitDenial {
 	name, rest := program(args)
 	if name != "git" {
 		return nil
@@ -570,6 +874,9 @@ func (s *setup) gitContent(args, unknown []string) *gitDenial {
 		return &gitDenial{inv.sub, "is given a global option the gate cannot expand (a variable or a command substitution), " +
 			"which could be any of them", hintGitExpand}
 	}
+	// The words the line gave after the subcommand end both args and
+	// inv.rest; an alias's expansion goes before them.
+	given := len(inv.rest)
 	inv, why := s.resolveAlias(inv)
 	if why != "" {
 		return &gitDenial{inv.sub, why, "Run the git command the alias stands for, with the paths limited (`-- src`) or --stat."}
@@ -578,11 +885,18 @@ func (s *setup) gitContent(args, unknown []string) *gitDenial {
 		return &gitDenial{inv.sub, inv.unsafeWhy, "Drop that global option, or use --stat."}
 	}
 	inv.unknown = len(unknown) > 0
-	if !gitNeverContent[inv.sub] && unknownOption(inv.sub, inv.args, unknown) {
+	if !gitNeverContent[inv.sub] && unknownOption(inv.sub, inv.args, unknown, func(i int) argShape {
+		fromEnd := len(inv.rest) - i
+		j := len(args) - fromEnd
+		if fromEnd <= given && j >= 0 && j < len(shapes) {
+			return shapes[j]
+		}
+		return argShape{}
+	}) {
 		// Before "--" a word that cannot be told could be an option that
 		// turns content on: -p, -v, --cc, a stash or reflog subcommand.
 		return &gitDenial{inv.sub, "is given, before --, an argument the gate cannot expand " +
-			"(a variable or a command substitution), which could be an option that prints content (-p, -v, --cc)", hintGitExpand}
+			"(a variable or a command substitution), which could be an option that prints content (-p, -v, --cc)", gitExpandHint(inv.sub)}
 	}
 	s.locate(&inv)
 	switch inv.place {
@@ -595,7 +909,7 @@ func (s *setup) gitContent(args, unknown []string) *gitDenial {
 		}
 		if inv.unknown && s.gitSpecs(inv).content {
 			// An argument that cannot be told could name one.
-			return &gitDenial{inv.sub, whyUnknownSpec, hintGitExpand}
+			return &gitDenial{inv.sub, whyUnknownSpec, gitExpandHint(inv.sub)}
 		}
 		return nil
 	}
@@ -613,7 +927,7 @@ func (s *setup) gitContent(args, unknown []string) *gitDenial {
 			"Run it from inside the repository, with the directory made first."}
 	case inv.unknown:
 		// Never the name-only query with a word left unexpanded.
-		return &gitDenial{inv.sub, whyUnknownSpec, hintGitExpand}
+		return &gitDenial{inv.sub, whyUnknownSpec, gitExpandHint(inv.sub)}
 	case c.bySpecs && inv.oddSpecs:
 		return &gitDenial{inv.sub, "runs with --literal-pathspecs, --glob-pathspecs or --icase-pathspecs, " +
 			"which make every pathspec unprovable", "Drop that global option, or use --stat."}

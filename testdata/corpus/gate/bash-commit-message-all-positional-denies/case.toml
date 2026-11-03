@@ -1,0 +1,7 @@
+description = "\"$@\" is every positional parameter, a word each even inside double quotes, so git commit -m \"$@\" is not one message and its words could be options that print content. Plants no value"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []
+known       = "predecessor"

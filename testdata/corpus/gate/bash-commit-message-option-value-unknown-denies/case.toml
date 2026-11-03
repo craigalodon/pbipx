@@ -1,0 +1,7 @@
+description = "in git commit -Fm, m is the file -F reads, so the word the gate cannot expand after it is not a message and could be an option that prints content. Plants no value"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []
+known       = "predecessor"

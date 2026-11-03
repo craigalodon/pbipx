@@ -238,7 +238,7 @@ func (s *setup) powershell(line string) Decision {
 			displayPath(local))
 	}
 	return s.tree(trigger{"the gate cannot read a PowerShell command, so it takes it to touch every protected root",
-		"Use the Read tool for a single file, or run the command from outside the protected folders."})
+		hintPowerShell})
 }
 
 // lsp decides an LSP call (behavior.md, "The gate", LSP): each path it

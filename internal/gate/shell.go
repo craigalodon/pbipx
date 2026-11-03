@@ -119,6 +119,45 @@ var gitTreeChangers = map[string][]string{
 	"merge-file":      {"-p", "--stdout"},
 }
 
+// redefiners are the commands that can make a name run another program:
+// an alias, a hashed path, a builtin turned off or loaded, and a script
+// or text run in the shell itself, which can define a function.
+var redefiners = map[string]bool{
+	"alias": true, "hash": true, "enable": true, "source": true, ".": true, "eval": true,
+	"function": true,
+}
+
+// redefines reports whether c may make cat or git run another program for
+// the rest of the line: a function definition (name(), function name),
+// alias, hash, enable, source, . or eval, or an assignment or export of
+// PATH.
+func redefines(c simple, v view) bool {
+	if c.funcDef {
+		return true
+	}
+	words := stripKeywords(c.args())
+	if len(words) > 0 && (redefiners[words[0]] || redefiners[v.name]) {
+		return true
+	}
+	if len(c.words) > 0 && c.words[0].text == "function" {
+		return true
+	}
+	for _, a := range v.argv {
+		if name, _, ok := strings.Cut(a, "="); ok && name == "PATH" {
+			return true
+		}
+	}
+	switch v.name {
+	case "export", "declare", "typeset", "local", "readonly":
+		for _, a := range v.rest {
+			if name, _, _ := strings.Cut(a, "="); name == "PATH" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // treeChange names the command v runs when it changes the working tree
 // with content the gate has not seen: a git command that checks out,
 // merges, applies or restores (gitTreeChangers; any git subcommand that is
@@ -377,15 +416,20 @@ type xword struct {
 	redirect bool
 	// input and here are word's: a redirection that reads, a here-string.
 	input, here bool
+	// message is set for git's message text (gitMessageText), which is
+	// not placed as a path.
+	message bool
 }
 
 // view is one simple command as the rules see it.
 type view struct {
 	words []xword
 	// argv are the expanded arguments, redirection targets left out and
-	// leading reserved words stripped; argvKnown says which are known.
-	argv      []string
-	argvKnown []bool
+	// leading reserved words stripped; argvKnown says which are known,
+	// argvShapes how the shell may make each several words.
+	argv       []string
+	argvKnown  []bool
+	argvShapes []argShape
 	// name is the command run, rest its arguments and under the wrappers
 	// it runs under (command); restKnown says which of rest are known.
 	name      string
@@ -414,6 +458,12 @@ type walker struct {
 	// after it reads.
 	changed         string
 	readAfterChange bool
+	// redefines is set when a command of the line may make cat or git run
+	// another program (redefines): git's message text is then not left
+	// out of the root-name tests. message are the indexes in lines of the
+	// lines that are cat reading a here-document that is git's message.
+	redefines bool
+	message   map[int]bool
 	// tooMany is set when the line holds more than maxCommands commands.
 	tooMany bool
 	ctl     *controls
@@ -444,17 +494,6 @@ func (w *walker) commands(line string, cmds []simple, st *cwdState, depth int) {
 			prev = nil
 		}
 		v := w.simple(c, st, depth)
-		for _, sub := range c.subs {
-			// A substitution runs in a subshell, in this directory.
-			sst := v.cwd.clone()
-			w.line(sub, &sst, depth+1)
-		}
-		for _, doc := range c.docs {
-			for _, sub := range doc.subs {
-				sst := v.cwd.clone()
-				w.line(sub, &sst, depth+1)
-			}
-		}
 		if c.fallback && (judged(v.name) || strings.Contains(line, "$(") || strings.Contains(line, "`")) {
 			// The line did not tokenize: what a reading command reads, or
 			// what a substitution runs, cannot be told.
@@ -485,6 +524,33 @@ func (w *walker) line(line string, st *cwdState, depth int) {
 		return
 	}
 	w.commands(line, splitCommands(line), st, depth)
+}
+
+// programShown reports whether an interpreter reading its program from its
+// input (readsProgram) is fed a program the line shows as written: a
+// here-document whose body is known (quoted, or with no expansion) or a
+// known here-string, and nothing else on its input. Its text is then
+// tested for a root's name as any other word of the line.
+func programShown(c simple, v view) bool {
+	if c.pipeIn {
+		return false
+	}
+	shown := false
+	for _, doc := range c.docs {
+		if !docKnown(doc) {
+			return false
+		}
+		shown = true
+	}
+	for _, xw := range v.words {
+		switch {
+		case xw.here && xw.known:
+			shown = true
+		case xw.here, xw.redirect && xw.input:
+			return false
+		}
+	}
+	return shown
 }
 
 // shellReadsScript reports whether v is a shell that reads its script from
@@ -571,6 +637,10 @@ func (w *walker) setReach(why, hint string) {
 const (
 	whyTooDeep     = "a command line is nested more than 4 deep, too deep to follow"
 	whyPipedScript = "a shell reads its script from a pipe whose content is built at run time"
+	// whyPipedProgram is the trigger for a script interpreter reading its
+	// program from its input.
+	whyPipedProgram = "a script interpreter (python, node, perl and the like) reads its program from its input, " +
+		"which is built at run time"
 )
 
 // The hints a refusal ends with: one short thing to do instead.
@@ -588,12 +658,17 @@ const (
 	// expand.
 	hintGitExpand = "Write git's arguments out in full, without variables or command substitutions."
 	hintChange    = "Run the change on its own, then the read as a separate call."
-	hintSelect    = "Clear the selection in Power BI Desktop and save, or ask a person to run `pbipx scan` at a terminal."
-	hintValue     = "Remove the value from the file in Power BI Desktop or an editor, or ask a person to run `pbipx scan` at a terminal."
-	hintVet       = "Ask a person to cover the file in the policy (.pbipx.toml), or leave it out of the call."
-	hintUnread    = "Check that the file can be read, or ask a person to run `pbipx scan` at a terminal."
-	hintLocal     = "Leave Power BI Desktop's .pbi folders out of the call; Desktop keeps them on its own."
-	hintSetting   = "Ask a person to make the change at a terminal."
+	hintSelect    = "Use `pbipx explain` for its structure; to clear the selection, ask a person to clear it in Power BI Desktop and save, or to run `pbipx scan` at a terminal."
+	hintValue     = "Use `pbipx explain` for its structure; to clear the value, ask a person to remove it in Power BI Desktop or an editor, or to run `pbipx scan` at a terminal."
+	// hintPowerShell ends a refusal for a PowerShell command, which the
+	// gate cannot read, whatever the working directory.
+	hintPowerShell = "Use the Read tool for a single file, or the Bash tool with the paths written out."
+	// hintSettings ends a refusal to change what controls the gate.
+	hintSettings = "Show the person the exact change, for them to make at a terminal."
+	hintVet      = "Ask a person to cover the file in the policy (.pbipx.toml), or leave it out of the call."
+	hintUnread   = "Check that the file can be read, or ask a person to run `pbipx scan` at a terminal."
+	hintLocal    = "Leave Power BI Desktop's .pbi folders out of the call; Desktop keeps them on its own."
+	hintSetting  = "Ask a person to make the change at a terminal."
 )
 
 // simple records one simple command run from st, reads what it nests, and
@@ -603,6 +678,37 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 	v := s.viewOf(c, *st)
 	v.cache = w.cache
 	w.views = append(w.views, v)
+	if redefines(c, v) {
+		w.redefines = true
+	}
+
+	// The command substitutions in its words and here-documents run
+	// before it, each in a subshell in this directory: a read in one is
+	// not after this command's own change to the tree, and a change in
+	// one comes before this command. A process substitution, <(...) or
+	// >(...), runs alongside it and is read as a command after it.
+	msg := gitMessageText(c)
+	for k, sub := range c.subs {
+		sst := v.cwd.clone()
+		n := len(w.lines)
+		w.line(sub, &sst, depth+1)
+		if msg.subs[k] && n < len(w.lines) && w.lines[n] == sub {
+			// cat reading a here-document that is git's message: the
+			// body is not tested for a root's name (namesRootOutsideListers),
+			// unless the line may redefine cat or git; the lines its body
+			// runs, walked after it, still are.
+			if w.message == nil {
+				w.message = map[int]bool{}
+			}
+			w.message[n] = true
+		}
+	}
+	for _, doc := range c.docs {
+		for _, sub := range doc.subs {
+			sst := v.cwd.clone()
+			w.line(sub, &sst, depth+1)
+		}
+	}
 
 	// Every command after one that changes the working tree is judged
 	// for reading; the first change is the one named. A probe judges
@@ -621,6 +727,11 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 		} else {
 			w.fedScript(c, v, depth)
 		}
+	}
+	if readsProgram(v.name, v.rest) && !programShown(c, v) {
+		// python3, node, perl ... reading their program from a pipe, a
+		// file or a process substitution run what the gate cannot read.
+		w.setReach(whyPipedProgram, hintPlain)
 	}
 	switch v.name {
 	case "source", ".":
@@ -703,16 +814,21 @@ func (s *setup) viewOf(c simple, st cwdState) view {
 	v := view{cwd: st.clone(), pipeIn: c.pipeIn}
 	var args []string
 	var known []bool
-	for _, wd := range c.words {
+	var shapes []argShape
+	msg := gitMessageText(c)
+	for i, wd := range c.words {
 		xw := s.expandWord(wd, v.cwd)
+		xw.message = msg.words[i]
 		v.words = append(v.words, xw)
 		if !xw.redirect {
 			args = append(args, xw.text)
 			known = append(known, xw.known)
+			shapes = append(shapes, argShape{splits: wd.splits, glob: wd.globs()})
 		}
 	}
 	v.argv = stripKeywords(args)
 	v.argvKnown = known[len(known)-len(v.argv):]
+	v.argvShapes = shapes[len(shapes)-len(v.argv):]
 	v.name, v.rest, v.under = command(v.argv)
 	v.restKnown = v.argvKnown[len(v.argvKnown)-len(v.rest):]
 	return v
@@ -1783,7 +1899,7 @@ func (s *setup) gitRule(v view) *gitDenial {
 	for _, d := range dirs {
 		in := *s
 		in.cwd = d
-		if g := in.gitContent(v.argv, unknown); g != nil {
+		if g := in.gitContent(v.argv, unknown, v.argvShapes); g != nil {
 			return g
 		}
 	}
@@ -1866,9 +1982,12 @@ func (w *walker) reaches() trigger {
 	if w.reach.set() {
 		return w.reach
 	}
-	for _, line := range w.lines {
+	for i, line := range w.lines {
+		if w.message[i] && !w.redefines {
+			continue
+		}
 		for _, root := range s.policy.ProtectedRoots() {
-			if namesRootOutsideListers(line, root) {
+			if namesRootOutsideListers(line, root, !w.redefines) {
 				return trigger{"the command names the protected root " + displayPath(root), hintNames}
 			}
 		}
@@ -1892,6 +2011,9 @@ func (w *walker) reaches() trigger {
 		_, search := searchers[v.name]
 		reader := readers[v.name] || search
 		for _, xw := range v.words {
+			if xw.message && !w.redefines {
+				continue
+			}
 			abss, unknown := s.wordSpellings(v, xw)
 			if unknown && reader && !optionOnly(xw.text) {
 				return trigger{v.name + " is given a word with an expansion the gate cannot resolve", hintExpand}

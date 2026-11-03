@@ -45,8 +45,8 @@ func newInitCmd() *cobra.Command {
    (${PBIPX_CONFIG_DIR:-<user config dir>/pbipx}), outside it: the gate acts
    only for such a repository, and from then on denies every call there until
    the policy is approved, and whenever it is missing or does not load.
-2. Register the gate as Claude Code's PreToolUse hook for Read, Grep, Bash and
-   the file-writing tools, in the user-level settings
+2. Register the gate as Claude Code's PreToolUse hook for Read, Grep, Bash,
+   PowerShell, LSP and the file-writing tools, in the user-level settings
    ($CLAUDE_CONFIG_DIR/settings.json, or ~/.claude/settings.json), outside the
    repository, where a project cannot remove it. A project can still turn
    every user-level hook off with disableAllHooks; the gate denies an agent's

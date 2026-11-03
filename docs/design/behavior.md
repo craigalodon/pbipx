@@ -646,8 +646,10 @@ path, is denied with `event-error`: the call cannot be judged.
     long options that take a value such as `--rcfile`), `script -c`,
     `flock FILE -c`, `watch` (its words, joined), `env -S`, GNU `parallel`
     (its template with each argument after `:::`, or each argument alone),
-    `eval` and every command substitution are read as nested lines, at
-    most four deep, with every rule applied to them. So is the script a
+    `eval` and every command substitution (one inside a `${...}`, as in
+    `${X:-$(cmd)}`, nested ones and those in `$((...))` included) are
+    read as nested lines, at most four deep, with every rule applied to
+    them. So is the script a
     shell reads from a here-document, a here-string (`<<<`), `source
     /dev/stdin`, or a pipe from a here-document, a here-string, `echo` or
     `printf`; a shell reading any other pipe runs a script built at run
@@ -733,8 +735,42 @@ path, is denied with `event-error`: the call cannot be judged.
        `help`, `gc`): `git log $(echo -p)`, `git log --oneline $REV`,
        `git status $X`, `git add $X` and `git config --get $K` are denied.
        A message is never an option: the value of `-m` or `--message` for
-       `commit`, `merge`, `stash`, `notes` and `tag`
-       (`git commit -m "$(cat <<'EOF' ...)"`) is judged as usual. After
+       `commit`, `merge`, `tag`, `stash push` (or `stash` given options
+       alone) and `notes add` or `append`, given apart (`git commit -m
+       "$(cat <<'EOF' ...)"`), attached (`-m"$MSG"`, `--message="$MSG"`)
+       or after a cluster of short options that take no value (`git
+       commit -am "$(...)"`, `-sm`, `-am"$MSG"`), is judged as usual. The
+       options are read as git reads them, from the gate's table of each
+       subcommand's options: an `m` after a letter that takes a value is
+       that value, attached or apart (commit's `-c`, `-C`, `-F`, `-t`;
+       `-S` and `-u` take one only attached; merge's `-s`, `-X`, `-F` and
+       `-S`; notes' `-F`, `-c`, `-C`; tag's `-u`, `-F` and `-n`), so `git
+       commit -Fm "$X"` is denied, and so is a `-m` that is itself the
+       value of the option before it (`-F -m "$X"`, `--author -m "$X"`).
+       After a letter or a long option the gate does not know (an
+       abbreviation such as `--auth` included), given without `=`, no
+       later word is a message. A cluster is still read for the options it
+       holds, so `git commit -pm "$(...)"` and `git stash push -pm ...`
+       are denied as interactive hunks. A message that holds an expansion
+       is one only when every expansion in it (`$X`, `${...}`, `$(...)`,
+       backticks, `$1`) is inside double quotes: outside them the shell
+       splits its value into words, which could be options (`--dry-run
+       -v` prints the staged diff). Some expansions are several words
+       even inside double quotes: `"$@"`, and any `${...}` holding `@`
+       (`"${@:2}"`, `"${a[@]}"`, `"${!p@}"`, `"${!a[@]}"`); they are
+       taken to split wherever they are (`"$*"` and `"${*}"` are one
+       word). A glob character outside quotes expands to the names it
+       matches, so a message word holding one is denied as well. So `git
+       commit -m $X`, `-am $X`, `-m$X`, `--message=$X`, `-m "$X"$Y`, `-m
+       $(cat <<'EOF' ...)`, `-m "$@"`, `-qm "${a[@]}"`, `-m *` and `-m
+       "$X"*` are denied, while `-m "$X"`, `-m "$*"`, `-m "fix *"` and
+       `-m "fix: $X done"` are not. In
+       PowerShell the message must likewise be a double-quoted string
+       (`"..."` or a here-string): an unquoted variable, subexpression,
+       group or splat may be an array, passed as several arguments, and
+       an expansion given to `Start-Process -ArgumentList` goes into a
+       command line git splits. This also decides git's message text in
+       rule 3 below. After
        `--` it is a pathspec, and a subcommand that prints content is
        denied without asking git anything with the word unexpanded (the
        stash lookup included), while one that does not
@@ -809,7 +845,17 @@ path, is denied with `event-error`: the call cannot be judged.
      git's own reads are judged by rule 2. The change alone, with nothing
      reading after it, is allowed: the next call is judged against the
      changed tree. `git stash` stays a change: the read after it sees
-     HEAD's content, which is history.
+     HEAD's content, which is history. The command substitutions
+     (`$(...)`, backticks) in a command's own words and here-documents run
+     before the command, so they are judged as before its change, and a
+     change in one counts before the command: `git merge -m "$(cat <<'EOF'
+     ...)" main` and `git stash push -m "$(cat <<'EOF' ...)"` are allowed,
+     and so is `git merge -m "$(cat notes.txt)" topic`, while `cat f
+     "$(git checkout old)"` is denied. A process substitution (`<(...)`,
+     `>(...)`) runs alongside the command and counts as after it, and a
+     substitution in any later command counts as after the change. In a
+     PowerShell line, a subexpression in git's arguments is read as a
+     statement before git's, so it is judged the same way.
   3. If the working directory is inside a protected root, or the command
      names a root as a whole word, the protected tree is scanned as for Grep.
      In pbipx the tree is scanned too when:
@@ -847,6 +893,58 @@ path, is denied with `event-error`: the call cannot be judged.
 
      A root's name is compared without regard to case in these tests, on
      every platform: they only decide whether the real roots are scanned.
+
+     In pbipx git's message text is left out of these tests, both the
+     whole-word test of the line and the placing of words: it is prose,
+     and people name folders in commit messages. It is the value of `-m`
+     or `--message` as rule 2 reads it (apart, attached, `--message=`, or
+     after a cluster: `commit`, `merge`, `tag`, `stash push`, `notes add`
+     and `append`), and, when that value is a command substitution whose
+     one command is `cat` with no argument reading a here-document
+     (`git commit -m "$(cat <<'EOF' ...)"`), that here-document's body;
+     and the here-documents of git reading its message from standard
+     input (`-F -`, `--file=-`, `--file -` for `commit`, `tag` and `notes
+     add`; `git merge` reads a file named `-`), and its here-strings
+     (`git commit -F- <<<"..."`). A message word that is several words
+     (above), or that holds a `${...}` running a command
+     (`"${X:-$(cat f)}"`), is not message text. Only git run under no
+     wrapper counts: under `xargs`, say, its input and words are not what
+     the line shows. The command substitutions an
+     unquoted such body runs are still read as nested lines, and so is any
+     other substitution in a message (`git commit -m "$(cat pbip/x)"`
+     scans). Every other word of the command (a pathspec after `--`, the
+     value of `-F`), and every other command, is tested as before. Text a
+     program may read as code keeps the test: `python3 -c "open('pbip/x')"`,
+     `node -e`, `perl -e`, an awk program, and a here-document fed to an
+     interpreter (`python3 - <<'EOF' ...`, `cat <<'EOF' | python3`).
+     A message is still run if something feeds it to an interpreter
+     (`git log -1 --format=%B | python3`): a script interpreter reading
+     its program from its input runs a program built at run time, as a
+     shell reading a pipe does, and touches every protected root. The
+     interpreters are `python`, `pypy`, `perl`, `ruby`, `php` and `lua`
+     with any version after the name (`python3.14`, `perl5.36`), `node`
+     with a number (`node22`) and `nodejs`, `ipython`, `R`, `Rscript`,
+     `luajit` and `tclsh`, given no script operand, no code option (`-c`,
+     `-e`, `-r` ...) and no module or file option (`-m`, `-f`), or given
+     `-`, `/dev/stdin`, `/dev/fd/0` or `/proc/self/fd/0` as the script;
+     `deno` alone or `deno run` and `bun run` read the same way; `awk`,
+     `gawk`, `mawk` and `nawk` only with `-f` naming their input. `uv
+     run`, `poetry run`, `pipenv run`, `conda run`, `pdm run`, `hatch
+     run`, `rye run`, `pnpm exec`, `npx` and `bunx` are wrappers of the
+     program after them (their options skipped; a value given apart is
+     taken for the program). Another interpreter, or one under a name not
+     listed, is not judged so. Its input is shown only when it is a
+     quoted here-document, or one or a here-string with no expansion, and
+     no pipe: that text is tested as above.
+
+     The message text is tested as any other text when the line may make
+     `cat` or `git` run another program: it defines a function (`name()`
+     unquoted, or `function name`), runs `alias`, `hash`, `enable`,
+     `source`, `.` or `eval`, or assigns or exports `PATH`, anywhere in the
+     line or a line nested in it.
+     **Known over-block:** `echo pbip` and `printf` naming a root still
+     scan the tree, since their output can feed a pipe into an
+     interpreter.
 
      In pbipx a command that only lists names is left out of these tests:
      names are schema (principle 1), so it is allowed over a protected
@@ -1141,11 +1239,25 @@ hint of what to do instead:
 
 Programs are named only when they are in the gate's tables (a reader, a
 search, `git`'s own subcommands); a root is named from the policy. The
-hints are fixed sentences: for a finding in a report's selection, "Clear
-the selection in Power BI Desktop and save, or ask a person to run `pbipx
-scan` at a terminal."; for a search, "Name the files to search
+hints are fixed sentences, and lead with something the agent can do
+itself, keeping a person's step where only a person can act: for a Read of
+a finding in a report's selection, "Use `pbipx explain` for its
+structure; to clear the selection, ask a person to clear it in Power BI
+Desktop and save, or to run `pbipx scan` at a terminal."; for any other
+finding on a Read, "Use `pbipx explain` for its structure; to clear the
+value, ask a person to remove it in Power BI Desktop or an editor, or to
+run `pbipx scan` at a terminal."; for a search, "Name the files to search
 explicitly, or exclude the protected folders."; for git, "Limit the paths
-(`-- src`) or use --stat."
+(`-- src`) or use --stat."; for git given an argument the gate cannot
+expand, "Write git's arguments out in full, without variables or command
+substitutions.", followed for `commit` and `tag`, which read a message
+from standard input with `-F -`, by "`git <subcommand> -F - <<'EOF'`
+takes the message from a here-document." (for `notes`, "`git notes add
+-F - <<'EOF'`"; `git merge -F -` reads a file named `-`, and `stash` has
+no `-F`); for a PowerShell command, which the gate cannot read whatever
+the working directory, "Use the Read tool for a single file, or
+the Bash tool with the paths written out."; and for `agent-settings`,
+"Show the person the exact change, for them to make at a terminal."
 
 Gate reason classes: `finding`, `unvettable`, `scan-error`,
 `local-state`, `agent-settings` (pbipx only), `git-content`, `policy-error`,

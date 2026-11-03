@@ -44,17 +44,23 @@ func runMessages(t *testing.T, root string, cases []messageCase) {
 
 // The hints messages end with.
 const (
-	hintSearch    = "Name the files to search explicitly, or exclude the protected folders."
-	hintGit       = "Limit the paths (`-- src`) or use --stat."
-	hintSelect    = "Clear the selection in Power BI Desktop and save, or ask a person to run `pbipx scan` at a terminal."
-	hintCwd       = "Run it from outside the protected folders; use Read for a single file there."
-	hintNames     = "Leave the protected folders out of the command; use Read for a single file there."
-	hintExpand    = "Write the paths out in full, without variables or command substitutions."
-	hintPlain     = "Write the command out plainly, without building it at run time or nesting it more than 4 deep."
-	hintLister    = "Point find or fd away from the protected folders, or exclude them."
-	hintChange    = "Run the change on its own, then the read as a separate call."
-	hintOption    = "Drop that global option, or use --stat."
-	hintGitExpand = "Write git's arguments out in full, without variables or command substitutions."
+	hintSearch = "Name the files to search explicitly, or exclude the protected folders."
+	hintGit    = "Limit the paths (`-- src`) or use --stat."
+	hintSelect = "Use `pbipx explain` for its structure; to clear the selection, " +
+		"ask a person to clear it in Power BI Desktop and save, or to run `pbipx scan` at a terminal."
+	hintValue = "Use `pbipx explain` for its structure; to clear the value, " +
+		"ask a person to remove it in Power BI Desktop or an editor, or to run `pbipx scan` at a terminal."
+	hintSettings      = "Show the person the exact change, for them to make at a terminal."
+	hintPowerShell    = "Use the Read tool for a single file, or the Bash tool with the paths written out."
+	hintGitExpandNote = hintGitExpand + " `git commit -F - <<'EOF'` takes the message from a here-document."
+	hintCwd           = "Run it from outside the protected folders; use Read for a single file there."
+	hintNames         = "Leave the protected folders out of the command; use Read for a single file there."
+	hintExpand        = "Write the paths out in full, without variables or command substitutions."
+	hintPlain         = "Write the command out plainly, without building it at run time or nesting it more than 4 deep."
+	hintLister        = "Point find or fd away from the protected folders, or exclude them."
+	hintChange        = "Run the change on its own, then the read as a separate call."
+	hintOption        = "Drop that global option, or use --stat."
+	hintGitExpand     = "Write git's arguments out in full, without variables or command substitutions."
 )
 
 // The file the leaky tree's tree scans reach first.
@@ -71,6 +77,7 @@ func TestMessagesNameTheTrigger(t *testing.T) {
 		// A Read names the file and the finding, and the finding's hint.
 		{"read of a finding", read(leakVisual), gate.ReasonFinding,
 			[]string{leakVisual + " has a block finding (context slicer-selection; column student.full_name"}, hintSelect},
+		{"read of a value", read(leakNote), gate.ReasonFinding, []string{leakNote + " has a block finding"}, hintValue},
 		{"read of local state", read(localState), gate.ReasonLocalState, []string{localState + " is Power BI Desktop local state"}, ""},
 		{"grep tool over the root", gate.Event{Tool: gate.Search, Path: "pbip"}, gate.ReasonFinding,
 			[]string{"the search covers a path that is the protected root pbip, " + reached}, hintSearch},
@@ -162,6 +169,27 @@ func TestMessagesNameTheTrigger(t *testing.T) {
 		{"git unknown pathspec", sh("git diff -- $X"), gate.ReasonGitContent,
 			[]string{"git diff is given an argument the gate cannot expand", "could name a path in a protected root"},
 			hintGitExpand},
+
+		{"git commit with a message option's value unknown", sh(`git commit -Fm "$X"`), gate.ReasonGitContent,
+			[]string{"git commit is given, before --, an argument the gate cannot expand"}, hintGitExpandNote},
+		{"git notes add with a message option's value unknown", sh(`git notes add -Fm "$X"`), gate.ReasonGitContent,
+			[]string{"git notes is given, before --, an argument the gate cannot expand"},
+			hintGitExpand + " `git notes add -F - <<'EOF'` takes the message from a here-document."},
+		{"git merge with a message option's value unknown", sh(`git merge -Fm "$X" topic`), gate.ReasonGitContent,
+			[]string{"git merge is given, before --, an argument the gate cannot expand"}, "substitutions."},
+		{"git stash with an argument unknown", sh(`git stash $X`), gate.ReasonGitContent,
+			[]string{"git stash is given, before --, an argument the gate cannot expand"}, hintGitExpand},
+
+		// The gate cannot read PowerShell.
+		{"PowerShell", gate.Event{Tool: gate.PowerShell, Command: "Get-Date"}, gate.ReasonFinding,
+			[]string{"the gate cannot read a PowerShell command"}, hintPowerShell},
+
+		// Settings and the files that control the gate are a person's to
+		// change.
+		{"write of a settings file", gate.Event{Tool: gate.Write, Path: ".claude/settings.json"}, gate.ReasonAgentSettings,
+			[]string{"is a Claude Code settings file"}, hintSettings},
+		{"a command naming a settings file", sh("cp x .claude/settings.json"), gate.ReasonAgentSettings,
+			[]string{"names a Claude Code settings file"}, hintSettings},
 
 		// A read after a tree change names the change.
 		{"read after a switch", sh("git switch -d HEAD && cat README.md"), gate.ReasonGitContent,

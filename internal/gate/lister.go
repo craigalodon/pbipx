@@ -40,8 +40,12 @@ func lister(name string, rest []string) bool {
 // namesRootOutsideListers reports whether line names root as a whole word
 // (namesWord) anywhere but in the words of a command that only lists names:
 // in another command's words, in a command substitution or in a
-// here-document. A line that did not tokenize is read whole.
-func namesRootOutsideListers(line, root string) bool {
+// here-document. A line that did not tokenize is read whole. git's message
+// text (gitMessageText) is prose and is left out; the command
+// substitutions an unquoted here-document in it runs are still read. With
+// exempt false, as when the line may redefine cat or git, nothing is left
+// out.
+func namesRootOutsideListers(line, root string, exempt bool) bool {
 	if !namesWord(line, root) {
 		return false
 	}
@@ -49,12 +53,28 @@ func namesRootOutsideListers(line, root string) bool {
 		if c.fallback {
 			return true
 		}
-		for _, sub := range c.subs {
-			if namesRootOutsideListers(sub, root) {
+		msg := gitMessageText(c)
+		if !exempt {
+			msg = gitMessage{words: make([]bool, len(c.words)), subs: make([]bool, len(c.subs))}
+		}
+		for k, sub := range c.subs {
+			if msg.subs[k] {
+				if docRunsRoot(catHeredoc(sub), root, exempt) {
+					return true
+				}
+				continue
+			}
+			if namesRootOutsideListers(sub, root, exempt) {
 				return true
 			}
 		}
 		for _, doc := range c.docs {
+			if msg.docs {
+				if docRunsRoot(doc, root, exempt) {
+					return true
+				}
+				continue
+			}
 			if namesWord(doc.body, root) {
 				return true
 			}
@@ -62,10 +82,21 @@ func namesRootOutsideListers(line, root string) bool {
 		if name, rest := program(c.args()); lister(name, rest) {
 			continue
 		}
-		for _, wd := range c.words {
-			if namesWord(withoutSubs(wd), root) {
+		for i, wd := range c.words {
+			if !msg.words[i] && namesWord(withoutSubs(wd), root) {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// docRunsRoot reports whether a command substitution in the unquoted
+// here-document doc names root (namesRootOutsideListers).
+func docRunsRoot(doc *heredoc, root string, exempt bool) bool {
+	for _, sub := range doc.subs {
+		if namesRootOutsideListers(sub, root, exempt) {
+			return true
 		}
 	}
 	return false

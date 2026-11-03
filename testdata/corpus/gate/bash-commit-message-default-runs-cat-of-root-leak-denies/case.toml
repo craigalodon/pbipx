@@ -1,0 +1,6 @@
+description = "a command substitution in a ${...} default runs, so a commit message built from cat of a file under the protected root reads it; the tree is scanned and its finding denies"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]

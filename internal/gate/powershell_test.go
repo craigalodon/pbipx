@@ -164,6 +164,28 @@ func TestPowerShellGitHistory(t *testing.T) {
 		// A change to the tree, then a read.
 		{"checkout, then a read", ps("git checkout HEAD~1; Get-Content README.md"), git},
 		{"pull, then git status", ps("git pull; git status"), ""},
+		// A subexpression in git's own arguments runs before git.
+		{"merge, a message from a subexpression", ps(`git merge --no-ff -m "$(Get-Content msg.txt)" main`), ""},
+		{"stash push, a message from a subexpression", ps(`git stash push -m "$(Get-Content msg.txt)"`), ""},
+		{"merge, a message from a subexpression, then a read",
+			ps(`git merge -m "$(Get-Content msg.txt)" main; Get-Content README.md`), git},
+		{"merge, then a subexpression in a later statement", ps(`git merge main; Write-Output "$(Get-Content README.md)"`), git},
+		// -m clustered after short options that take no value.
+		{"commit -am, a message from a subexpression", ps(`git commit -am "$(Get-Content msg.txt)"`), ""},
+		{"commit -Fm of a variable", ps(`git commit -Fm "$x"`), git},
+		// An expansion outside double quotes may be an array: several
+		// arguments, which could be options.
+		{"commit -m of an unquoted variable", ps(`git commit -m $m`), git},
+		{"commit -m of an unquoted subexpression", ps(`git commit -m $(Get-Content f)`), git},
+		{"commit -m of an environment variable", ps(`git commit -m $env:MSG`), git},
+		{"commit -m of a group", ps(`git commit -m (Get-Content f)`), git},
+		{"commit -m of a splat", ps(`git commit -m @m`), git},
+		{"commit -m with one unquoted part", ps(`git commit -m "$m"$n`), git},
+		{"Start-Process, a message from a variable", ps(`Start-Process git -ArgumentList 'commit','-m',"$m"`), git},
+		{"commit -m of a quoted variable", ps(`git commit -m "$m"`), ""},
+		{"commit -m of a literal", ps(`git commit -m 'literal'`), ""},
+		{"commit -m of a here-string", ps("git commit -m @\"\n$m\n\"@"), ""},
+		{"commit -pm of a variable", ps(`git commit -pm "$x"`), git},
 
 		// A nested line shares the session of the line around it: a
 		// location change, an environment assignment or a change to the

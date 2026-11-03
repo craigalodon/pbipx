@@ -20,10 +20,13 @@ const maxPSGroups = 64
 // psWord is one word of a PowerShell statement: its text, as PowerShell
 // passes it to a program, and whether that text cannot be told (it holds
 // an expansion, an escape, a group or a splat), holds a quoted part, or is
-// joined to the word before it by a comma (an array).
+// joined to the word before it by a comma (an array). bare is set when an
+// expansion (a variable, a subexpression, a group or a splat) is outside
+// double quotes: its value may be an array, which PowerShell passes to a
+// program as several arguments.
 type psWord struct {
-	text                   string
-	unknown, quoted, comma bool
+	text                         string
+	unknown, quoted, comma, bare bool
 }
 
 // psStmt is one PowerShell statement: its words, after any assignment to
@@ -108,7 +111,7 @@ func (l *psLexer) end(x *psLexState) {
 func (l *psLexer) group(x *psLexState, open int, closeWith rune, depth int) {
 	if x.have || len(x.st.words) > 0 || x.st.call {
 		x.cur.WriteString("$()")
-		x.w.unknown, x.have = true, true
+		x.w.unknown, x.w.bare, x.have = true, true, true
 	}
 	l.i += open
 	l.block(closeWith, depth+1)
@@ -159,10 +162,10 @@ func (l *psLexer) block(closer rune, depth int) {
 			}
 			l.group(x, 2, closeWith, depth)
 			x.cur.WriteString("@()")
-			x.w.unknown, x.have = true, true
+			x.w.unknown, x.w.bare, x.have = true, true, true
 		case r == '@' && !x.have && (unicode.IsLetter(l.peek(1)) || l.peek(1) == '_'):
 			// A splat: the arguments a variable holds.
-			x.w.unknown, x.have = true, true
+			x.w.unknown, x.w.bare, x.have = true, true, true
 			x.cur.WriteRune(r)
 			l.i++
 		case r == '(':
@@ -275,12 +278,12 @@ func (l *psLexer) double(x *psLexState, depth int) {
 func (l *psLexer) variable(x *psLexState, depth int) {
 	if l.peek(1) == '(' {
 		x.cur.WriteString("$()")
-		x.w.unknown, x.have = true, true
+		x.w.unknown, x.w.bare, x.have = true, true, true
 		l.i += 2
 		l.block(')', depth+1)
 		return
 	}
-	x.w.unknown, x.have = true, true
+	x.w.unknown, x.w.bare, x.have = true, true, true
 	x.cur.WriteRune('$')
 	l.i++
 	if l.peek(0) == '{' {
@@ -718,7 +721,8 @@ func psStartProcess(args []psWord) (f psFound) {
 	var words []psWord
 	for _, e := range list {
 		if e.unknown {
-			words = append(words, psWord{text: e.text, unknown: true})
+			// Its value goes into the command line git splits.
+			words = append(words, psWord{text: e.text, unknown: true, bare: true})
 			continue
 		}
 		for _, t := range winFields(e.text) {
@@ -812,9 +816,13 @@ func psEnv(stmts []psStmt) []string {
 // psArgv is a git call's command line for gitContent, the line's
 // environment assignments first, and the words in it that cannot be told.
 // After --% (stop parsing) PowerShell passes the rest as written, expanding
-// %NAME%: a word holding % cannot be told.
-func psArgv(c psGitCall, env []string) (argv, unknown []string) {
+// %NAME%: a word holding % cannot be told. shapes says, for each of argv,
+// whether its value may be several arguments: an expansion outside double
+// quotes (psWord.bare), or %NAME% after --%, whose value the program's
+// command line splits. PowerShell does not expand globs for a program.
+func psArgv(c psGitCall, env []string) (argv, unknown []string, shapes []argShape) {
 	argv = append(slices.Clone(env), "git")
+	shapes = make([]argShape, len(argv))
 	stop := false
 	for _, w := range c.args {
 		if !w.quoted && w.text == "--%" {
@@ -822,11 +830,13 @@ func psArgv(c psGitCall, env []string) (argv, unknown []string) {
 			continue
 		}
 		argv = append(argv, w.text)
-		if w.unknown || stop && strings.Contains(w.text, "%") {
+		pct := stop && strings.Contains(w.text, "%")
+		shapes = append(shapes, argShape{splits: w.bare || pct})
+		if w.unknown || pct {
 			unknown = append(unknown, w.text)
 		}
 	}
-	return argv, unknown
+	return argv, unknown, shapes
 }
 
 // psJudge judges one git call: from the call's working directory, and when
@@ -834,7 +844,7 @@ func psArgv(c psGitCall, env []string) (argv, unknown []string) {
 // -WorkingDirectory), from each protected root and the repository's root
 // as well, as the Bash rule judges a working directory it cannot tell.
 func (s *setup) psJudge(c psGitCall, env []string, moved bool) *gitDenial {
-	argv, unknown := psArgv(c, env)
+	argv, unknown, shapes := psArgv(c, env)
 	dirs := []string{s.cwd}
 	if moved || c.moved {
 		dirs = append(dirs, s.repo.Root)
@@ -845,7 +855,7 @@ func (s *setup) psJudge(c psGitCall, env []string, moved bool) *gitDenial {
 	for _, d := range dirs {
 		in := *s
 		in.cwd = d
-		if g := in.gitContent(argv, unknown); g != nil {
+		if g := in.gitContent(argv, unknown, shapes); g != nil {
 			return g
 		}
 	}
@@ -855,7 +865,7 @@ func (s *setup) psJudge(c psGitCall, env []string, moved bool) *gitDenial {
 // psChanges is "git SUB" when a git call changes the working tree, as the
 // Bash rule reads it (treeChange), and "" otherwise.
 func (s *setup) psChanges(c psGitCall) string {
-	argv, unknown := psArgv(c, nil)
+	argv, unknown, _ := psArgv(c, nil)
 	inv, ok := parseGit(argv[1:], s.cwd)
 	switch {
 	case !ok:

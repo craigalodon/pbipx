@@ -33,6 +33,9 @@ type part struct {
 	// quoted is true for literal text that was quoted or escaped, where a
 	// glob character is literal.
 	quoted bool
+	// inDouble is true for an expansion inside double quotes, which the
+	// shell does not split into words.
+	inDouble bool
 }
 
 // word is one word of a simple command, with its quotes removed.
@@ -43,6 +46,10 @@ type word struct {
 	parts []part
 	// quoted is true when any part of the word was quoted or escaped.
 	quoted bool
+	// splits is true when an expansion in the word ($X, ${X}, $(...),
+	// backticks, $1) is outside double quotes: the shell splits its value
+	// into words, so the word may become several arguments.
+	splits bool
 	// redirect is true for a redirection's target, which is not an
 	// argument of the command.
 	redirect bool
@@ -81,6 +88,8 @@ type simple struct {
 	// fallback is true when the line it is in did not tokenize (unbalanced
 	// quotes, a trailing backslash): its words are only approximate.
 	fallback bool
+	// funcDef is true for the name of a function definition, name().
+	funcDef bool
 }
 
 // args is the command's words without redirection targets.
@@ -130,6 +139,8 @@ type tokenizer struct {
 	litBuf    strings.Builder
 	litOpen   bool
 	litQuoted bool
+	// inDouble is set while a double-quoted string is read.
+	inDouble bool
 	// pending are the here-documents whose bodies start after the next
 	// newline.
 	pending []pendingDoc
@@ -168,7 +179,20 @@ func (t *tokenizer) expansion(kind partKind, text, raw string) {
 	t.inWord = true
 	t.raw.WriteString(raw)
 	t.flushLit()
-	t.parts = append(t.parts, part{kind: kind, text: text, raw: raw})
+	t.parts = append(t.parts, part{kind: kind, text: text, raw: raw, inDouble: t.inDouble})
+}
+
+// splitsQuoted reports whether the expansion raw yields several words even
+// inside double quotes: "$@", "${@:2}", "${a[@]}", "${!p@}", "${!a[@]}".
+// Any ${...} holding @ is taken to. "$*" and "${*}" join into one word.
+func splitsQuoted(raw string) bool {
+	return raw == "$@" || strings.HasPrefix(raw, "${") && strings.Contains(raw, "@")
+}
+
+// globs reports whether the word holds a glob character outside quotes,
+// which the shell expands into the names it matches.
+func (w word) globs() bool {
+	return slices.ContainsFunc(w.parts, func(p part) bool { return p.kind == litPart && !p.quoted && hasGlob(p.text) })
 }
 
 // dropWord forgets the word being read.
@@ -183,8 +207,11 @@ func (t *tokenizer) dropWord() {
 func (t *tokenizer) endWord() {
 	t.flushLit()
 	if t.inWord {
+		splits := slices.ContainsFunc(t.parts, func(p part) bool {
+			return (p.kind == paramPart || p.kind == opaquePart) && (!p.inDouble || splitsQuoted(p.raw))
+		})
 		t.cur.words = append(t.cur.words, word{
-			text: t.raw.String(), parts: t.parts, quoted: t.quoted,
+			text: t.raw.String(), parts: t.parts, quoted: t.quoted, splits: splits,
 			redirect: t.redirect, input: t.redirect && t.input, here: t.redirect && t.here,
 		})
 		t.redirect, t.input, t.here = false, false, false
@@ -192,6 +219,30 @@ func (t *tokenizer) endWord() {
 	t.raw.Reset()
 	t.parts = nil
 	t.inWord, t.quoted = false, false
+}
+
+// definesFunction reports whether the "(" at i, after a command of one
+// word (the name, of any characters), opens "()": a function definition,
+// name() or name ( ).
+func (t *tokenizer) definesFunction(i int) bool {
+	words := len(t.cur.words)
+	if t.inWord {
+		words++
+	}
+	if words != 1 || t.redirect || (t.inWord && strings.HasSuffix(t.raw.String(), "=")) {
+		// a=() is an empty array.
+		return false
+	}
+	for j := i + 1; j < len(t.rs); j++ {
+		switch t.rs[j] {
+		case ' ', '\t':
+			continue
+		case ')':
+			return true
+		}
+		return false
+	}
+	return false
 }
 
 func (t *tokenizer) endCommand() {
@@ -221,6 +272,10 @@ func tokenize(line string) (cmds []simple, ok bool) {
 				i = t.bodies(i+1) - 1
 			}
 		case '(', ')':
+			if c == '(' && t.definesFunction(i) {
+				t.endWord()
+				t.cur.funcDef = true
+			}
 			t.endCommand()
 		case ';':
 			t.endCommand()
@@ -507,6 +562,8 @@ func bodySubs(rs []rune) []string {
 func (t *tokenizer) double(i int) (int, bool) {
 	rs := t.rs
 	t.lit("", true)
+	t.inDouble = true
+	defer func() { t.inDouble = false }()
 	for ; i < len(rs); i++ {
 		switch rs[i] {
 		case '"':
@@ -596,6 +653,9 @@ func (t *tokenizer) dollar(i int) (int, bool) {
 		if isName(inner) {
 			t.expansion(paramPart, inner, string(rs[i:end+1]))
 		} else {
+			// ${X:-$(cmd)} runs cmd: the substitutions in the body,
+			// nested ${...} included, are the command's own.
+			t.cur.subs = append(t.cur.subs, bodySubs([]rune(inner))...)
 			t.expansion(opaquePart, "", string(rs[i:end+1]))
 		}
 		return end, true
@@ -790,10 +850,12 @@ func splitFields(line string) []simple {
 		f.Reset()
 		quoted := strings.ContainsAny(w, `'"\`)
 		parts := []part{{kind: litPart, text: w, quoted: quoted}}
-		if strings.ContainsAny(w, "$`") {
+		splits := strings.ContainsAny(w, "$`")
+		if splits {
+			// Where the quotes are cannot be told: it may split.
 			parts = append(parts, part{kind: opaquePart, raw: ""})
 		}
-		cur.words = append(cur.words, word{text: w, parts: parts, quoted: quoted})
+		cur.words = append(cur.words, word{text: w, parts: parts, quoted: quoted, splits: splits})
 	}
 	endCommand := func(nextPipe bool) {
 		endWord()
@@ -972,6 +1034,148 @@ var shells = map[string]bool{
 	"yash": true, "fish": true, "rbash": true, "pdksh": true, "posh": true, "tcsh": true, "csh": true,
 }
 
+// interpreter is how the gate reads a script interpreter's command line:
+// the options that give it its program as text (code), or name a module
+// or file it runs (runs), each with the program attached or as the next
+// word, and the other options that take the next word as a value.
+type interpreter struct {
+	code, runs, values []string
+}
+
+// interpreters are the script interpreters that read their program from
+// their input when given no program: no script operand and no code
+// option, or their input as the script (stdinScripts). A versioned name
+// (python3.14, perl5.36, node22) is its family's (interpreterFamily).
+var interpreters = map[string]interpreter{
+	"python": {code: []string{"-c"}, runs: []string{"-m"}, values: []string{"-W", "-X", "-Q"}},
+	"ipython": {code: []string{"-c"}, runs: []string{"-m"},
+		values: []string{"--profile", "--ipython-dir", "--log-level", "--config"}},
+	"node": {code: []string{"-e", "--eval", "-p", "--print"},
+		values: []string{"-r", "--require", "--import", "--input-type", "--loader", "--experimental-loader", "--title"}},
+	"perl":    {code: []string{"-e", "-E"}, values: []string{"-I", "-M", "-m", "-x"}},
+	"ruby":    {code: []string{"-e"}, values: []string{"-r", "-I", "-C", "-E", "--encoding"}},
+	"php":     {code: []string{"-r", "-R", "-B", "-E"}, runs: []string{"-f"}, values: []string{"-d", "-c", "-z"}},
+	"R":       {code: []string{"-e"}, runs: []string{"-f", "--file"}, values: []string{"--encoding"}},
+	"Rscript": {code: []string{"-e"}},
+	"lua":     {code: []string{"-e"}, values: []string{"-l"}},
+	"luajit":  {code: []string{"-e"}, values: []string{"-l", "-b", "-j", "-O"}},
+	"tclsh":   {},
+	"deno":    {},
+	"bun":     {code: []string{"-e", "--eval", "-p", "--print"}},
+}
+
+// interpreterFamily is the name interpreters knows the program name by: a
+// version after the name is dropped (python3.14 is python, pypy3 is
+// python, perl5.36 is perl, node22 and nodejs are node, lua5.4 is lua).
+func interpreterFamily(name string) string {
+	if _, ok := interpreters[name]; ok {
+		return name
+	}
+	for _, f := range []string{"python", "pypy", "perl", "ruby", "php", "lua", "node", "tclsh"} {
+		rest, ok := strings.CutPrefix(name, f)
+		if !ok || strings.Trim(rest, "0123456789.") != "" && (f != "node" || rest != "js") {
+			continue
+		}
+		if f == "pypy" {
+			return "python"
+		}
+		return f
+	}
+	return name
+}
+
+// stdinScripts are the script operands that name the program's input.
+var stdinScripts = []string{"-", "/dev/stdin", "/dev/fd/0", "/proc/self/fd/0"}
+
+// awks are the awk programs: one reads its program from its input with -f
+// and a name of its input (stdinScripts).
+var awks = map[string]bool{"awk": true, "gawk": true, "mawk": true, "nawk": true, "busybox-awk": true}
+
+// readsProgram reports whether interpreter name, given rest, reads its
+// program from its input: its input named as the script, or no script
+// operand, no code option and no module. deno and bun read it so after
+// their run subcommand (deno alone too); awk only with -f naming its
+// input. A request for the version or help reads nothing.
+func readsProgram(name string, rest []string) bool {
+	if awks[name] {
+		for i, a := range rest {
+			switch {
+			case a == "--":
+				return false
+			case a == "-f" || a == "--file":
+				if i+1 < len(rest) && slices.Contains(stdinScripts, rest[i+1]) {
+					return true
+				}
+			case strings.HasPrefix(a, "-f") && slices.Contains(stdinScripts, a[2:]),
+				strings.HasPrefix(a, "--file=") && slices.Contains(stdinScripts, a[len("--file="):]):
+				return true
+			}
+		}
+		return false
+	}
+	name = interpreterFamily(name)
+	in, ok := interpreters[name]
+	if !ok || (len(rest) > 0 && versionOnly(rest)) {
+		return false
+	}
+	switch name {
+	case "deno":
+		if len(rest) == 0 {
+			return true // the REPL reads its input
+		}
+		if rest[0] != "run" {
+			return false
+		}
+		rest = rest[1:]
+	case "bun":
+		if len(rest) > 0 && rest[0] == "run" {
+			rest = rest[1:]
+		} else if len(rest) == 0 || !slices.Contains(stdinScripts, rest[0]) {
+			return false
+		}
+	}
+	matches := func(a string, opts []string) (bool, bool) {
+		for _, o := range opts {
+			switch {
+			case a == o:
+				return true, false
+			case strings.HasPrefix(a, o+"="), !strings.HasPrefix(o, "--") && strings.HasPrefix(a, o) && len(a) > len(o):
+				return true, true
+			}
+		}
+		return false, false
+	}
+	for i := 0; i < len(rest); i++ {
+		a := rest[i]
+		switch {
+		case slices.Contains(stdinScripts, a):
+			return true
+		case a == "--":
+			return i+1 >= len(rest) || slices.Contains(stdinScripts, rest[i+1])
+		case !strings.HasPrefix(a, "-"):
+			return false // the script
+		}
+		if ok, _ := matches(a, in.code); ok {
+			return false
+		}
+		if ok, _ := matches(a, in.runs); ok {
+			return false
+		}
+		if ok, attached := matches(a, in.values); ok && !attached {
+			i++
+		}
+	}
+	return true
+}
+
+// runners are the programs that run the program named after a subcommand
+// (uv run python, pnpm exec node) or after their own options (npx node):
+// command reads them as wrappers.
+var runners = map[string]string{
+	"uv": "run", "poetry": "run", "pipenv": "run", "conda": "run", "pnpm": "exec", "npx": "",
+	"bunx": "", "pdm": "run", "hatch": "run", "rye": "run",
+}
+
 // stripKeywords drops the reserved words and grouping tokens a command
 // starts with, and `function NAME`. A for, select or case runs nothing of
 // its own: nil.
@@ -1008,6 +1212,20 @@ func command(args []string) (name string, rest []string, under []string) {
 			continue
 		}
 		base := progName(w)
+		if sub, ok := runners[base]; ok && (sub == "" || i+1 < len(args) && args[i+1] == sub) {
+			// uv run [options] PROGRAM ...: options are skipped, a value
+			// given apart is taken for the program (a missed rule only
+			// when that value is itself a program the rules judge).
+			under = append(under, base)
+			i++
+			if sub != "" {
+				i++
+			}
+			for i < len(args) && strings.HasPrefix(args[i], "-") {
+				i++
+			}
+			continue
+		}
 		wr, ok := wrappers[base]
 		if !ok {
 			if !inert[base] && !judged(base) {

@@ -66,7 +66,7 @@ func TestNamesRootOutsideListers(t *testing.T) {
 		{"wc -c pbip", true},
 		{"ls sql", false},
 	} {
-		if got := namesRootOutsideListers(tc.line, "pbip"); got != tc.want {
+		if got := namesRootOutsideListers(tc.line, "pbip", true); got != tc.want {
 			t.Errorf("namesRootOutsideListers(%q) = %v, want %v", strings.ReplaceAll(tc.line, "\n", `\n`), got, tc.want)
 		}
 	}

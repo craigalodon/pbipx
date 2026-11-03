@@ -475,6 +475,82 @@ func TestShellTreeChangeThenRead(t *testing.T) {
 		{"restore --staged then read", shIn("sql", "git restore --staged x && cat clean.sql"), "", ""},
 		{"apply --check then read", shIn("sql", "git apply --check p.diff && cat clean.sql"), "", ""},
 		{"tar -c then read", shIn("sql", "tar -cf /tmp/a.tar . && cat clean.sql"), "", ""},
+
+		// A command substitution in the change's own words, or in its
+		// here-documents, runs before the change.
+		{"merge with a message from a here-document",
+			shIn("sql", "git merge --no-ff -m \"$(cat <<'EOF'\nMerge topic\nEOF\n)\" main"), "", ""},
+		{"stash push with a message from a here-document",
+			shIn("sql", "git stash push -m \"$(cat <<'EOF'\nWork in progress\nEOF\n)\""), "", ""},
+		{"a read in the change's own substitution", shIn("sql", `git merge -m "$(cat clean.sql)" topic`), "", ""},
+		{"a read in the change's own backticks", shIn("sql", "git merge -m \"`head -1 clean.sql`\" topic"), "", ""},
+		{"a read in the change's own here-document", shIn("sql", "git am <<EOF\n$(cat clean.sql)\nEOF"), "", ""},
+		// Anything after the change still counts.
+		{"a here-document message, then a read",
+			shIn("sql", "git merge -m \"$(cat <<'EOF'\nMerge topic\nEOF\n)\" main && cat clean.sql"),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a substitution in a later command", shIn("sql", `git merge topic && echo "$(cat clean.sql)"`),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a process substitution of the change", shIn("sql", "git merge topic <(cat clean.sql)"),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a process substitution of the change, output", shIn("sql", "git merge topic >(cat clean.sql)"),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a change inside the substitution, then a read", shIn("sql", `git commit -m "$(git checkout old; cat clean.sql)"`),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a change in a substitution, then the command reads", shIn("sql", `cat clean.sql "$(git checkout old)"`),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+	})
+}
+
+// TestShellInterpreterStdin: a script interpreter reading its program from
+// its input runs a script built at run time, as a shell reading a pipe
+// does: it touches every root.
+func TestShellInterpreterStdin(t *testing.T) {
+	isolateSearch(t)
+	runBoth(t, []both{
+		{"a commit message run by python3",
+			sh("git commit -q --allow-empty -m \"$(cat <<'EOF'\nprint(open(\"pbip/x\").read())\nEOF\n)\" && git log -1 --format=%B | python3"),
+			"", gate.ReasonFinding},
+		{"a -F - message run by python3",
+			sh("git commit -q --allow-empty -F - <<'EOF'\nprint(open(\"pbip/x\").read())\nEOF\ngit log -1 --format=%B | python3"),
+			"", gate.ReasonFinding},
+		{"python3 - from a pipe", shIn("sql", "git log -1 --format=%B | python3 -"), "", gate.ReasonFinding},
+		{"node from a pipe", shIn("sql", "cat clean.sql | node"), "", gate.ReasonFinding},
+		{"perl from a file", shIn("sql", "perl < clean.sql"), "", gate.ReasonFinding},
+		{"ruby from a process substitution", shIn("sql", "ruby < <(git log -1 --format=%B)"), "", gate.ReasonFinding},
+		{"python3 with options, from a pipe", shIn("sql", "echo x | python3 -u -W ignore"), "", gate.ReasonFinding},
+		{"python3 of a here-document with an expansion", shIn("sql", "python3 <<EOF\n$X\nEOF"), "", gate.ReasonFinding},
+
+		{"a versioned python from a pipe", shIn("sql", "git log -1 --format=%B | python3.14"), "", gate.ReasonFinding},
+		{"a versioned perl from a pipe", shIn("sql", "echo x | perl5.36"), "", gate.ReasonFinding},
+		{"node22 from a pipe", shIn("sql", "echo x | node22"), "", gate.ReasonFinding},
+		{"python3 /dev/stdin", shIn("sql", "echo x | python3 /dev/stdin"), "", gate.ReasonFinding},
+		{"perl /dev/stdin", shIn("sql", "echo x | perl /dev/stdin"), "", gate.ReasonFinding},
+		{"node /dev/fd/0", shIn("sql", "echo x | node /dev/fd/0"), "", gate.ReasonFinding},
+		{"ruby /proc/self/fd/0", shIn("sql", "echo x | ruby /proc/self/fd/0"), "", gate.ReasonFinding},
+		{"awk -f /dev/stdin", shIn("sql", "echo x | awk -f /dev/stdin clean.sql"), "", gate.ReasonFinding},
+		{"gawk -f -", shIn("sql", "echo x | gawk -f - clean.sql"), "", gate.ReasonFinding},
+		{"uv run python", shIn("sql", "echo x | uv run python"), "", gate.ReasonFinding},
+		{"poetry run python3", shIn("sql", "echo x | poetry run python3"), "", gate.ReasonFinding},
+		{"npx node", shIn("sql", "echo x | npx node"), "", gate.ReasonFinding},
+		{"pnpm exec node", shIn("sql", "echo x | pnpm exec node"), "", gate.ReasonFinding},
+		{"ipython", shIn("sql", "echo x | ipython"), "", gate.ReasonFinding},
+		{"R --no-save", shIn("sql", "echo x | R --no-save"), "", gate.ReasonFinding},
+		{"deno run -", shIn("sql", "echo x | deno run -"), "", gate.ReasonFinding},
+		{"bun run -", shIn("sql", "echo x | bun run -"), "", gate.ReasonFinding},
+
+		{"awk of a program", shIn("sql", "echo x | awk '{print}'"), "", ""},
+		{"awk -f of a file", shIn("sql", "echo x | awk -f prog.awk"), "", ""},
+		{"uv run of a script", shIn("sql", "uv run python build.py"), "", ""},
+		{"deno run of a script", shIn("sql", "deno run main.ts"), "", ""},
+		{"R -f of a script", shIn("sql", "R --no-save -f build.R"), "", ""},
+		{"python3 of a script", shIn("sql", "python3 build.py"), "", ""},
+		{"python3 -c", shIn("sql", "python3 -c 'print(1)'"), "", ""},
+		{"python3 -m", shIn("sql", "echo x | python3 -m json.tool"), "", ""},
+		{"node -e", shIn("sql", "node -e 'console.log(1)'"), "", ""},
+		{"perl -ne over a pipe", shIn("sql", "echo x | perl -ne 'print'"), "", ""},
+		{"python3 --version", shIn("sql", "python3 --version"), "", ""},
+		{"python3 of a quoted here-document", shIn("sql", "python3 - <<'EOF'\nprint(1)\nEOF"), "", ""},
 	})
 }
 
@@ -629,4 +705,80 @@ func TestShellExeNames(t *testing.T) {
 		run(t, root, []decideCase{{"GIT.EXE log -p", sh("GIT.EXE log -p"), gitWant}})
 		restore()
 	}
+}
+
+// TestShellGitMessageText: a protected root's name in git's message text
+// (-m, --message, or a here-document read by -F -) is prose, not a path,
+// and is left out of the root-name tests. Every other word of the line,
+// and text a program reads as code, is tested as before.
+func TestShellGitMessageText(t *testing.T) {
+	isolateSearch(t)
+	body := " git commit --allow-empty -m \"$(cat <<'EOF'\nhead -c 100 pbip/x >&2\nEOF\n)\""
+	runBoth(t, []both{
+		// cat, or git, may not be the program it names: then a message is
+		// not text.
+		{"cat redefined as a function", sh("cat() { sh; };" + body), "", gate.ReasonFinding},
+		{"cat hashed to a shell", sh("hash -p /bin/sh cat;" + body), "", gate.ReasonFinding},
+		{"cat aliased to a shell", sh("shopt -s expand_aliases; alias cat=sh;" + body), "", gate.ReasonFinding},
+		{"PATH assigned", sh("PATH=/tmp/x:$PATH;" + body), "", gate.ReasonFinding},
+		{"PATH exported", sh("export PATH=/tmp/x:$PATH;" + body), "", gate.ReasonFinding},
+		{"a script sourced", sh(". ./env.sh;" + body), "", gate.ReasonFinding},
+		{"git redefined as a function", sh(`git() { sh -c "$3"; }; git commit -m 'cat pbip/x'`), "", gate.ReasonFinding},
+		{"a function named in a message", sh(`git commit -m "Fix f() in the parser"`), "", ""},
+		// A substitution in ${...} runs, and is judged as any other.
+		{"-m of ${...} holding a cat of the root", sh(`git commit --allow-empty -m "${X:-$(cat pbip/x)}"`), "", gate.ReasonFinding},
+		{"-m of ${...} holding backticks that cat the root", sh("git commit --allow-empty -m \"${X:-`cat pbip/x`}\""), "", gate.ReasonFinding},
+		{"-m of nested ${...} holding a cat of the root", sh(`git commit -m "${X:-${Y:-$(cat pbip/x)}}"`), "", gate.ReasonFinding},
+		{"a reader given ${...} holding a cat of the root", sh(`cat "${X:-$(cat pbip/x)}"`), "", gate.ReasonFinding},
+		{"echo of ${...} holding a cat of the root", sh(`echo "${X:-$(cat pbip/x)}"`), "", gate.ReasonFinding},
+		{"arithmetic holding a cat of the root", sh(`echo $(( $(cat pbip/x | wc -l) + 1 ))`), "", gate.ReasonFinding},
+		{"a here-document's ${...} holding a cat of the root", sh("git commit -F - <<EOF\n${X:-$(cat pbip/x)}\nEOF"), "", gate.ReasonFinding},
+		// A here-string read by -F - is the message.
+		{"-F- of a here-string naming the root", sh(`git commit -F- <<<"Leave pbip alone"`), "", ""},
+		{"--file=- of a here-string naming the root", sh(`git commit --file=- <<< 'Leave pbip alone'`), "", ""},
+		{"merge -F - of a here-document naming the root (merge reads no message from -)",
+			sh("git merge -F - topic <<'EOF'\nLeave pbip alone\nEOF"), "", gate.ReasonFinding},
+		{"a here-string to git without -F -", sh(`git commit -F msg.txt <<<"pbip"`), "", gate.ReasonFinding},
+		{"-m of a here-document naming the root",
+			sh("git commit -m \"$(cat <<'EOF'\nNote a check\n\nThis leaves pbip/ alone.\nEOF\n)\""), "", ""},
+		{"-m of an unquoted here-document naming the root",
+			sh("git commit -m \"$(cat <<EOF\nNote a check\n\nThis leaves pbip/ alone.\nEOF\n)\""), "", ""},
+		{"-F - of a here-document naming the root",
+			sh("git commit -F - <<'EOF'\nNote a check\n\nThis leaves pbip/ alone.\nEOF"), "", ""},
+		{"--file=- of a here-document naming the root",
+			sh("git commit --file=- <<'EOF'\nLeave pbip alone\nEOF"), "", ""},
+		{"--file - of a here-document naming the root",
+			sh("git commit -a --file - <<'EOF'\nLeave pbip alone\nEOF"), "", ""},
+		{"-aF- of a here-document naming the root",
+			sh("git commit -aF- <<'EOF'\nLeave pbip alone\nEOF"), "", ""},
+		{"-F - of an unquoted here-document running a cat of the root",
+			sh("git commit -F - <<EOF\n$(cat pbip/x)\nEOF"), "", gate.ReasonFinding},
+		{"-m naming the root", sh(`git commit -m "Leave pbip alone"`), "", ""},
+		{"-m of the root's path", sh(`git commit -m pbip/`), "", ""},
+		{"-am naming the root", sh(`git commit -am "Leave pbip alone"`), "", ""},
+		{"-m attached naming the root", sh(`git commit "-mLeave pbip alone"`), "", ""},
+		{"--message= naming the root", sh(`git commit --message="Leave pbip alone"`), "", ""},
+		{"merge -m naming the root", sh(`git merge -m "Merge the pbip change" topic`), "", ""},
+		{"tag -m naming the root", sh(`git tag -a v1 -m "pbip release"`), "", ""},
+
+		// The rest of the line is tested as before.
+		{"a pathspec naming the root", sh(`git commit -m "Leave pbip alone" -- pbip`), "", gate.ReasonFinding},
+		{"-Fm: m is the file, the next word a pathspec", sh(`git commit -Fm pbip`), "", gate.ReasonFinding},
+		{"a log -m naming the root", sh(`git log -m pbip`), "", gate.ReasonFinding},
+		{"a cat of the root in the message", sh(`git commit -m "$(cat pbip/x)"`), "", gate.ReasonFinding},
+		{"a cat of the root in the message's here-document",
+			sh("git commit -m \"$(cat <<EOF\n$(cat pbip/x)\nEOF\n)\""), "", gate.ReasonFinding},
+		{"a here-document read by another program in the message",
+			sh("git commit -m \"$(python3 <<'EOF'\nopen('pbip/x')\nEOF\n)\""), "", gate.ReasonFinding},
+		{"git under xargs, reading a here-document", sh("xargs git commit -F - <<'EOF'\npbip\nEOF"), "", gate.ReasonFinding},
+		{"git under a wrapper, a message naming the root", sh(`nice git commit -m "Leave pbip alone"`), "", gate.ReasonFinding},
+		{"a here-document to git without -F -", sh("git commit -F msg.txt <<'EOF'\npbip\nEOF"), "", gate.ReasonFinding},
+		{"another command after the commit", sh(`git commit -m "Leave pbip alone" && cat pbip/x`), "", gate.ReasonFinding},
+		{"python3 -c naming the root", sh(`python3 -c "open('pbip/x')"`), "", gate.ReasonFinding},
+		{"python3 reading a here-document naming the root", sh("python3 - <<'EOF'\nopen('pbip/x')\nEOF"), "", gate.ReasonFinding},
+		{"a here-document piped to an interpreter", sh("cat <<'EOF' | python3\nopen('pbip/x')\nEOF"), "", gate.ReasonFinding},
+		// A known over-block: echo and printf can feed an interpreter.
+		{"echo naming the root", sh("echo pbip"), "", gate.ReasonFinding},
+		{"printf naming the root", sh("printf '%s\\n' pbip"), "", gate.ReasonFinding},
+	})
 }
