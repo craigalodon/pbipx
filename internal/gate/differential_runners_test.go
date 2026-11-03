@@ -14,7 +14,7 @@ func init() {
 		"find . -type f",
 		"printf '%s\\n' " + leakVisual,
 	}
-	readers := []string{"cat", "head -1", "jq ."}
+	readers := []string{"cat", "head -1", "jq .", "shuf", "nl"}
 	var out []string
 	for _, p := range producers {
 		for _, r := range readers {
@@ -34,6 +34,10 @@ func init() {
 	}
 	for _, p := range producers {
 		out = append(out,
+			p+" | xargs echo cat | sh",
+			p+" | xargs -n1 printf 'cat %s\\n' | bash",
+			p+" | while read f; do shuf \"$f\"; done",
+			"for f in $("+p+"); do nl \"$f\"; done",
 			p+" | xargs -I{} sh -c 'while IFS= read -r l; do cat; done < {}'",
 			p+" | xargs -I{} sh -c 'exec 3< {}; cat <&3'",
 		)

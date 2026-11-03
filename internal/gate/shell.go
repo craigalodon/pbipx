@@ -3073,6 +3073,9 @@ func (s *setup) gitRule(v view) *gitDenial {
 		in := *s
 		in.cwd = d
 		if g := in.gitContent(v.argv, unknown, v.argvShapes); g != nil {
+			if slices.Contains(unknown, "\x00stdin") && feedOf(v.argv, v.argvKnown).runner != "" {
+				g.hint += " Under xargs or parallel, put -- before the input words (xargs git add --)."
+			}
 			return g
 		}
 	}

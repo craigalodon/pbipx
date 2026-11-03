@@ -1,6 +1,7 @@
 package gate_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/craigalodon/pbipx/internal/gate"
@@ -37,6 +38,18 @@ func TestShellRunnerNamesAsWords(t *testing.T) {
 		run(t, clean, []decideCase{{"clean: " + l, sh(l), reason}})
 		run(t, leaky, []decideCase{{"leaky: " + l, sh(l), reason}})
 	}
+	// git under xargs: input words after -- are pathspecs, and the hint
+	// says so.
+	for _, l := range []string{`git diff --name-only | xargs git add`, `git diff --name-only | xargs git rm --cached`} {
+		d := gate.Decide(gate.Event{Tool: gate.Shell, Command: l, Cwd: clean}, gate.Options{})
+		if d.Allow || !strings.Contains(d.Message, "xargs git add --") {
+			t.Errorf("%q: %v %q, want a denial with the hint", l, d.Allow, d.Message)
+		}
+	}
+	run(t, leaky, []decideCase{
+		{"xargs git add --", sh(`git diff --name-only | xargs git add --`), ""},
+		{"xargs git restore --staged --", sh(`git diff --name-only | xargs git restore --staged --`), ""},
+	})
 	// A runner as a wrapper or the program is still one.
 	run(t, leaky, []decideCase{
 		{"xargs as the program", sh(`git ls-files | xargs cat`), gate.ReasonFinding},
