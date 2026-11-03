@@ -52,6 +52,17 @@ tools). Content that reaches the agent without such a call passes it by:
 - **A tool the matcher does not name**: a built-in tool added to Claude
   Code after the installed pbipx, or a hook registered by an earlier pbipx
   with a narrower matcher until `pbipx init` is re-run.
+- **What a tool checks before its hook runs.** Claude Code validates a
+  tool call's input before PreToolUse hooks run, and for Edit that
+  validation reads the file: an Edit of a file the gate would refuse to
+  Read can come back with "Found N matches of the string to replace"
+  without the gate seeing the call, which tells the agent whether a string
+  occurs in the file. Claude Code's documentation places a `Read` deny rule
+  before Edit's checks, and a `Read` deny rule also blocks Edit and Write
+  on its paths. So a repository that needs this closed can add
+  `"deny": ["Read(<root>/**)"]` for each protected root (`//` for an
+  absolute path), at the cost of the agent no longer reading or editing
+  clean files there either.
 - **PowerShell that builds a path at run time.** The gate cannot parse
   PowerShell; it scans the whole protected tree of each adopted repository
   a call reaches, but it finds those repositories from the working
