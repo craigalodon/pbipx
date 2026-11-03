@@ -1520,9 +1520,9 @@ const (
 // The hints a refusal ends with: one short thing to do instead.
 const (
 	hintSearch = "Name the files to search explicitly, or exclude the protected folders."
-	hintCwd    = "Run it from outside the protected folders; use Read for a single file there."
-	hintNames  = "Leave the protected folders out of the command; use Read for a single file there."
-	hintExpand = "Write the paths out in full, without variables or command substitutions."
+	hintCwd    = "Run it from outside the protected folders; use `pbipx explain` for the structure of what is in them."
+	hintNames  = "Leave the protected folders out of the command; use `pbipx explain` for the structure of what is in them."
+	hintExpand = "Write the paths out in full, without variables or command substitutions; files in the protected folders stay unreadable while they hold findings."
 	hintPlain  = "Write the command out plainly, without building it at run time or nesting it more than 4 deep."
 	hintOther  = "Run the command in bash directly, with its paths written out."
 	hintLister = "Point find or fd away from the protected folders, or exclude them."
