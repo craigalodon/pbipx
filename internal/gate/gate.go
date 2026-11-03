@@ -34,6 +34,10 @@ const (
 	Search Tool = "search" // searches the files under a path
 	Shell  Tool = "shell"  // runs a shell command line
 	Write  Tool = "write"  // creates or changes one file
+	// Edit changes one file and shows the model a snippet of it around the
+	// change (Edit, MultiEdit, NotebookEdit): judged as a Read of the file
+	// and as a Write.
+	Edit Tool = "edit"
 	// PowerShell runs a PowerShell command line, which the gate cannot
 	// parse (powershell.go).
 	PowerShell Tool = "powershell"
@@ -169,6 +173,12 @@ func (s *setup) decide(ev Event) Decision {
 	case Shell:
 		return s.shell(ev.Command)
 	case Write:
+		return s.write(ev.Path)
+	case Edit:
+		// The result shows the file around the edit: a read.
+		if d := s.read(ev.Path); !d.Allow {
+			return d
+		}
 		return s.write(ev.Path)
 	case PowerShell:
 		return s.powershell(ev.Command)

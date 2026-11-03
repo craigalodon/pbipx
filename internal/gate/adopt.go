@@ -309,7 +309,7 @@ func (f *finder) spots() (spots []spot, unknown bool) {
 	}
 	addAll(spellings(ev.Cwd, "."), false)
 	switch ev.Tool {
-	case Read, Write:
+	case Read, Write, Edit:
 		if ev.Path != "" {
 			addAll(spellings(ev.Cwd, expandHome(ev.Path, f.home)), false)
 		}
@@ -413,7 +413,7 @@ func (w *walker) probeIn(st cwdState, p string) {
 func (f *finder) controls() Decision {
 	ctl := loadControls()
 	switch f.ev.Tool {
-	case Write:
+	case Write, Edit:
 		if f.ev.Path == "" {
 			break
 		}

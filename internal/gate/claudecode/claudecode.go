@@ -47,6 +47,7 @@ const (
 	toolSearch gate.Tool = "search"
 	toolShell  gate.Tool = "shell"
 	toolWrite  gate.Tool = "write"
+	toolEdit   gate.Tool = "edit"
 	toolPS     gate.Tool = "powershell"
 	toolLSP    gate.Tool = "lsp"
 	toolOther  gate.Tool = "other"
@@ -88,8 +89,9 @@ func Deny(reason, message string) gate.Decision {
 //     is not a string, or an input that is not an object, is errEvent. With
 //     no path the gate takes the call to touch the working directory's
 //     whole project.
-//   - Write, Edit and MultiEdit are a write of tool_input.file_path, and
-//     NotebookEdit a write of tool_input.notebook_path, or file_path when
+//   - Write is a write of tool_input.file_path; Edit and MultiEdit are an
+//     edit of it (a write, and a read: the result shows a snippet), and
+//     NotebookEdit an edit of tool_input.notebook_path, or file_path when
 //     there is none; a NotebookEdit with neither is errEvent.
 //   - Every other tool is "other", Glob included: it prints file names, and
 //     names are schema (principle 1). behavior.md lists Read, Grep, Bash,
@@ -142,8 +144,12 @@ func ParseEvent(data []byte) (gate.Event, error) {
 	case "Bash":
 		ev.Tool = toolShell
 		ev.Command, err = field("command")
-	case "Write", "Edit", "MultiEdit":
+	case "Write":
 		ev.Tool = toolWrite
+		ev.Path, err = field("file_path")
+	case "Edit", "MultiEdit":
+		// The result shows a snippet of the file around the edit.
+		ev.Tool = toolEdit
 		ev.Path, err = field("file_path")
 	case "PowerShell":
 		ev.Tool = toolPS
@@ -155,7 +161,7 @@ func ParseEvent(data []byte) (gate.Event, error) {
 		ev.Tool = toolLSP
 		ev.Paths, err = lspPaths(raw.ToolInput)
 	case "NotebookEdit":
-		ev.Tool = toolWrite
+		ev.Tool = toolEdit
 		ev.Path, err = field("notebook_path")
 		if err == nil && ev.Path == "" {
 			ev.Path, err = field("file_path")
