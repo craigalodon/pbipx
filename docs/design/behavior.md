@@ -690,8 +690,21 @@ path, is denied with `event-error`: the call cannot be judged.
     and `\'`, which it keeps as written. Any other escape (`\x`, `\0NNN`,
     `\NNN`, `\u`, `\U`, `\c`, `\e`), any conversion but `%s`, `%b` and
     `%%`, and `printf -v` leave the text untold, and the script counts as
-    built at run time (below). A test checks every text the gate claims
-    against what bash prints;
+    built at run time (below). Whose echo prints the text matters: bash's
+    reads escapes only with `-e` (or with `shopt -s xpg_echo`, `bash -O
+    xpg_echo`), the Bash tool's own shell may be zsh (macOS), and `sh`
+    (dash), zsh and ksh read them without `-e`. Where the shell running
+    the echo is not known to be bash (the top level; `sh -c`, `dash -c`,
+    `zsh -c`, `ksh -c`; any line that sets `xpg_echo`), a backslash in the
+    text of an echo with neither `-e` nor `-E` leaves the text untold:
+    `echo 'git log \055p' | bash` is built at run time, `echo 'git log
+    --oneline -1' | bash` is read. Only inside `bash -c` is the echo
+    bash's. A test checks every text the gate claims against what the
+    shells print: printf and `echo -e`/`-E`/`-n`, a plain echo and the
+    xpg_echo variant against bash, and a plain echo against the system
+    `sh` (and zsh when installed), over a few thousand random feeds and
+    the escapes the reviews found (the test never calls an unread text
+    wrong);
   - the tokenizer fails closed on its own uncertainty. These are lines the
     gate cannot read as bash would, each named in the deny in its own
     fixed words: a line it does not end at the plain top level (a `case`
@@ -739,8 +752,23 @@ path, is denied with `event-error`: the call cannot be judged.
     and git under `find -exec` given `{}`, `{/}` or `{.}`, is given words
     the line does not show: they are unknown words of git's, which rule 2
     denies wherever an unknown word could be an option (`echo -p | xargs
-    git log`; `xargs git push` stays allowed). `command -v` and `-V` run
-    nothing. Any other program,
+    git log`; `xargs git push` stays allowed). The words `xargs` and GNU
+    `parallel` read from their input are unknown wherever the command
+    they run uses them: xargs's replacement string (`-I R`, `-IR`, `-i`,
+    `--replace[=R]`, `{}` by default), parallel's placeholders (`{}`,
+    `{.}`, `{/}`, `{//}`, `{/.}`, `{#}`, `{%}`, `{n}`, `{= ... =}`, and
+    `-I R`), and, with no placeholder, the words added after the command.
+    They count in a nested `sh -c` or `bash -c` string, in a function or
+    any other nested line, and as any program's argument. A reader or
+    search given one, or an interpreter (`perl -e`, `python3`) given one
+    or the appended input, touches every protected root, as `xargs cat`
+    does: `git ls-files | xargs -I{} sh -c 'cat {}'`, `... | xargs -I{}
+    sh -c 'jq . {}'`, `... | parallel 'cat {}'` and `... | parallel cat`
+    scan the tree. `parallel` with literal `:::` arguments reads nothing
+    from input. find's `{}` is not one: find's own walk names the files,
+    which the path it searches covers (`find src -exec sh -c 'jq . {}'
+    \;` is allowed when src holds no root, `find . -exec sh -c 'cat {}'
+    \;` scans). `command -v` and `-V` run nothing. Any other program,
     unless it is one known never to run its words (`echo`, `which`, `man`,
     package managers and the like), whose first word that is not an option
     is a reader, a search, git, `find`, `fd`, a shell or `eval`, is judged
@@ -789,7 +817,13 @@ path, is denied with `event-error`: the call cannot be judged.
     default, a here-string or here-document a value setter reads, a word
     `test -v`, `[[ -v` or `unset` reads as a name, and anything a command
     in a substitution or a nested line prints or a pipe or a process
-    substitution passes on (`v=$(echo '...')`, `echo '...' | read v`).
+    substitution passes on (`v=$(echo '...')`, `echo '...' | read v`);
+    also the arguments of `set` and `getopts`, of a function the line
+    defines when it is called, and of any command in a line that reads a
+    positional parameter or OPTARG (`$1`, `${1}`, `$@`, `$*`, `$#`, in a
+    word, an expansion or arithmetic, `(( $1 ))` included) and evaluates
+    (`set -- '...'; echo $(( $1 ))`, `f(){ echo $(( $1 )); }; f '...'`,
+    `getopts 'a:' o -a '...'; echo $((OPTARG))`).
     When a `read` or `mapfile` reads a value from a file, which the gate
     cannot see, any quoted code in the line counts. A git message, a sed
     script or an echo at the top of the line becomes no value:
@@ -1167,10 +1201,12 @@ path, is denied with `event-error`: the call cannot be judged.
      `update-ref`: when the repository has either (an executable file of
      that name in `core.hooksPath`, or in the common git directory's
      `hooks`; a `.sample` is none, and a hooks directory the gate cannot
-     tell counts as having one), every git command may write. Other hooks
-     those commands run are not counted. So `git add src && git diff` and
-     `git stash && git diff` are allowed while a root holds a finding, and
-     scan when such a hook is there.
+     tell counts as having one), every git command is taken to write,
+     which is broader than the lists above: the read-only forms (`status`,
+     `log`, `diff`) and `add`, `stash`, `fetch`, `tag` and `branch` too.
+     Other hooks those commands run are not counted. So `git add src &&
+     git diff` and `git stash && git diff` are allowed while a root holds
+     a finding, and scan when such a hook is there.
 
      A git command that puts content from history in the working tree (a
      stash, a checkout or restore of paths, a reset `--hard`, a switch, a
@@ -2157,7 +2193,14 @@ behavior (2026-10-29).
   above, and each has a plain form that is allowed:
   - code built at run time (`git-content`):
     - `eval "$(pyenv init -)"` and any `eval`, `bash -c`, `sh -c` or
-      `source` of text built at run time;
+      `source` of text built at run time: `eval "$(ssh-agent -s)"`,
+      `eval "$(direnv export bash)"`, `eval "$(pyenv init -)"`;
+    - a shell reading a script from a pipe the gate cannot read: `curl
+      https://example.com/install.sh | sh`, `wget -O- https://... |
+      bash`;
+    - an echo whose text holds a backslash, with neither `-e` nor `-E`,
+      fed to a shell where the echo might read escapes (the top level, any
+      `sh -c`; `echo 'git log \055p' | bash`);
     - a script fed to a shell by `echo` or `printf` that the gate does
       not read exactly: an escape outside its tables (`\x`, `\0NNN`,
       `\NNN`, `\u`, `\U`, `\c`, `\e`, and `\"` or `\'` in an `echo -e`
@@ -2188,6 +2231,12 @@ behavior (2026-10-29).
     - a write to a target that cannot be told before git (`echo x >
       "$LOG"; git log --oneline -1`, `go test | tee "$LOG"; git status`),
       which may be git's configuration;
+    - git given a word the gate cannot expand where it could be an
+      option: `git commit -m "$msg"` through PowerShell (`git commit -m
+      $m`), and `xargs git log`;
+    - names fed to a reader by `xargs` or `parallel`, whatever they
+      name: `git ls-files | xargs cat` scans the tree (a clean tree
+      allows), `xargs -I{} sh -c 'jq . {}'` likewise;
   - a tree scan (`finding` while a root holds one):
     - `echo pbip` and `printf` naming a root;
     - a git command that prints the working tree after any command not
