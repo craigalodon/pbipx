@@ -147,12 +147,16 @@ func differentialStubs(t *testing.T, bash string) (dir, logFile string) {
 	logArgs := "{ printf '%s' \"${0##*/}\"; for a in \"$@\"; do printf '\\037%s' \"$a\"; done; printf '\\036'; } >> \"$PBIPX_DIFF_LOG\"\n"
 	reader := "#!/bin/sh\n" + logArgs + "if [ -f /dev/stdin ] && '" + realGrep + "' -qF '" + sentinel + "' </dev/stdin; then\n" +
 		"\tprintf 'stdin-leak\\036' >> \"$PBIPX_DIFF_LOG\"\nfi\n"
-	for _, name := range []string{"grep", "egrep", "rg", "cat", "head", "tail", "sed", "find", "python3", "ls", "wc", "sort"} {
+	for _, name := range []string{"grep", "egrep", "rg", "cat", "head", "tail", "sed", "jq", "python3", "ls", "wc", "sort"} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(reader), 0o700); err != nil { //nolint:gosec // G306: a test's own stub
 			t.Fatal(err)
 		}
 	}
-	gitStub := "#!/bin/sh\n" + logArgs + `if '` + realGit + `' --no-pager -c core.pager=cat "$@" </dev/null 2>&1 | '` + realGrep + `' -qF '` + sentinel + `'; then
+	// git prints the names it lists (ls-files, --name-only), for a runner
+	// to feed on: the content it prints goes to the leak note only.
+	gitStub := "#!/bin/sh\n" + logArgs + `out=$('` + realGit + `' --no-pager -c core.pager=cat "$@" </dev/null 2>&1)
+case " $* " in *" ls-files "*|*" --name-only "*) printf '%s\n' "$out" ;; esac
+if printf '%s' "$out" | '` + realGrep + `' -qF '` + sentinel + `'; then
 	printf 'git-leak\036' >> "$PBIPX_DIFF_LOG"
 fi
 `
@@ -172,7 +176,7 @@ fi
 			t.Fatal(err)
 		}
 	}
-	for _, name := range []string{"sh", "env", "xargs", "nohup", "timeout", "true", "false", "sleep", "mkdir"} {
+	for _, name := range []string{"sh", "env", "xargs", "nohup", "timeout", "true", "false", "sleep", "mkdir", "find", "parallel", "cut"} {
 		if real, err := exec.LookPath(name); err == nil {
 			if err := os.Symlink(real, filepath.Join(dir, name)); err != nil {
 				t.Fatal(err)
@@ -264,8 +268,9 @@ func dangerous(name string, args []string, at findingAt) bool {
 		return at.inWorktree() && has("-r", "-R", "--recursive")
 	case "rg":
 		return at.inWorktree()
-	case "cat", "head", "tail", "sed":
-		return at.inWorktree() && slices.ContainsFunc(args, func(a string) bool { return strings.HasPrefix(a, "pbip/") })
+	case "cat", "head", "tail", "sed", "jq":
+		return at.inWorktree() && slices.ContainsFunc(args, func(a string) bool { return strings.HasPrefix(strings.TrimPrefix(a, "./"), "pbip/") })
+
 	}
 	return false
 }
