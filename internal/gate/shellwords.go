@@ -2345,11 +2345,35 @@ func stripKeywords(args []string) []string {
 // is not an option is a program the rules judge, counts as a wrapper of
 // it: an unknown wrapper is judged by what it runs.
 func command(args []string) (name string, rest []string, under []string) {
+	name, rest, under, _ = commandIdx(args)
+	return name, rest, under
+}
+
+// commandIdx is command, and also says which of the stripped words
+// (stripKeywords of args, by index) are options, option values, operands
+// and assignments of the wrappers in front of the program, as the
+// wrappers' option tables read them: not words that name a program. An
+// option the tables do not know, or its value given apart, is not among
+// them: a word after it may be the program.
+func commandIdx(args []string) (name string, rest []string, under []string, skipped map[int]bool) {
 	args = stripKeywords(args)
+	skipped = map[int]bool{}
+	// idx maps the words of args, which are cut as reserved words are
+	// stripped, to the indexes of the stripped words they began as.
+	idx := make([]int, len(args))
+	for k := range idx {
+		idx[k] = k
+	}
+	skip := func(from, to int) {
+		for k := from; k < to && k < len(idx); k++ {
+			skipped[idx[k]] = true
+		}
+	}
 	i := 0
 	for i < len(args) {
 		w := args[i]
 		if isAssignment(w) {
+			skip(i, i+1)
 			i++
 			continue
 		}
@@ -2385,21 +2409,23 @@ func command(args []string) (name string, rest []string, under []string) {
 					continue
 				}
 			}
-			return base, args[i+1:], under
+			return base, args[i+1:], under, skipped
 		}
 		under = append(under, base)
 		i++
 		for i < len(args) && (strings.HasPrefix(args[i], "-") || isAssignment(args[i])) {
 			o := args[i]
+			skip(i, i+1)
 			i++
 			if o == "--" {
 				break
 			}
 			if base == "command" && (strings.ContainsRune(o, 'v') || strings.ContainsRune(o, 'V')) && !strings.HasPrefix(o, "--") {
-				return "", nil, under
+				return "", nil, under, skipped
 			}
 			if long, ok := strings.CutPrefix(o, "--"); ok {
 				if !strings.Contains(long, "=") && slices.Contains(wr.long, long) && i < len(args) {
+					skip(i, i+1) // the option's value, whatever it is
 					i++
 				}
 				continue
@@ -2409,27 +2435,37 @@ func command(args []string) (name string, rest []string, under []string) {
 			for k := 1; k < len(o); k++ {
 				if strings.IndexByte(wr.short, o[k]) >= 0 {
 					if k == len(o)-1 && i < len(args) {
+						skip(i, i+1)
 						i++
 					}
 					break
 				}
 			}
 		}
+		skip(i, min(i+wr.operands, len(args))) // timeout's duration, flock's file
 		i = min(i+wr.operands, len(args))
 		if base == "coproc" {
 			// coproc NAME { ...; }: the name, then the group.
 			if i+1 < len(args) && args[i+1] == "{" {
 				i++
 			}
-			args = append(args[:i:i], stripKeywords(args[i:])...)
+			args, idx = restrip(args, idx, i)
 		}
 		if base == "time" {
 			// time { ...; }, time ! cmd, time function f { ...; }: the
 			// reserved words after time and its options.
-			args = append(args[:i:i], stripKeywords(args[i:])...)
+			args, idx = restrip(args, idx, i)
 		}
 	}
-	return "", nil, under
+	return "", nil, under, skipped
+}
+
+// restrip strips the reserved words from args[i:], keeping idx, the index
+// of each word in the original, in step.
+func restrip(args []string, idx []int, i int) ([]string, []int) {
+	tail := stripKeywords(args[i:])
+	removed := len(args) - i - len(tail)
+	return append(args[:i:i], tail...), append(idx[:i:i], idx[i+removed:]...)
 }
 
 // program returns the command a simple command runs, by its base name, and

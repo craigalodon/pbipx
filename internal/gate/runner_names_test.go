@@ -64,6 +64,7 @@ func TestShellRunnerPlaceholders(t *testing.T) {
 		{"xargs unknown long option before -I", `git ls-files | xargs --frobnicate -I{} sh -c 'cat {}'`},
 		{"xargs unknown option, a reader of a file", `git ls-files | xargs -Z sh -c 'cat README.md'`},
 		{"xargs -n with a non-number", `git ls-files | xargs -nX -I{} sh -c 'cat {}'`},
+		{"xargs option value from an expansion", `git ls-files | xargs -I "$R" sh -c 'cat X'`},
 		{"parallel unknown option", `git ls-files | parallel --frobnicate 'cat {}'`},
 		{"parallel unknown short option", `git ls-files | parallel -Z 'sh -c "cat {}"'`},
 	}
@@ -74,7 +75,6 @@ func TestShellRunnerPlaceholders(t *testing.T) {
 	// at run time, a stricter deny than the scan.
 	for _, line := range []string{
 		`git ls-files | xargs $OPTS -I{} sh -c 'cat {}'`,
-		`git ls-files | xargs -I "$R" sh -c 'cat X'`,
 		`git ls-files | xargs $OPTS sh -c 'cat {}'`,
 		`git ls-files | parallel $OPTS 'cat {}'`,
 		`git ls-files | parallel -j "$N" 'cat {}'`,

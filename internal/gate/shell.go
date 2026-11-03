@@ -251,9 +251,16 @@ func (w *walker) unknownProgram(c simple, v view) string {
 		first++
 	}
 	k := len(args) - len(v.rest) - 1
+	// The wrappers' options, their values and operands (timeout's
+	// duration, nice -n's value, env NAME=value) are not the command, even
+	// when unknown: the wrappers' option tables say which words they are.
+	_, _, _, valueWords := commandIdx(v.argv)
 	for j := first; j <= k && j >= 0 && j < len(args); j++ {
 		wd := c.words[args[j]]
 		known := v.argvKnown[j-(len(args)-len(v.argv))]
+		if valueWords[j-(len(args)-len(v.argv))] && j != k {
+			continue
+		}
 		switch {
 		case !known && j == k && w.literalProgram(wd):
 			// A path whose directory cannot be told, to a program named
