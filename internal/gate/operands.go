@@ -7,6 +7,19 @@ import (
 	"github.com/craigalodon/pbipx/internal/scan"
 )
 
+// targetGlobs reports whether rest word i of v (the i-th word after its
+// program) holds an unquoted glob character, which the shell expands.
+func targetGlobs(v view, i int) bool {
+	var words []int
+	for wi, w := range v.words {
+		if !w.redirect {
+			words = append(words, wi)
+		}
+	}
+	k := len(words) - len(v.rest) + i
+	return k >= 0 && k < len(words) && v.words[words[k]].glob
+}
+
 // interpreterNamesSettings reports whether the line runs an interpreter
 // and any line read (the command line, its nested lines, the here-documents
 // in them) names a Claude Code settings file: a word of the code text that

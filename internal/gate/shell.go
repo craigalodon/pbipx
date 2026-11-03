@@ -2246,6 +2246,11 @@ func (s *setup) chdir(v view, st *cwdState) {
 	case strings.HasPrefix(args[i], "+") && v.name == "pushd":
 		unknown()
 		return
+	case targetGlobs(v, i):
+		// The shell expands an unquoted glob character to a directory the
+		// gate cannot tell, as it does an expansion.
+		unknown()
+		return
 	default:
 		target = args[i]
 		if os.Getenv("CDPATH") != "" && !isAbs(target) && !dotRelative(target) {

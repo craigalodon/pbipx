@@ -269,7 +269,9 @@ func dangerous(name string, args []string, at findingAt) bool {
 	case "rg":
 		return at.inWorktree()
 	case "cat", "head", "tail", "sed", "jq", "shuf", "expand", "nl", "od", "fmt":
-		return at.inWorktree() && slices.ContainsFunc(args, func(a string) bool { return strings.HasPrefix(strings.TrimPrefix(a, "./"), "pbip/") })
+		return at.inWorktree() && slices.ContainsFunc(args, func(a string) bool {
+			return strings.HasPrefix(strings.TrimPrefix(a, "./"), "pbip/") || strings.Contains(a, "B.Report/")
+		})
 
 	}
 	return false
@@ -295,6 +297,11 @@ var (
 		"git diff-files -p", "make fmt && git diff-files -p", "make && git diff-index -p HEAD",
 		"git stash && make fmt && git diff", "git stash; npm run fmt; git diff", "cat < " + leakVisual,
 		"git tag -f t HEAD~1 && git diff t", "git add -A && git diff --cached",
+		// A cd with a glob target.
+		"cd pb* && cat B.Report/definition/pages/0000/visuals/0001/visual.json",
+		"cd pb?p; head -1 B.Report/definition/pages/0000/visuals/0001/visual.json",
+		"(builtin cd -P p*; cat B.Report/definition/pages/0000/visuals/0001/visual.json)",
+		"pushd pb[i]p && cat B.Report/definition/pages/0000/visuals/0001/visual.json",
 		// The working-tree rule's proof: status ignores its pathspec, and
 		// an option's value is no pathspec.
 		"make fmt && git status -vv -- README.md", "make fmt && git diff -I x README.md",

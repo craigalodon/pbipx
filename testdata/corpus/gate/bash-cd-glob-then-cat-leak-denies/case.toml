@@ -1,0 +1,7 @@
+description = "cd with an unquoted glob target: the shell expands pb* to the protected root, a directory the gate cannot tell, so the working directory is unknown after it and the cat of a relative path in it reads every root; the leak denies"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
+known       = "predecessor"

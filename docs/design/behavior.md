@@ -619,7 +619,10 @@ path, is denied with `event-error`: the call cannot be judged.
     for the commands after them (a subshell's scope is not kept: the move
     carries forward). `cd` to a target that cannot be told (`cd $X`,
     `cd -` with no earlier `cd`, `popd`, a bare name while `CDPATH` is set,
-    `cd` with `HOME` unknown) makes it unknown;
+    `cd` with `HOME` unknown, a target with an unquoted glob character
+    such as `cd pb*`, which the shell expands to a directory the gate
+    cannot tell: also after `builtin`, `command`, `cd -P`, `pushd`,
+    `chdir` and in a subshell) makes it unknown;
   - `~`, `$HOME`, `${HOME}` (the gate process's home directory), `$PWD`,
     `${PWD}` (the working directory as the line leaves it) and `$OLDPWD`
     are expanded; any other expansion (`$X`, `${X:-y}`, `$1`, `$(...)`,
