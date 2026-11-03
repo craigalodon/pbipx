@@ -1795,12 +1795,12 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 	if line, known, ok := envSplit(v); ok {
 		w.nested(line, known, v.cwd.clone(), depth)
 	}
-	// xargs or parallel running a reader, a search or an interpreter,
-	// with the input words added to its own, reads files named on its
-	// input, from here. (With a placeholder the words are marked, and
-	// judged where they are used: markFed.)
-	_, searching := searchers[v.name]
-	if feed.fromInput && (readers[v.name] || feed.appends && (searching || isInterpreter(v.name))) {
+	// xargs or parallel running a reader, or any program not known to
+	// leave its operands unread (neverReadsOperands), with the input words
+	// added to its own, reads files named on its input, from here. (With a
+	// placeholder the words are marked, and judged where they are used:
+	// markFed.)
+	if feed.fromInput && (readers[v.name] || feed.appends && v.name != "" && readsOperands(v.name)) {
 		w.reachesIn(v.cwd, ".", feed.runner+" runs a reader on the file names its input carries")
 	}
 	return v
@@ -3167,6 +3167,8 @@ func (w *walker) reaches() trigger {
 		}
 		_, search := searchers[v.name]
 		reader := readers[v.name] || search
+		operands := operandWords(v)
+		operandReader := !reader && v.name != "" && readsOperands(v.name)
 		mover := v.name == "cd" || v.name == "pushd" || v.name == "chdir"
 		filter := jqFilter(v)
 		for wi, xw := range v.words {
@@ -3184,7 +3186,7 @@ func (w *walker) reaches() trigger {
 			}
 			abss, unknown := s.wordSpellings(v, xw)
 			readsInput := xw.redirect && xw.input // < FILE, <> FILE: read by whatever it is for
-			if unknown && !xw.here && (reader || readsInput || xw.fed && isInterpreter(v.name)) && !optionOnly(xw.text) {
+			if unknown && !xw.here && (reader || readsInput || operandReader && operands[wi] || xw.fed && isInterpreter(v.name)) && !optionOnly(xw.text) {
 				return trigger{v.name + " is given a word with an expansion the gate cannot resolve", hintExpand}
 			}
 			if i := slices.IndexFunc(abss, touches); i >= 0 {
