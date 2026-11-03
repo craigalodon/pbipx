@@ -5,7 +5,9 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -128,25 +130,39 @@ var gitNeverContent = map[string]bool{
 // commit -m "$(cat <<EOF ...)", git commit -am "$MSG"). A message the
 // shell makes several words (shape(i) for args[i]: git commit -m $MSG,
 // -m "$@", -m *) could hold options too.
-func unknownOption(sub string, args, unknown []string, shape func(int) argShape) bool {
+//
+// why says what the argument is, in fixed words after the subcommand.
+func unknownOption(sub string, args, unknown []string, shape func(int) argShape) (why string) {
 	msg, _ := gitMessageArgs(sub, args)
 	for i, a := range args {
 		sh := shape(i)
 		if msg[i] && sh.glob {
-			return true
+			return "is given, before --, a message word with a glob outside quotes, which the shell expands " +
+				"to the names it matches, and which could be an option that prints content (-p, -v, --cc)"
 		}
 		if (!msg[i] || sh.splits) && slices.Contains(unknown, a) {
-			return true
+			return "is given, before --, an argument the gate cannot expand " + unknownWhat(sh) +
+				", which could be an option that prints content (-p, -v, --cc)"
 		}
 	}
-	return false
+	return ""
+}
+
+// unknownWhat names, in parentheses, what kind of argument the gate
+// cannot expand.
+func unknownWhat(sh argShape) string {
+	if sh.brace {
+		return "(a brace expansion of more than 64 words)"
+	}
+	return "(a variable or a command substitution)"
 }
 
 // argShape is how the shell may turn one argument into several: splits
 // for an expansion it splits into words (unquoted, or "$@" and the like),
-// glob for a glob character outside quotes.
+// glob for a glob character outside quotes, brace for a brace expansion
+// the gate does not expand.
 type argShape struct {
-	splits, glob bool
+	splits, glob, brace bool
 }
 
 // gitMessageSubs are the subcommands whose -m and --message take a message.
@@ -353,7 +369,7 @@ type gitMessage struct {
 // them, has none.
 func gitMessageText(c simple) gitMessage {
 	m := gitMessage{words: make([]bool, len(c.words)), subs: make([]bool, len(c.subs))}
-	if c.fallback {
+	if c.fallback || !slices.ContainsFunc(c.words, func(wd word) bool { return progName(wd.text) == "git" }) {
 		return m
 	}
 	var idx []int // the index in c.words of each argument
@@ -371,7 +387,7 @@ func gitMessageText(c simple) gitMessage {
 		return m
 	}
 	inv, ok := parseGit(rest, "")
-	if !ok || !gitMessageSubs[inv.sub] || !isSuffix(rest, inv.rest) {
+	if !ok || inv.ambiguous || !gitMessageSubs[inv.sub] || len(inv.rest) > len(rest) {
 		return m
 	}
 	start := len(args) - len(inv.rest)
@@ -404,7 +420,7 @@ func gitMessageText(c simple) gitMessage {
 			case strings.HasPrefix(p.raw, "$("), strings.HasPrefix(p.raw, "`"):
 				n = 1
 			case strings.HasPrefix(p.raw, "${"):
-				n = len(bodySubs([]rune(p.raw[2 : len(p.raw)-1])))
+				n = len(bodySubs([]rune(p.raw[2:len(p.raw)-1]), newScan()))
 			}
 			for range n {
 				if k >= len(c.subs) {
@@ -538,12 +554,23 @@ type gitInvocation struct {
 	// first, in fixed words.
 	unsafe    bool
 	unsafeWhy string
+	// ambiguous is set when a long option abbreviates more than one of
+	// the subcommand's options (expandLong).
+	ambiguous bool
+	// dashHidden is set when a "--" right after an option that may take
+	// it as its value is read as the end of the options, and a word after
+	// it looks like an option: it could be one (dashDash).
+	dashHidden bool
 	// oddSpecs is true when a global option changes how every pathspec
 	// matches (--literal-pathspecs, --glob-pathspecs, --icase-pathspecs).
 	oddSpecs bool
 	// unknown is true when an argument cannot be told (gitContent): no
 	// query that could find the command prints nothing is made with it.
 	unknown bool
+	// headCommits is set, for a git command after a change in the line
+	// (contentAfter), when nothing in the line can point HEAD at anything
+	// but a commit: HEAD and the revisions relative to it are commits.
+	headCommits bool
 
 	// place is where dir is (locate). For gitHere, top is the root of the
 	// work tree git runs in ("" inside a git directory), and prefix is
@@ -623,11 +650,13 @@ func (inv gitInvocation) parse(words []string) (gitInvocation, bool) {
 		return inv, false
 	}
 	inv.sub = words[i]
-	inv.rest = words[i+1:]
+	inv.rest, inv.ambiguous = expandLong(inv.sub, words[i+1:])
 	inv.args, inv.specs, inv.dashdash = inv.rest, nil, false
-	if k := slices.Index(inv.rest, "--"); k >= 0 {
+	k, hidden := dashDash(inv.sub, inv.rest)
+	if k >= 0 {
 		inv.args, inv.specs, inv.dashdash = inv.rest[:k], inv.rest[k+1:], true
 	}
+	inv.dashHidden = hidden
 	return inv, true
 }
 
@@ -647,6 +676,9 @@ func safeConfig(kv string) bool {
 		return safePager(value) || isBool(value)
 	}
 	switch key {
+	case "commit.verbose", "stash.showpatch":
+		// Off turns nothing on.
+		return isFalse(value)
 	case "core.pager":
 		return safePager(value)
 	case "core.editor", "sequence.editor":
@@ -661,8 +693,142 @@ func safeConfig(kv string) bool {
 	return false
 }
 
+// git config's options, after expandLong: those that take a value
+// (attached with "=" or as the next word), those that only read, those
+// that write whatever the keys, and the others, which change neither.
+var (
+	gitConfigValue = []string{"--file", "-f", "--blob", "--type", "--default", "--comment", "--value", "--url"}
+	gitConfigReads = []string{
+		"--get", "--get-all", "--get-regexp", "--get-urlmatch", "--get-color", "--get-colorbool",
+		"--list", "-l",
+	}
+	gitConfigWrites = []string{
+		"--add", "--replace-all", "--unset", "--unset-all", "--rename-section", "--remove-section",
+		"--edit", "-e",
+	}
+	gitConfigFlags = []string{
+		"--global", "--system", "--local", "--worktree", "--fixed-value", "--bool", "--int",
+		"--bool-or-int", "--bool-or-str", "--path", "--expiry-date", "--null", "-z", "--name-only",
+		"--includes", "--no-includes", "--show-origin", "--show-scope", "--all", "--regexp",
+		"--show-names", "--append",
+	}
+)
+
+// configWrite reports whether argv (wrappers and assignments included)
+// runs git config to change the configuration in a way not known to be
+// harmless: any write mode (--add, --replace-all, --unset, --rename-section,
+// --remove-section, --edit and the subcommands unset, rename-section,
+// remove-section and edit), or a set of a key that is not known to be
+// harmless (safeConfig), or of more than a key and a value. Such a change,
+// earlier in the line, can change what a later git command prints
+// (commit.verbose, stash.showPatch, diff.submodule, an alias), while the
+// gate reads the configuration as it is before the line runs. git config
+// is read as git reads it: the value of an option that takes one is never
+// an option (--comment --get), a long option is expanded (expandLong),
+// and one that abbreviates more than one option, an option the gate does
+// not know, or a word that cannot be told (unknown) counts as a write.
+// Reading the configuration (--get, --list, get, list, or one key alone)
+// is no write.
+func configWrite(argv, unknown []string) bool {
+	name, rest := program(argv)
+	if name != "git" {
+		return false
+	}
+	inv, ok := parseGit(rest, "")
+	if !ok || inv.sub != "config" {
+		return false
+	}
+	if inv.ambiguous {
+		return true
+	}
+	read := false
+	var pos []string
+	for i := 0; i < len(inv.rest); i++ {
+		a := inv.rest[i]
+		if slices.Contains(unknown, a) {
+			return true
+		}
+		opt, _, hasValue := strings.Cut(a, "=")
+		switch {
+		case a == "--":
+			pos = append(pos, inv.rest[i+1:]...)
+			i = len(inv.rest)
+		case slices.Contains(gitConfigValue, opt):
+			if !hasValue {
+				i++
+			}
+		case slices.Contains(gitConfigReads, opt):
+			read = true
+		case slices.Contains(gitConfigWrites, opt):
+			return true
+		case strings.HasPrefix(a, "-") && len(a) > 1:
+			if !slices.Contains(gitConfigFlags, opt) {
+				return true
+			}
+		default:
+			pos = append(pos, a)
+		}
+	}
+	sub := ""
+	if !read && len(pos) > 0 && !strings.Contains(pos[0], ".") {
+		sub, pos = pos[0], pos[1:]
+	}
+	switch sub {
+	case "get", "list":
+		return false
+	case "", "set":
+	default:
+		// unset, rename-section, remove-section, edit, or one the gate
+		// does not know.
+		return true
+	}
+	switch {
+	case read:
+		return false
+	case len(pos) == 1 && sub == "":
+		// One key alone reads it.
+		return false
+	case len(pos) == 2:
+		return !safeConfig(pos[0] + "=" + pos[1])
+	}
+	return true
+}
+
+// afterConfig is why a git command (argv) is denied when the line it is
+// in sets a key with git config (configWrite): any git command but git
+// config itself and those that print no file content whatever their
+// options; "" otherwise.
+func afterConfig(argv []string) string {
+	name, rest := program(argv)
+	if name != "git" {
+		return ""
+	}
+	inv, ok := parseGit(rest, "")
+	if !ok || inv.sub == "config" || gitNeverContent[inv.sub] {
+		return ""
+	}
+	return inv.sub
+}
+
+// whyAfterConfig is the refusal for a git command after git config in the
+// same line, which follows the subcommand.
+const whyAfterConfig = "runs in a line that sets a git configuration key that can change what it prints " +
+	"(commit.verbose, stash.showPatch, an alias), and the gate reads the configuration as it is before the line runs"
+
+// hintAfterConfig is what to do instead.
+const hintAfterConfig = "Run git config on its own, then the git command as a separate call."
+
 // safePager reports whether a pager setting only passes git's output on.
 func safePager(v string) bool { return v == "" || v == "cat" }
+
+// isFalse reports whether v is a value git reads as false.
+func isFalse(v string) bool {
+	switch strings.ToLower(v) {
+	case "false", "no", "off", "0":
+		return true
+	}
+	return false
+}
 
 func isBool(v string) bool {
 	switch strings.ToLower(v) {
@@ -884,19 +1050,33 @@ func (s *setup) gitContent(args, unknown []string, shapes []argShape) *gitDenial
 	if inv.unsafe {
 		return &gitDenial{inv.sub, inv.unsafeWhy, "Drop that global option, or use --stat."}
 	}
+	if inv.ambiguous && !gitNeverContent[inv.sub] {
+		return &gitDenial{inv.sub, "is given an abbreviated long option that could stand for more than one of its options, " +
+			"one of which could print content", "Write each long option out in full."}
+	}
+	if inv.dashHidden && !gitNeverContent[inv.sub] {
+		return &gitDenial{inv.sub, "is given -- right after an option that may take it as its value, " +
+			"and a word after it that could then be an option that prints content", "Give the option its value with =, or drop the --."}
+	}
 	inv.unknown = len(unknown) > 0
-	if !gitNeverContent[inv.sub] && unknownOption(inv.sub, inv.args, unknown, func(i int) argShape {
+	shapeOf := func(i int) argShape {
 		fromEnd := len(inv.rest) - i
 		j := len(args) - fromEnd
 		if fromEnd <= given && j >= 0 && j < len(shapes) {
 			return shapes[j]
 		}
 		return argShape{}
-	}) {
+	}
+	if why := unknownOption(inv.sub, inv.args, unknown, shapeOf); why != "" && !gitNeverContent[inv.sub] {
 		// Before "--" a word that cannot be told could be an option that
 		// turns content on: -p, -v, --cc, a stash or reflog subcommand.
-		return &gitDenial{inv.sub, "is given, before --, an argument the gate cannot expand " +
-			"(a variable or a command substitution), which could be an option that prints content (-p, -v, --cc)", gitExpandHint(inv.sub)}
+		return &gitDenial{inv.sub, why, gitExpandHint(inv.sub)}
+	}
+	// What an argument the gate cannot expand is, when it names a path.
+	whySpec := whyUnknownSpec
+	if j := slices.IndexFunc(args, func(a string) bool { return slices.Contains(unknown, a) }); j >= 0 && j < len(shapes) && shapes[j].brace {
+		whySpec = "is given an argument the gate cannot expand " + unknownWhat(shapes[j]) +
+			", which could name a path in a protected root"
 	}
 	s.locate(&inv)
 	switch inv.place {
@@ -909,7 +1089,7 @@ func (s *setup) gitContent(args, unknown []string, shapes []argShape) *gitDenial
 		}
 		if inv.unknown && s.gitSpecs(inv).content {
 			// An argument that cannot be told could name one.
-			return &gitDenial{inv.sub, whyUnknownSpec, gitExpandHint(inv.sub)}
+			return &gitDenial{inv.sub, whySpec, gitExpandHint(inv.sub)}
 		}
 		return nil
 	}
@@ -927,7 +1107,7 @@ func (s *setup) gitContent(args, unknown []string, shapes []argShape) *gitDenial
 			"Run it from inside the repository, with the directory made first."}
 	case inv.unknown:
 		// Never the name-only query with a word left unexpanded.
-		return &gitDenial{inv.sub, whyUnknownSpec, gitExpandHint(inv.sub)}
+		return &gitDenial{inv.sub, whySpec, gitExpandHint(inv.sub)}
 	case c.bySpecs && inv.oddSpecs:
 		return &gitDenial{inv.sub, "runs with --literal-pathspecs, --glob-pathspecs or --icase-pathspecs, " +
 			"which make every pathspec unprovable", "Drop that global option, or use --stat."}
@@ -960,7 +1140,32 @@ func (s *setup) gitContent(args, unknown []string, shapes []argShape) *gitDenial
 				hintGit}
 		}
 	}
+	if len(c.runs) > 0 && !c.runs[0].grep && s.submoduleDiff(inv) {
+		return &gitDenial{inv.sub, "shows the changes inside submodules (--submodule=diff, or diff.submodule set to diff), " +
+			"whose files the name-only check does not list", "Use --submodule=short, or --stat."}
+	}
 	return nil
+}
+
+// submoduleDiff reports whether a diff git prints shows the changes inside
+// submodules as a patch: --submodule=diff, or, with no --submodule given,
+// diff.submodule set to diff. The name-only check lists the submodule, not
+// the files in it. A failed lookup counts.
+func (s *setup) submoduleDiff(inv gitInvocation) bool {
+	given := ""
+	for _, a := range inv.args {
+		if a == "--submodule" || strings.HasPrefix(a, "--submodule=") {
+			given = strings.TrimPrefix(strings.TrimPrefix(a, "--submodule"), "=")
+			if given == "" {
+				given = "log"
+			}
+		}
+	}
+	if given != "" {
+		return given == "diff"
+	}
+	v, err := s.git().configValue(inv.dir, "diff.submodule", "")
+	return !errors.Is(err, errNotSet) && (err != nil || v == "diff")
 }
 
 // git is the decision's git session.
@@ -1289,6 +1494,10 @@ func (s *setup) gitSpecs(inv gitInvocation) gitCheck {
 	case "grep":
 		return s.grepCheck(inv)
 	case "status":
+		if shortFormat(inv.args, true) {
+			// The short and porcelain formats print no diff with -v.
+			return noContent()
+		}
 		return s.verboseCheck(inv, verbosity(inv.args, "u"), false)
 	case "add", "stage":
 		if !hasShort(inv.args, 'p', "--patch", "") && !hasShort(inv.args, 'i', "--interactive", "") {
@@ -1317,10 +1526,25 @@ func (s *setup) gitSpecs(inv gitInvocation) gitCheck {
 		if hasShort(inv.args, 'p', "--patch", "mFCcSt") || hasFlag(inv.args, []string{"--interactive"}) {
 			return bySpecs(after())
 		}
-		if hasFlag(inv.args, []string{"--dry-run"}) {
-			// The dry run prints the diff that would be committed: with -a,
-			// -o or -i, unstaged changes too.
-			return s.verboseCheck(inv, verbosity(inv.args, "mFCcSt"), true)
+		if hasFlag(inv.args, []string{"--dry-run", "--short", "--porcelain", "--long"}) {
+			// The dry run (which --short, --porcelain and --long imply)
+			// prints the diff that would be committed: with -a, -o or -i,
+			// unstaged changes too.
+			v := s.commitVerbosity(inv)
+			c := s.verboseCheck(inv, v, true)
+			if v > 0 && hasFlag(inv.args, []string{"--amend"}) {
+				// Amending commits the index on HEAD's parent: the diff is
+				// from there. A root commit has none, and that run fails,
+				// which denies.
+				c.runs = append(c.runs, nameRun{argv: slices.Concat(inv.globals, []string{"diff", "--cached", "HEAD^"}, gitNameOnly)})
+			}
+			return c
+		}
+		// A commit with a verbose count of 2 or more (-vv, commit.verbose
+		// 2) prints the working-tree diff too when it fails with nothing
+		// staged, as git status -vv does.
+		if v := s.commitVerbosity(inv); v >= 2 {
+			return s.verboseCheck(inv, v, false)
 		}
 		return noContent()
 	case "rebase", "am":
@@ -1605,6 +1829,9 @@ func (s *setup) kindOf(inv gitInvocation, a string) (revKind, string) {
 	if p, ok := revPath(a); ok {
 		return revBlobPath, p
 	}
+	if inv.headCommits && !inv.elsewhere && headRelative(a) {
+		return revCommit, ""
+	}
 	if inv.elsewhere || inv.unknown || inv.place != gitHere {
 		return revUnplaceable, ""
 	}
@@ -1655,11 +1882,35 @@ func (s *setup) stashCheck(inv gitInvocation) gitCheck {
 	}
 	switch sub {
 	case "show":
-		patchFlags := slices.DeleteFunc(slices.Clone(gitPatchFlags), func(f string) bool { return f == "-u" })
-		if !hasFlag(args, patchFlags) {
-			if hasFlag(args, gitSummaryFlags) {
-				return noContent()
+		// git 2.53 prints a patch when stash show is given any diff
+		// option that is not an output format (-w, -R, --color,
+		// --histogram, --abbrev, --graph ...), as it does for -p. It
+		// prints none with no option and stash.showPatch unset, or with
+		// only summary formats (and -u). Any other option goes through the
+		// name-only run.
+		var options []string
+		for _, a := range args {
+			if strings.HasPrefix(a, "-") && a != "-" {
+				options = append(options, a)
 			}
+		}
+		// -u, --include-untracked and --only-untracked say which files
+		// the stash holds; they are no output format, so with none given
+		// stash.showPatch still decides.
+		var formats []string
+		for _, o := range options {
+			if o != "-u" && o != "--include-untracked" && o != "--only-untracked" {
+				formats = append(formats, o)
+			}
+		}
+		summaryOnly := len(formats) > 0 && !slices.ContainsFunc(formats, func(o string) bool {
+			name, _, _ := strings.Cut(o, "=")
+			return !slices.Contains(gitSummaryFlags, name) && name != "--stat" && name != "--dirstat"
+		})
+		switch {
+		case summaryOnly:
+			return noContent()
+		case len(formats) == 0:
 			v, err := s.git().configValue(inv.dir, "stash.showPatch", "bool")
 			if errors.Is(err, errNotSet) || (err == nil && v == "false") {
 				return noContent()
@@ -1808,6 +2059,332 @@ func verbosity(args []string, withValue string) int {
 		}
 	}
 	return n
+}
+
+// indexChangeOf names the git command argv runs when it may change what a
+// later git command prints: the index, HEAD, any ref, the configuration,
+// the objects or the working tree. Every git command does, but those known
+// to be read-only (gitReadOnly); a subcommand that is not git's own (an
+// alias) or an ambiguous abbreviation does too. "" otherwise; creating a
+// branch at HEAD changes nothing a later command prints.
+func (s *setup) indexChangeOf(argv []string, dir string) string {
+	name, rest := program(argv)
+	if name != "git" {
+		return ""
+	}
+	inv, ok := parseGit(rest, dir)
+	switch {
+	case !ok:
+		return ""
+	case !gitBuiltins[inv.sub] || inv.ambiguous:
+		return gitLabel(inv.sub)
+	case s.branchOnly(inv), gitReadOnly(inv):
+		return ""
+	}
+	return "git " + inv.sub
+}
+
+// gitReadsOnly are git's subcommands that change nothing a later git
+// command reads, whatever their options (each "true"), or with the first
+// words after the subcommand they are read-only with ("" for none, an
+// option first included).
+var gitReadsOnly = map[string][]string{
+	"status": nil, "rev-parse": nil, "rev-list": nil, "ls-files": nil, "ls-tree": nil,
+	"ls-remote": nil, "cat-file": nil, "describe": nil, "merge-base": nil, "name-rev": nil,
+	"for-each-ref": nil, "show-ref": nil, "show-branch": nil, "count-objects": nil,
+	"version": nil, "help": nil, "var": nil, "check-ignore": nil, "check-attr": nil,
+	"check-ref-format": nil, "check-mailmap": nil, "blame": nil, "annotate": nil,
+	"cherry": nil, "diff-tree": nil, "diff-index": nil, "diff-files": nil, "verify-commit": nil,
+	"verify-tag": nil, "shortlog": nil, "range-diff": nil,
+	"stash": {"list", "show"}, "notes": {"list", "show"}, "worktree": {"list"},
+	"reflog": {"", "show", "exists"},
+}
+
+// gitReadOnly reports whether inv is known to change nothing a later git
+// command reads (refs, HEAD, the index, the configuration, the objects or
+// the working tree). log, show, diff and whatchanged are read-only but
+// with --output, which writes a file, and git grep but with -O, which runs
+// a program; git config only reads (configWrite);
+// git branch and git tag list with no name, or with --list (-l), and none
+// of their options that create, move or delete one; git remote lists with
+// no subcommand, or show and get-url; git symbolic-ref reads with one name
+// alone and no -d, git replace with nothing or --list (-l). Anything else, including every option the gate does
+// not expect, counts as a change.
+func gitReadOnly(inv gitInvocation) bool {
+	switch inv.sub {
+	case "log", "show", "diff", "whatchanged":
+		return !hasFlag(inv.args, []string{"--output"})
+	case "grep":
+		// -O runs a program on the files found.
+		return !hasShort(inv.args, 'O', "--open-files-in-pager", "efABCm")
+	case "config":
+		return !configWrite(append([]string{"git", "config"}, inv.rest...), nil)
+	case "symbolic-ref":
+		return len(positional(inv.args)) < 2 && !hasShort(inv.args, 'd', "--delete", "")
+	case "replace":
+		return len(inv.args) == 0 || hasShort(inv.args, 'l', "--list", "")
+	case "branch":
+		return listsOnly(inv.args, "dDmMcCfut", []string{
+			"--delete", "--move", "--copy", "--force", "--set-upstream-to", "--unset-upstream",
+			"--edit-description", "--track", "--no-track", "--create-reflog", "--recurse-submodules",
+		})
+	case "tag":
+		return listsOnly(inv.args, "dfasumFe", []string{
+			"--delete", "--force", "--annotate", "--sign", "--local-user", "--message", "--file",
+			"--edit", "--create-reflog", "--trailer",
+		})
+	case "remote":
+		pos := positional(inv.args)
+		return len(pos) == 0 || pos[0] == "show" || pos[0] == "get-url"
+	}
+	first, ok := gitReadsOnly[inv.sub]
+	if !ok {
+		return false
+	}
+	if first == nil {
+		return true
+	}
+	word := ""
+	if len(inv.args) > 0 {
+		word = inv.args[0]
+	}
+	return slices.Contains(first, word) || (slices.Contains(first, "") && strings.HasPrefix(word, "-"))
+}
+
+// listsOnly reports whether git branch or git tag, given args, lists:
+// none of the short letters in changes (alone or in a cluster) or the long
+// options in long, and no name unless --list (-l) asks to list those
+// matching it.
+func listsOnly(args []string, changes string, long []string) bool {
+	if hasFlag(args, long) {
+		return false
+	}
+	for i := range len(changes) {
+		if hasShort(args, changes[i], "", "") {
+			return false
+		}
+	}
+	return len(positional(args)) == 0 || hasShort(args, 'l', "--list", "")
+}
+
+// contentAfter reports whether the git command argv, run from dir after
+// the git commands before (each an argv) changed the repository, could
+// print file content the gate cannot place: what rule 2 checks, with
+// what git holds taken to have changed (a stash looked up now may not
+// exist yet, so nothing is taken to be absent, and no name-only query is
+// trusted). A subcommand that prints none whatever its options, or a git
+// command whose arguments turn none on (git commit -m msg, git status, git
+// log --oneline), prints none. Nor does:
+//   - a summary of HEAD or a revision relative to it (git show --stat
+//     HEAD~1) when headCommits, as nothing in the line can point HEAD at
+//     anything but a commit;
+//   - a command whose pathspecs provably avoid every root (specsProof);
+//   - the working-tree diff (worktreeDiff) after changes that can only
+//     shrink it (shrinksDiff): it reads the working tree and the index,
+//     not HEAD, and was judged before the line.
+func (s *setup) contentAfter(argv []string, dir string, before [][]string, headCommits bool) bool {
+	name, rest := program(argv)
+	if name != "git" {
+		return false
+	}
+	inv, ok := parseGit(rest, dir)
+	if !ok || gitNeverContent[inv.sub] {
+		return false
+	}
+	inv, why := s.resolveAlias(inv)
+	if why != "" || inv.unsafe || inv.ambiguous || inv.dashHidden {
+		return true
+	}
+	if gitNeverContent[inv.sub] {
+		return false
+	}
+	s.locate(&inv)
+	inv.unknown = true
+	inv.headCommits = headCommits
+	c := s.gitSpecs(inv)
+	switch {
+	case !c.content:
+		return false
+	case c.deny:
+		return true
+	case s.specsProof(inv):
+		return false
+	case worktreeDiff(inv) && !slices.ContainsFunc(before, func(b []string) bool { return !shrinksDiff(b) }):
+		return false
+	}
+	return true
+}
+
+// specsProof reports whether inv, a git command that prints only what its
+// pathspecs limit it to (diff, log, whatchanged, grep and the diff
+// plumbing), is given pathspecs after "--" that provably avoid every root
+// (specsAvoid): no glob or magic, each one outside every root, a nested
+// repository's included. Options that print beyond the pathspecs
+// (--full-diff, -L, --no-index, --pathspec-from-file) or a submodule's
+// diff leave it unproven.
+func (s *setup) specsProof(inv gitInvocation) bool {
+	switch inv.sub {
+	case "diff", "log", "whatchanged", "grep", "diff-index", "diff-tree", "diff-files":
+	default:
+		return false
+	}
+	if !inv.dashdash || len(inv.specs) == 0 || inv.elsewhere || inv.oddSpecs || inv.place != gitHere {
+		return false
+	}
+	if hasFlag(inv.args, []string{"--full-diff", "--no-index", "--pathspec-from-file", "--follow"}) ||
+		slices.ContainsFunc(inv.args, func(a string) bool { return strings.HasPrefix(a, "-L") }) {
+		return false
+	}
+	if inv.sub != "grep" && s.submoduleDiff(inv) {
+		return false
+	}
+	return s.specsAvoid(inv, s.parseSpecs(inv, inv.specs)) == ""
+}
+
+// worktreeDiff reports whether inv is git diff of the working tree against
+// the index: no revision, no --cached or --staged, no --no-index.
+func worktreeDiff(inv gitInvocation) bool {
+	return inv.sub == "diff" && len(positional(inv.args)) == 0 &&
+		!hasFlag(inv.args, []string{"--cached", "--staged", "--no-index", "--merge-base"})
+}
+
+// shrinksDiff reports whether the git command argv can only take entries
+// out of the working-tree diff, or leaves the working tree and the index
+// as they are: git add (not -N, -p, -i, -e, --renormalize or --chmod),
+// which makes the index match the working tree, git stash or git stash
+// push and save (not -p or --staged), which make both match HEAD, and
+// fetch, tag, push, remote and branch, which move refs only.
+func shrinksDiff(argv []string) bool {
+	name, rest := program(argv)
+	if name != "git" {
+		return false
+	}
+	inv, ok := parseGit(rest, "")
+	if !ok || inv.ambiguous {
+		return false
+	}
+	switch inv.sub {
+	case "add", "stage":
+		return !hasFlag(inv.args, []string{"--intent-to-add", "--patch", "--interactive", "--edit", "--renormalize", "--chmod"}) &&
+			!slices.ContainsFunc([]byte("Npie"), func(c byte) bool { return hasShort(inv.args, c, "", "") })
+	case "stash":
+		pos := positional(inv.args)
+		if len(pos) > 0 && pos[0] != "push" && pos[0] != "save" {
+			return false
+		}
+		return !hasFlag(inv.args, []string{"--patch", "--staged"}) &&
+			!slices.ContainsFunc([]byte("pS"), func(c byte) bool { return hasShort(inv.args, c, "", "m") })
+	case "fetch", "tag", "push", "remote", "branch":
+		return true
+	}
+	return gitReadOnly(inv)
+}
+
+// headMayLeaveCommits reports whether the git command argv could point
+// HEAD at something other than a commit: git symbolic-ref, update-ref or
+// replace not just reading, a subcommand that is not git's own (an alias),
+// or an ambiguous abbreviation. hub counts as git.
+func headMayLeaveCommits(argv []string) bool {
+	name, rest := program(argv)
+	if name != "git" && name != "hub" {
+		return false
+	}
+	inv, ok := parseGit(rest, "")
+	switch {
+	case !ok:
+		return false
+	case !gitBuiltins[inv.sub] || inv.ambiguous:
+		return true
+	case inv.sub == "symbolic-ref" || inv.sub == "update-ref" || inv.sub == "replace":
+		return !gitReadOnly(inv)
+	}
+	return false
+}
+
+// headRelative reports whether a names HEAD, or a commit relative to it
+// (HEAD~2, @^, HEAD^2~1), or a range of those (HEAD~1..HEAD, ..@).
+func headRelative(a string) bool {
+	if left, right, ok := cutRange(a); ok {
+		return (left == "" || headRelative(left)) && (right == "" || headRelative(right)) && left+right != ""
+	}
+	return headRevision.MatchString(a)
+}
+
+var headRevision = regexp.MustCompile(`^(HEAD|@)([~^][0-9]*)*$`)
+
+// shortFormat reports whether git status (status true) or git commit's
+// dry run prints the short or porcelain format, or NUL-terminated output,
+// none of which shows a diff whatever -v says (checked with git 2.53).
+// The options are read in order, as git reads them: --short (status -s)
+// and --porcelain[=v1|v2] set a short format, --long the long one, and a
+// negation (--no-short, --no-porcelain, --no-long) none; -z or --null
+// turns NUL-terminated output on and --no-null off. Short options are read
+// in clusters up to a letter that takes a value (status -u<mode>, commit
+// -m, -F, -c, -C, -t, -S, -u), whose rest is that value. With nothing
+// given it is the long format: a configured status.short is not read, so
+// the gate errs towards the diff.
+func shortFormat(args []string, status bool) bool {
+	short, null := false, false
+	stopAt := "mFcCtSu" // commit's letters that take a value
+	if status {
+		stopAt = "u"
+	}
+	for _, a := range args {
+		name, _, _ := strings.Cut(a, "=")
+		switch name {
+		case "--short", "--porcelain":
+			short = true
+			continue
+		case "--long", "--no-short", "--no-porcelain", "--no-long":
+			short = false
+			continue
+		case "--null":
+			null = true
+			continue
+		case "--no-null":
+			null = false
+			continue
+		}
+		if len(a) < 2 || a[0] != '-' || a[1] == '-' {
+			continue
+		}
+		for j := 1; j < len(a); j++ {
+			c := a[j]
+			if strings.IndexByte(stopAt, c) >= 0 {
+				break
+			}
+			switch {
+			case c == 's' && status:
+				short = true
+			case c == 'z':
+				null = true
+			}
+		}
+	}
+	return short || null
+}
+
+// commitVerbosity is how verbose git commit is: -v counted, or with no
+// -v, --verbose or --no-verbose given, commit.verbose (a boolean or a
+// level), as git reads it. A value git cannot read as a boolean, or a
+// failed lookup, counts as verbose.
+func (s *setup) commitVerbosity(inv gitInvocation) int {
+	if shortFormat(inv.args, false) {
+		// The short and porcelain formats print no diff with -v.
+		return 0
+	}
+	if hasFlag(inv.args, []string{"--verbose", "--no-verbose"}) || hasShort(inv.args, 'v', "", "mFCcSt") {
+		return verbosity(inv.args, "mFCcSt")
+	}
+	v, err := s.git().configValue(inv.dir, "commit.verbose", "bool-or-int")
+	if errors.Is(err, errNotSet) || (err == nil && v == "false") {
+		return 0
+	}
+	if n, convErr := strconv.Atoi(v); err == nil && convErr == nil {
+		// A level: 0 is off, 2 and more print the working tree too.
+		return max(0, min(n, 2))
+	}
+	return 1
 }
 
 // verboseCheck judges git status -v, which prints the staged diff (and

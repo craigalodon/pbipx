@@ -1,0 +1,6 @@
+description = "an unquoted here-document body with a backslash-newline continuation, a Dockerfile written with cat, is joined as bash joins it and stays data; the protected root holds a finding the line does not read, so it is allowed"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = ["Doe, Jane"]

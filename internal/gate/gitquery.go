@@ -48,6 +48,34 @@ type gitSession struct {
 	deadline time.Time
 	// common is this repository's common directory, resolved, once asked.
 	common string
+	// configs are the global and system configuration files git reads,
+	// once asked (configFiles).
+	configs     []string
+	configsDone bool
+}
+
+// configFiles are the global and system configuration files git reads,
+// as git itself names them (git var GIT_CONFIG_GLOBAL and
+// GIT_CONFIG_SYSTEM, git 2.42 and later): under Git for Windows the
+// system file is under git's install prefix, not /etc. A git that cannot
+// say gives none; the caller has the usual names besides.
+func (g *gitSession) configFiles(dir string) []string {
+	if g.configsDone {
+		return g.configs
+	}
+	g.configsDone = true
+	for _, name := range []string{"GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM"} {
+		v, err := g.value(dir, "var", name)
+		if err != nil {
+			continue
+		}
+		for _, p := range strings.Split(strings.TrimSpace(v), "\n") {
+			if p = strings.TrimSpace(p); p != "" {
+				g.configs = append(g.configs, resolveGit(p))
+			}
+		}
+	}
+	return g.configs
 }
 
 func newGitSession() *gitSession {

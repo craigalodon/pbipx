@@ -1,0 +1,8 @@
+description = "git tag -f main pointing a tag at the empty tree, then git diff --cached main, which git resolves to the tag and so prints the whole index, the file deleted under the protected root included: a git command not known to be read-only moves what a later content-printing git command reads, so the line denies with git-content"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
+deleted     = ["pbip/Example.Report/definition/pages/0000/visuals/0001/visual.json"]
+known       = "predecessor"

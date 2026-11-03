@@ -1,0 +1,6 @@
+description = "<< inside $((...)) is a shift, not a here-document, so echo $((1<<2)) reads nothing. Plants no value"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = []

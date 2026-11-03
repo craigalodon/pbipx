@@ -207,6 +207,357 @@ func TestShellGitHistory(t *testing.T) {
 	})
 }
 
+// TestShellGitHistoryGaps: history holds the leak, committed then deleted,
+// and the working tree is clean.
+func TestShellGitHistoryGaps(t *testing.T) {
+	root, _ := historyRepo(t)
+	gitIn(t, root, "tag", "same", "HEAD")
+	sh := func(cmd string) gate.Event { return gate.Event{Tool: gate.Shell, Command: cmd} }
+	ps := func(cmd string) gate.Event { return gate.Event{Tool: gate.PowerShell, Command: cmd} }
+	git := gate.ReasonGitContent
+	run(t, root, []decideCase{
+		// commit --amend prints HEAD^ against the index: the commit that
+		// deleted the leak shows it.
+		{"commit --amend --dry-run -v", sh("git commit --amend --dry-run -v"), git},
+		{"commit --amend --dry-run -v, PowerShell", ps("git commit --amend --dry-run -v"), git},
+		{"commit --dry-run -v, no amend", sh("git commit --dry-run -v"), ""},
+		{"commit --amend --dry-run, no -v", sh("git commit --amend --dry-run"), ""},
+
+		// Brace expansion makes one word several.
+		{"log of a brace list", sh("git log {-p,-2}"), git},
+		{"show limited to a brace list", sh("git show HEAD~1 -- {pbip,README.md}"), git},
+		{"diff limited to a brace list", sh("git diff HEAD~1 -- {README.md,pbip}"), git},
+		{"commit of a brace list", sh("git commit {--amend,--dry-run,-v}"), git},
+		{"log of a brace sequence", sh("git log -{1..2}"), ""},
+		{"log of a brace list with a patch flag", sh("git log -{p,1}"), git},
+		{"log of a nested brace list", sh("git log {--oneline,{-p,-1}}"), git},
+		{"log of a quoted brace list", sh("git log --oneline '{-p,-2}'"), ""},
+		{"log with a reflog selector", sh("git log --oneline HEAD@{1}"), ""},
+		{"log, one line each", sh("git log --oneline -2"), ""},
+		{"log of a brace list away from the roots", sh("git log -p -- {README.md,notes}"), ""},
+		{"log of more brace words than the gate expands", sh("git log --oneline x{1..100}"), git},
+		{"log of an invalid brace", sh("git log --oneline {a}"), ""},
+		{"case words echoed, then git log -p", sh("echo case x in; (git log -p)"), git},
+		// A command word the gate cannot tell (F1).
+		{"$(which git) log -p", sh("$(which git) log -p"), git},
+		{"${GIT:-git} log -p", sh("${GIT:-git} log -p"), git},
+		{"git${X} log -p", sh("git${X} log -p"), git},
+		{"$G show", sh("G=git; $G show HEAD~1"), git},
+		{"$(command -v git) diff", sh("$(command -v git) diff HEAD~1"), git},
+		{"a glob command word", sh("/usr/bin/g[i]t log -p"), git},
+		{"hash -p a name for git", sh("hash -p /usr/bin/git g; g log -p"), git},
+		{"an alias for git", sh("alias g=git; g log -p"), git},
+		{"$(echo git log -p) as a command", sh("$(echo git log -p)"), git},
+		{"hash of git alone", sh("hash git; git log --oneline -1"), ""},
+		// CR, backslash-newline and time (F8, F9, F10).
+		{"a CRLF here-document", sh("cat <<E\r\nx\r\nE\r\ngit log -p"), git},
+		{"a delimiter joined across lines", sh("cat <<E\\\nF\nx\nEF\ngit log -p"), git},
+		{"(\\<nl>( arithmetic", sh("(\\\n(x<<true))\ngit log -p\ntrue"), git},
+		{"a delimiter line joined in the body", sh("cat <<E\nx\nE\\\n\ngit log -p\nE"), gate.ReasonInternalError},
+		{"a continued command line", sh("git log \\\n  --oneline -1"), ""},
+		{"time with groups", sh("time { { git log -p; }; }"), git},
+		{"time -p with !", sh("time -p { ! git log -p; }"), git},
+		{"time with a function", sh("time { function g { git log -p; }; g; }"), git},
+		// xargs and find -exec add words git is given (F11).
+		{"xargs feeding git log", sh("echo -p | xargs git log"), git},
+		{"xargs -0 feeding git log", sh(`printf '%s\0' -p | xargs -0 git log`), git},
+		{"find -exec git log {} +", sh("find . -name x -exec git log {} +"), git},
+		{"xargs feeding git push", sh("echo origin | xargs git push"), ""},
+		// bash 5.2 ends a here-document in $(...) at a line starting with
+		// the delimiter (F14).
+		{"a here-document in $(...) with a line starting with its delimiter",
+			sh("git commit -m \"$(cat <<'EOF'\nmsg\nEOF )\"\ngit log -p\nEOF\n)\""), gate.ReasonInternalError},
+		// A function named like a builtin (F7).
+		{"cd defined, then git log -p", sh("cd() { :; }; git log -p"), git},
+		{"cd defined and used", sh("cd() { git log -p; }; cd x"), git},
+		{"cat defined, then used", sh("cat() { :; }; cat README.md"), git},
+		{"a plain function", sh("f() { git log --oneline -1; }; f"), ""},
+		// Quoted code bash evaluates later (F4).
+		{"test -v of a subscript", sh(`test -v 'a[$(git log -p >&2)]'`), git},
+		{"printf -v of a subscript", sh(`printf -v 'a[$(git log -p >&2)]' x`), git},
+		{"read of a subscript", sh(`read 'a[$(git log -p >&2)]' <<< x`), git},
+		{"declare -n of a subscript", sh(`declare -n r='a[$(git log -p >&2)]'; echo $r`), git},
+		{"arithmetic of a variable", sh(`x='a[$(git log -p >&2)]'; echo $((x))`), git},
+		{"a prompt expansion", sh(`x='$(git log -p >&2)'; echo ${x@P}`), git},
+		{"PS4 with set -x", sh(`PS4='$(git log -p >&2)'; set -x; true`), git},
+		{"BASH_ENV", sh(`BASH_ENV=<(echo 'git log -p') bash -c true`), git},
+		{"PS4 after time", sh(`time PS4='$(git log -p >&2)'; set -x; true`), git},
+		{"PS4 after time -p !", sh(`time -p ! PS4='$(git log -p >&2)'; set -x; true`), git},
+		{"BASH_ENV after time", sh(`time BASH_ENV=<(echo 'git log -p') bash -c true`), git},
+		{"BASH_ENV under env", sh(`env BASH_ENV=<(echo 'git log -p') bash -c true`), git},
+		{"GIT_PAGER after time", sh(`time GIT_PAGER=x git log --oneline -1 && git log -1 --oneline`), git},
+		{"printf -v of a plain name", sh(`printf -v x '%s' hi; echo "$x"`), ""},
+		{"arithmetic with no quoted code", sh(`n=1; n=$((n+1)); echo $n`), ""},
+		{"quoted $( with nothing that evaluates", sh(`git commit -m 'use $(foo)'`), ""},
+		// source and . alike (F2), and code built at run time (F3).
+		{"source of a process substitution", sh("source <(echo 'git log -p')"), git},
+		{". of a process substitution", sh(". <(echo 'git log -p')"), git},
+		{"eval of a variable", sh(`x='git log -p'; eval "$x"`), git},
+		{"bash -c of a variable", sh(`bash -c "$CMD"`), git},
+		{"eval of a tool's output (over-blocked)", sh(`eval "$(pyenv init -)"`), git},
+		// HEAD moved other than by a checkout.
+		{"symbolic-ref HEAD, then diff --cached", sh("git symbolic-ref HEAD refs/heads/old && git diff --cached"), git},
+		{"replace HEAD, then diff --cached", sh("git replace HEAD HEAD~1 && git diff --cached"), git},
+		{"replace -d, then diff --cached", sh("git replace -d HEAD && git diff --cached"), git},
+		{"fetch --update-head-ok, then diff --cached", sh("git fetch --update-head-ok . HEAD~1:main && git diff --cached"), git},
+		{"branch -f, then diff --cached", sh("git branch -f main HEAD~1 && git diff --cached"), git},
+		{"symbolic-ref read, then diff --cached", sh("git symbolic-ref --short HEAD && git diff --cached"), ""},
+		{"replace -l, then diff --cached", sh("git replace -l && git diff --cached"), ""},
+		// Any git command not known to be read-only, then one that could
+		// print content (F12): refs other than HEAD move too.
+		{"fetch, then diff --cached (over-blocked)", sh("git fetch && git diff --cached"), git},
+		{"diff of a tag at HEAD", sh("git diff same"), ""},
+		{"tag -f, then diff of the tag", sh("git tag -f same HEAD~1; git diff same"), git},
+		{"tag -f, then diff of the tag, PowerShell", ps("git tag -f same HEAD~1; git diff same"), git},
+		{"tag listing, then diff, PowerShell", ps("git tag -l; git diff same"), ""},
+		{"tag -f, then log -p of the tag", sh("git tag -f same HEAD~1 && git log -p -1 same"), git},
+		{"push -f to the repository, then diff", sh("git push -f . HEAD~1:refs/tags/same && git diff same"), git},
+		{"update-ref, then diff", sh("git update-ref refs/tags/same HEAD~1 && git diff same"), git},
+		{"remote add and fetch, then diff", sh("git remote add o . && git fetch o && git diff same"), git},
+		{"a subcommand git does not have, then diff", sh("git frob && git diff same"), git},
+		{"branch listing, then diff", sh("git branch && git diff"), ""},
+		{"branch --list, then diff", sh("git branch --list 'x*' && git diff"), ""},
+		{"tag listing, then diff", sh("git tag -l && git diff"), ""},
+		{"status and rev-parse, then diff", sh("git status && git rev-parse HEAD && git diff"), ""},
+		{"config --get, then diff", sh("git config --get user.name; git diff"), ""},
+		{"remote -v, then diff", sh("git remote -v && git diff"), ""},
+		{"fetch, then log --oneline", sh("git fetch && git log --oneline -1 origin/main"), ""},
+		{"log --output, then diff", sh("git log --oneline --output=x.txt && git diff"), git},
+		// gh and hub.
+		{"gh pr checkout, then diff --cached", sh("gh pr checkout 12 && git diff --cached"), git},
+		{"gh pr checkout, then a read", sh("gh pr checkout 12 && cat README.md"), git},
+		{"gh repo sync, then a read", sh("gh repo sync && cat README.md"), git},
+		{"hub checkout, then a read", sh("hub checkout old && cat README.md"), git},
+		{"hub log -p", sh("hub log -p"), git},
+		{"hub diff HEAD~1", sh("hub diff HEAD~1"), git},
+		{"hub grep in history", sh("hub grep Jane HEAD~1"), git},
+		{"hub show", sh("hub show HEAD~1"), git},
+		{"gh pr diff after options", sh("gh -R o/r pr diff 12"), git},
+		{"gh pr diff", sh("gh pr diff 12"), git},
+		{"gh pr diff --name-only", sh("gh pr diff 12 --name-only"), ""},
+		{"gh pr view", sh("gh pr view 12"), ""},
+		{"a case pattern in $(...), then git log -p", sh("echo $(case esac in a|esac) git --no-pager log -p;; esac)"), git},
+		{"<< in arithmetic, then git log -p", sh("((x<<true))\ngit log -p\ntrue"), git},
+		{"a delimiter $'E', then git log -p", sh("cat <<$'E'\nx\nE\ngit log -p"), git},
+		{"{git,} log", sh("{git,} log --oneline -2"), ""},
+	})
+}
+
+// TestShellGitAbbreviations: git's parse-options takes an unambiguous
+// prefix of a long option. The leak is in history only.
+func TestShellGitAbbreviations(t *testing.T) {
+	root, _ := historyRepo(t)
+	sh := func(cmd string) gate.Event { return gate.Event{Tool: gate.Shell, Command: cmd} }
+	ps := func(cmd string) gate.Event { return gate.Event{Tool: gate.PowerShell, Command: cmd} }
+	git := gate.ReasonGitContent
+	run(t, root, []decideCase{
+		{"--amen", sh("git commit --amen --dry-run -v"), git},
+		{"--am", sh("git commit --am --dry-run -v"), git},
+		{"--dry", sh("git commit --amend --dry -v"), git},
+		{"--verb", sh("git commit --amend --dry-run --verb"), git},
+		{"--verb, PowerShell", ps("git commit --amend --dry-run --verb"), git},
+		{"an ambiguous abbreviation", sh("git commit --dry-run --ver"), git},
+		{"rebase --show-cur", sh("git rebase --show-cur"), git},
+		{"am --show", sh("git am --show"), git},
+		{"reset --har, then a read", sh("git reset --har HEAD~1 && cat README.md"), git},
+		{"stash push --pat", sh("git stash push --pat"), git},
+		{"grep --open", sh("git grep --open x -- README.md"), git},
+		{"--author's value is not an option", sh("git commit --author --verb -m msg"), ""},
+		{"--amend with a message", sh("git commit --amend -m msg"), ""},
+		{"--no-verify with a message", sh("git commit --no-verify -m msg"), ""},
+		{"--mess", sh(`git commit --allow-empty --mess "$MSG"`), ""},
+		{"--no-verb", sh("git commit --amend --dry-run -v --no-verb"), ""},
+		// -- as an option's value hides later options.
+		{"log --grep --", sh("git log --grep -- -p"), git},
+		{"log -n --", sh("git log -n -- -p"), git},
+		{"log, an unknown option before --", sh("git log --frobnicate -- -p"), git},
+		{"log -- of a path", sh("git log --oneline -- README.md"), ""},
+	})
+
+	// The finding staged: the staged diff shows it.
+	staged := newRepo(t, cleanFiles())
+	write(t, staged, leakVisual, slicer("student", "full_name", "Doe, Jane"))
+	gitIn(t, staged, "add", leakVisual)
+	if err := os.Remove(filepath.Join(staged, filepath.FromSlash(leakVisual))); err != nil {
+		t.Fatal(err)
+	}
+	run(t, staged, []decideCase{
+		{"status --verb", sh("git status --verb"), git},
+		{"status --verbo", sh("git status --verbo"), git},
+		{"status --verb, PowerShell", ps("git status --verb"), git},
+		{"commit --dry -v", sh("git commit --dry -v"), git},
+		{"commit --dry-r -v", sh("git commit --dry-r -v"), git},
+		{"commit --dry-run --verb", sh("git commit --dry-run --verb"), git},
+		{"status --short", sh("git status --short"), ""},
+		{"status --no-verb", sh("git status --verbose --no-verb"), ""},
+		// -- as an option's value is no end of the options.
+		{"-m --", sh("git commit --dry-run -m -- -v"), git},
+		{"--message --", sh("git commit --dry-run --message -- -v"), git},
+		{"--trailer --", sh("git commit --dry-run --trailer -- -v"), git},
+		{"--template --", sh("git commit --dry-run --template -- -v"), git},
+		{"-t --", sh("git commit --dry-run -t -- -v"), git},
+		{"-m -- -p", sh("git commit -m -- -p"), git},
+		{"-- after a message", sh("git commit --dry-run -m msg -- -v"), ""},
+		// The short and porcelain formats print no diff with -v.
+		{"case words echoed, then git diff --cached", sh("echo case x in; (git diff --cached)"), git},
+		// A format negated, or -u's value, is no short format.
+		{"status -v -ufalse", sh("git status -v -ufalse"), git},
+		{"status -v -uno", sh("git status -v -uno"), git},
+		{"status -s --no-short -v", sh("git status -s --no-short -v"), git},
+		{"status --porcelain --no-porcelain -v", sh("git status --porcelain --no-porcelain -v"), git},
+		{"status -v -z --no-null", sh("git status -v -z --no-null"), git},
+		{"status --porcelain --no-po -v", sh("git status --porcelain --no-po -v"), git},
+		{"commit -v --short --dry-run --no-short", sh("git commit -v --short --dry-run --no-short"), git},
+		{"status --no-short --short -v", sh("git status --no-short --short -v"), ""},
+		{"status --short -v, PowerShell", ps("git status --short -v"), ""},
+		{"status -s --no-short -v, PowerShell", ps("git status -s --no-short -v"), git},
+		{"status --short -v", sh("git status --short -v"), ""},
+		{"status -s -v", sh("git status -sv"), ""},
+		{"status --porcelain -v", sh("git status --porcelain -v"), ""},
+		{"status --porcelain=v2 -vv", sh("git status --porcelain=v2 -vv"), ""},
+		{"status --short --long -v", sh("git status --short --long -v"), git},
+		{"commit --short -v", sh("git commit --short -v"), ""},
+		{"commit --porcelain -v", sh("git commit --porcelain -v"), ""},
+		{"commit --long -v", sh("git commit --long -v"), git},
+		// A false value turns nothing on.
+		{"-c commit.verbose=false", sh("git -c commit.verbose=false commit --dry-run"), ""},
+		{"-c commit.verbose=0", sh("git -c commit.verbose=0 commit --dry-run"), ""},
+		{"-c commit.verbose=true", sh("git -c commit.verbose=true commit --dry-run"), git},
+		{"-c stash.showPatch=false", sh("git -c stash.showPatch=false stash show"), ""},
+	})
+}
+
+// TestShellGitIndexChange: a git command that changes the index or HEAD,
+// then one that could print file content, which the gate would judge
+// against the index and HEAD as they were before. The finding is in the
+// working tree only, not yet added.
+func TestShellGitIndexChange(t *testing.T) {
+	root := newRepo(t, cleanFiles())
+	write(t, root, leakVisual, slicer("student", "full_name", "Doe, Jane"))
+	sh := func(cmd string) gate.Event { return gate.Event{Tool: gate.Shell, Command: cmd} }
+	git := gate.ReasonGitContent
+	run(t, root, []decideCase{
+		{"add, then diff --cached", sh("git add -A && git diff --cached"), git},
+		{"add, then diff --staged", sh("git add -A && git diff --staged"), git},
+		{"add, then diff HEAD", sh("git add -A; git diff HEAD"), git},
+		{"add, then commit --dry-run -v", sh("git add -A && git commit --dry-run -v"), git},
+		{"add and commit, then show", sh("git add -A && git commit -qm wip && git show"), git},
+		{"add and commit, then diff HEAD~1", sh("git add -A && git commit -qm wip && git diff HEAD~1"), git},
+		{"add and stash, then stash show -p", sh("git add -A && git stash && git stash show -p"), git},
+		{"stash -u, then stash show -p", sh("git stash -u && git stash show -p --include-untracked"), git},
+		{"checkout of paths, then diff --cached", sh("git checkout HEAD~1 -- pbip && git diff --cached"), git},
+		{"checkout of paths, then status -v", sh("git checkout HEAD~1 -- pbip && git status -v"), git},
+		{"add in a substitution of the diff", sh(`git diff --cached "$(git add -A)"`), git},
+		// Nothing a later command prints is content.
+		{"add, commit and push", sh(`git add -A && git commit -m "Add the report" && git push`), ""},
+		{"stash pop, then a commit with a here-document message",
+			sh("git stash pop && git commit -am \"$(cat <<'EOF'\nA message\nEOF\n)\""), ""},
+		{"add, then status", sh("git add -A && git status"), ""},
+		{"add, then log --oneline", sh("git add -A && git log --oneline -3"), ""},
+		{"a branch, then diff", sh("git checkout -b topic && git diff --stat"), ""},
+	})
+}
+
+// TestShellGitCommitVerboseConfig: commit.verbose turns on the diff of a
+// dry run as -v does. The leak is committed, then deleted from the work
+// tree and not committed: the diff shows it, the tree is clean.
+func TestShellGitCommitVerboseConfig(t *testing.T) {
+	root := newRepo(t, leakyFiles())
+	if err := os.Remove(filepath.Join(root, filepath.FromSlash(leakVisual))); err != nil {
+		t.Fatal(err)
+	}
+	sh := func(cmd string) gate.Event { return gate.Event{Tool: gate.Shell, Command: cmd} }
+	git := gate.ReasonGitContent
+	run(t, root, []decideCase{
+		{"commit -a --dry-run, no commit.verbose", sh("git commit -a --dry-run"), ""},
+		{"commit -a --dry-run -v", sh("git commit -a --dry-run -v"), git},
+	})
+	for _, value := range []string{"true", "1", "2", "yes"} {
+		gitIn(t, root, "config", "commit.verbose", value)
+		run(t, root, []decideCase{
+			{"commit -a --dry-run, commit.verbose " + value, sh("git commit -a --dry-run"), git},
+			{"commit -a --dry-run --no-verbose, commit.verbose " + value, sh("git commit -a --dry-run --no-verbose"), ""},
+		})
+	}
+	gitIn(t, root, "config", "commit.verbose", "false")
+	run(t, root, []decideCase{{"commit -a --dry-run, commit.verbose false", sh("git commit -a --dry-run"), ""}})
+
+	// A key set in the same line is read by git after the gate looked.
+	ps := func(cmd string) gate.Event { return gate.Event{Tool: gate.PowerShell, Command: cmd} }
+	run(t, root, []decideCase{
+		{"commit.verbose set in the line", sh("git config commit.verbose true && git commit -a --dry-run"), git},
+		{"commit.verbose set in the commit's own message substitution",
+			sh(`git commit -a --dry-run -m "$(git config commit.verbose 1)"`), git},
+		// Options that take a value, and read options in value position.
+		{"--comment's value is --get", sh("git config --comment --get commit.verbose true; git commit -a --dry-run"), git},
+		{"set --comment's value is -l", sh("git config set --comment -l commit.verbose true; git commit -a --dry-run"), git},
+		{"--comment's value is a harmless key", sh("git config --comment user.name commit.verbose true && git commit -a --dry-run"), git},
+		{"--comm abbreviated", sh("git config --comm --get commit.verbose true; git commit -a --dry-run"), git},
+		{"--file's value", sh("git config --file .git/config commit.verbose true && git commit -a --dry-run"), git},
+		// A write mode, whatever the keys.
+		{"--rename-section", sh("git config color.verbose true && git config --rename-section color commit && git commit -a --dry-run"), git},
+		{"--add of a harmless key", sh("git config --add user.name x && git status"), git},
+		{"rename-section", sh("git config rename-section color commit && git status"), git},
+		{"--edit", sh("git config --edit && git status"), git},
+		{"a harmless key with a pattern", sh("git config user.name x y && git status"), git},
+		// Reads.
+		{"a read of one key", sh("git config commit.verbose && git commit -a --dry-run"), ""},
+		{"--get-regexp", sh("git config --get-regexp 'commit.*' && git status"), ""},
+		{"--list", sh("git config --list && git status"), ""},
+		{"a harmless key with a --comment", sh("git config --comment 'a note' user.name x && git status"), ""},
+		// The environment, set earlier in the line.
+		{"export GIT_PAGER", sh("export GIT_PAGER=less; git log --oneline"), git},
+		{"an assignment, then export", sh("GIT_CONFIG_COUNT=1; export GIT_CONFIG_COUNT; git status"), git},
+		{"GIT_CONFIG_PARAMETERS assigned", sh("GIT_CONFIG_PARAMETERS=\"'commit.verbose'='1'\"; git commit -a --dry-run"), git},
+		{"export GIT_CONFIG_GLOBAL", sh("export GIT_CONFIG_GLOBAL=x.cfg && git status"), git},
+		{"export of an identity", sh("export GIT_AUTHOR_NAME=x; git commit -m msg"), ""},
+		// The configuration written other than by git config.
+		{"printf appending to .git/config", sh(`printf '[commit]\n\tverbose = true\n' >> .git/config && git commit -a --dry-run`), git},
+		{"sed -i of .git/config", sh("sed -i 's/x/y/' .git/config && git status"), git},
+		{"cp onto .git/config", sh("cp other.cfg .git/config && git status"), git},
+		{"tee into .git/config", sh("tee -a .git/config < other.cfg && git status"), git},
+		{"a write from inside the git directory", sh("cd .git && printf x >> config && cd .. && git status"), git},
+		{"HOME assigned before git", sh("HOME=/tmp/h git commit -a --dry-run"), git},
+		{"HOME exported", sh("export HOME=/tmp/h; git status"), git},
+		{"XDG_CONFIG_HOME assigned", sh("XDG_CONFIG_HOME=/tmp/x; git commit -a --dry-run"), git},
+		{"a read of .git/config", sh("cat .git/config && git status"), ""},
+		// User-level configuration, and a target that cannot be told.
+		{"printf appending to ~/.gitconfig", sh(`printf '[commit]\n\tverbose = true\n' >> ~/.gitconfig && git commit -a --dry-run`), git},
+		{"printf appending to the XDG config", sh(`printf x >> $HOME/.config/git/config && git commit -a --dry-run`), git},
+		{"tee into ~/.gitconfig", sh(`printf x | tee -a ~/.gitconfig && git commit -a --dry-run`), git},
+		{"a write to /etc/gitconfig", sh(`printf x >> /etc/gitconfig && git commit -a --dry-run`), git},
+		{"a write to a target that cannot be told", sh(`printf x >> "$(git rev-parse --git-path config)" && git commit -a --dry-run`), git},
+		{"a write to an unrelated file", sh(`printf x >> notes.txt && git commit -a --dry-run`), ""},
+		// A git configuration by its name, wherever it is (Git for
+		// Windows keeps the system file under its install prefix).
+		{"a write to a gitconfig anywhere", sh(`printf x >> /opt/tools/git/etc/gitconfig && git commit -a --dry-run`), git},
+		{"a write to git/config anywhere", sh(`printf x >> /tmp/x/git/config && git commit -a --dry-run`), git},
+		{"commit.verbose set in the line, PowerShell", ps("git config commit.verbose true; git commit -a --dry-run"), git},
+		{"commit.verbose unset in the line", sh("git config --unset commit.verbose && git commit -a --dry-run"), git},
+		{"a key from a variable", sh(`git config "$K" true && git status`), git},
+		{"an alias set in the line", sh("git config alias.st 'status -v' && git status"), git},
+		{"an identity set in the line", sh("git config user.email pat@example.com && git commit -m msg"), ""},
+		{"an identity set in the line, PowerShell", ps("git config user.name 'Example, Pat'; git commit -m msg"), ""},
+		{"a key read in the line", sh("git config --get commit.verbose && git commit -a --dry-run"), ""},
+		{"a key read with get", sh("git config get commit.verbose && git status"), ""},
+		{"a key set, then push", sh("git config commit.verbose true && git push"), ""},
+	})
+
+	// A submodule's changes shown as a patch are files the name-only
+	// check does not list.
+	run(t, root, []decideCase{
+		{"diff of a path away", sh("git diff -- README.md"), ""},
+		{"diff --submodule=diff", sh("git diff --submodule=diff -- README.md"), git},
+		{"diff --submodule=short", sh("git diff --submodule=short -- README.md"), ""},
+	})
+	gitIn(t, root, "config", "diff.submodule", "diff")
+	run(t, root, []decideCase{
+		{"diff, diff.submodule diff", sh("git diff -- README.md"), git},
+		{"diff --submodule=log, diff.submodule diff", sh("git diff --submodule=log -- README.md"), ""},
+		{"diff --stat, diff.submodule diff", sh("git diff --stat -- README.md"), ""},
+	})
+}
+
 func TestShellGitStashShowPatch(t *testing.T) {
 	root := newRepo(t, cleanFiles())
 	gitIn(t, root, "config", "stash.showPatch", "true")
@@ -290,6 +641,10 @@ func TestShellGitUnknownWords(t *testing.T) {
 		{"commit -m of quoted ${!p@}", sh(`git commit -m "${!p@}"`), git},
 		{"commit -m of a quoted array's keys", sh(`git commit -m "${!a[@]}"`), git},
 		{"commit -m of quoted $*", sh(`git commit -m "$*"`), ""},
+		{"commit -m of a quoted zsh array", sh(`git commit -m "$a[@]"`), git},
+		{"commit -m of a zsh line split", sh(`git commit -m "${(f)X}"`), git},
+		{"commit -m of a zsh word split", sh(`git commit -m "${(s: :)X}"`), git},
+		{"commit -m of a quoted zsh subscript", sh(`git commit -m "$a[1]"`), git},
 		{"commit -m of quoted ${*}", sh(`git commit -m "${*}"`), ""},
 		// An unquoted glob expands to several words.
 		{"commit -m of a glob", sh(`git commit -m *`), git},

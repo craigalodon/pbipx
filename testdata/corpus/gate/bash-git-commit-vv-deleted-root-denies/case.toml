@@ -1,0 +1,8 @@
+description = "git commit -vv with a file under a root deleted from the working tree: with nothing staged the commit fails and prints the working tree's diff, which holds the deleted lines, as git status -vv does; the value is only in history"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
+deleted     = ["pbip/Example.Report/definition/pages/0000/visuals/0001/visual.json"]
+known       = "predecessor"

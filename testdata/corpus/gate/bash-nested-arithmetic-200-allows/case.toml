@@ -1,0 +1,6 @@
+description = "echo of arithmetic nested 200 deep reads nothing, and the gate reads it in linear time, well within its watchdog. Plants no value in the command; the tree holds a slicer under the protected root, which the line does not read"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = ["Doe, Jane"]

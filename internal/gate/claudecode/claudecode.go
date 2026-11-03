@@ -19,6 +19,7 @@ import (
 	"io"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/craigalodon/pbipx/internal/gate"
 )
@@ -46,6 +47,7 @@ const (
 	toolSearch gate.Tool = "search"
 	toolShell  gate.Tool = "shell"
 	toolWrite  gate.Tool = "write"
+	toolEdit   gate.Tool = "edit"
 	toolPS     gate.Tool = "powershell"
 	toolLSP    gate.Tool = "lsp"
 	toolOther  gate.Tool = "other"
@@ -87,8 +89,9 @@ func Deny(reason, message string) gate.Decision {
 //     is not a string, or an input that is not an object, is errEvent. With
 //     no path the gate takes the call to touch the working directory's
 //     whole project.
-//   - Write, Edit and MultiEdit are a write of tool_input.file_path, and
-//     NotebookEdit a write of tool_input.notebook_path, or file_path when
+//   - Write is a write of tool_input.file_path; Edit and MultiEdit are an
+//     edit of it (a write, and a read: the result shows a snippet), and
+//     NotebookEdit an edit of tool_input.notebook_path, or file_path when
 //     there is none; a NotebookEdit with neither is errEvent.
 //   - Every other tool is "other", Glob included: it prints file names, and
 //     names are schema (principle 1). behavior.md lists Read, Grep, Bash,
@@ -141,8 +144,12 @@ func ParseEvent(data []byte) (gate.Event, error) {
 	case "Bash":
 		ev.Tool = toolShell
 		ev.Command, err = field("command")
-	case "Write", "Edit", "MultiEdit":
+	case "Write":
 		ev.Tool = toolWrite
+		ev.Path, err = field("file_path")
+	case "Edit", "MultiEdit":
+		// The result shows a snippet of the file around the edit.
+		ev.Tool = toolEdit
 		ev.Path, err = field("file_path")
 	case "PowerShell":
 		ev.Tool = toolPS
@@ -154,7 +161,7 @@ func ParseEvent(data []byte) (gate.Event, error) {
 		ev.Tool = toolLSP
 		ev.Paths, err = lspPaths(raw.ToolInput)
 	case "NotebookEdit":
-		ev.Tool = toolWrite
+		ev.Tool = toolEdit
 		ev.Path, err = field("notebook_path")
 		if err == nil && ev.Path == "" {
 			ev.Path, err = field("file_path")
@@ -175,12 +182,43 @@ func ParseEvent(data []byte) (gate.Event, error) {
 // gate.Decide and renders the decision. It returns ExitAllow or ExitDeny,
 // and never anything else; a panic anywhere below is a deny.
 func Run(stdin io.Reader, stdout, stderr io.Writer, opts gate.Options) (code int) {
+	return runWithin(stdin, stdout, stderr, opts, Watchdog, decide)
+}
+
+// Watchdog is how long the gate decides before it denies, whatever the
+// decision code is doing: a hook that times out lets the call proceed, so
+// a hang becomes a deny well before the hook timeout pbipx init sets (300
+// seconds).
+const Watchdog = 120 * time.Second
+
+// runWithin is Run with the decision made by decideFn, which is denied
+// with internal-error when it panics or takes longer than limit. Past the
+// limit the decision goes on, discarded, until the process exits.
+func runWithin(stdin io.Reader, stdout, stderr io.Writer, opts gate.Options, limit time.Duration,
+	decideFn func(io.Reader, gate.Options) gate.Decision,
+) (code int) {
 	defer func() {
 		if recover() != nil {
 			code = Render(Deny(ReasonInternalError, "the gate failed"), stdout, stderr)
 		}
 	}()
-	return Render(decide(stdin, opts), stdout, stderr)
+	done := make(chan gate.Decision, 1)
+	go func() {
+		defer func() {
+			if recover() != nil {
+				done <- Deny(ReasonInternalError, "the gate failed")
+			}
+		}()
+		done <- decideFn(stdin, opts)
+	}()
+	timer := time.NewTimer(limit)
+	defer timer.Stop()
+	select {
+	case d := <-done:
+		return Render(d, stdout, stderr)
+	case <-timer.C:
+		return Render(Deny(ReasonInternalError, "the gate took too long to decide"), stdout, stderr)
+	}
 }
 
 func decide(stdin io.Reader, opts gate.Options) gate.Decision {

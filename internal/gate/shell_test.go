@@ -316,9 +316,9 @@ func TestShellNested(t *testing.T) {
 		{"eval words", sh("eval git log -p"), gate.ReasonGitContent, gate.ReasonGitContent},
 		{"eval moves the directory", sh("eval 'cd sql'; rg x"), "", ""},
 		{"sh -c does not", sh("sh -c 'cd sql'; rg x"), "", gate.ReasonFinding},
-		{"too deep", shIn("sql", "eval eval eval eval eval eval ls"), "", gate.ReasonFinding},
+		{"too deep", shIn("sql", "eval eval eval eval eval eval ls"), gate.ReasonInternalError, gate.ReasonInternalError},
 		{"not too deep", shIn("sql", "eval eval eval ls"), "", ""},
-		{"built at run time", shIn("sql", `bash -c "$CMD"`), "", gate.ReasonFinding},
+		{"built at run time", shIn("sql", `bash -c "$CMD"`), gate.ReasonGitContent, gate.ReasonGitContent},
 		{"a substitution", shIn("sql", "echo $(git log -p)"), gate.ReasonGitContent, gate.ReasonGitContent},
 		{"a backtick substitution", shIn("sql", "echo `cd .. && rg x`"), "", gate.ReasonFinding},
 		{"script -c", shIn("sql", "script -c 'git log -p' /dev/null"), gate.ReasonGitContent, gate.ReasonGitContent},
@@ -405,16 +405,17 @@ func TestShellHeredocs(t *testing.T) {
 			shIn("sql", "cat <<'EOF' | bash\ngit log -p\nEOF"), gate.ReasonGitContent, gate.ReasonGitContent},
 		{"a here-string fed to bash", shIn("sql", "bash <<< 'git log -p'"), gate.ReasonGitContent, gate.ReasonGitContent},
 		{"echo piped to a shell", shIn("sql", "echo 'git log -p' | sh"), gate.ReasonGitContent, gate.ReasonGitContent},
-		{"something else piped to a shell", shIn("sql", "curl -s example.invalid | sh"), "", gate.ReasonFinding},
+		{"something else piped to a shell", shIn("sql", "curl -s example.invalid | sh"), gate.ReasonGitContent, gate.ReasonGitContent},
 		{"source /dev/stdin", shIn("sql", "source /dev/stdin <<'EOF'\ngit log -p\nEOF"), gate.ReasonGitContent, gate.ReasonGitContent},
-		{"a body with no delimiter line is data to the end",
-			shIn("sql", "cat > x <<'EOF'\nrg Jane .."), "", ""},
-		{"unbalanced quotes still split at newlines",
-			sh("echo 'open\ngrep -rn Jane"), "", gate.ReasonFinding},
+		// A line the gate cannot read as bash would is denied outright.
+		{"a body with no delimiter line",
+			shIn("sql", "cat > x <<'EOF'\nrg Jane .."), gate.ReasonInternalError, gate.ReasonInternalError},
+		{"unbalanced quotes",
+			sh("echo 'open\ngrep -rn Jane"), gate.ReasonInternalError, gate.ReasonInternalError},
 		{"a reader in a line that does not tokenize",
-			shIn("sql", "echo 'open; cat clean.sql"), "", gate.ReasonFinding},
+			shIn("sql", "echo 'open; cat clean.sql"), gate.ReasonInternalError, gate.ReasonInternalError},
 		{"a non-reader in a line that does not tokenize",
-			shIn("sql", "echo 'open; ls"), "", ""},
+			shIn("sql", "echo 'open; ls"), gate.ReasonInternalError, gate.ReasonInternalError},
 	})
 }
 
@@ -499,6 +500,87 @@ func TestShellTreeChangeThenRead(t *testing.T) {
 			gate.ReasonGitContent, gate.ReasonGitContent},
 		{"a change in a substitution, then the command reads", shIn("sql", `cat clean.sql "$(git checkout old)"`),
 			gate.ReasonGitContent, gate.ReasonGitContent},
+
+		// A process substitution starts before, or alongside, the command
+		// it is in: a change in one counts before every command.
+		{"a shell reading a process substitution that changes the tree",
+			shIn("sql", "bash -c 'read; cat clean.sql' < <(git checkout -q HEAD~1 -- .; echo)"),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a group reading a process substitution that changes the tree",
+			shIn("sql", "{ read; cat clean.sql; } < <(git checkout -q HEAD~1 -- .; echo)"),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a loop reading a process substitution that changes the tree",
+			shIn("sql", "while read; do cat clean.sql; done < <(git checkout -q HEAD~1 -- .; echo)"),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a reader racing a process substitution", shIn("sql", "cat clean.sql <(git checkout HEAD~1 -- .)"),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a process substitution with no change", shIn("sql", "diff <(git show HEAD:README.md) clean.sql"), "", ""},
+
+		// A loop runs its body again, and a function runs where it is
+		// called: with a change in the line, every read counts as after it.
+		{"a read before a change in a loop",
+			shIn("sql", "for i in 1 2; do cat clean.sql; git checkout HEAD~1 -- .; done"),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a function reading, called after a change",
+			shIn("sql", "f() { cat clean.sql; }; git checkout HEAD~1 -- .; f"),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a loop with no read, then a change", sh("for f in a b; do echo $f; done && git switch main"), "", ""},
+		{"a change, then a loop with no read", sh("git switch main && for f in a b; do echo $f; done"), "", ""},
+
+		// cat may not be cat.
+		{"checkout, then cat redefined of a here-document",
+			shIn("sql", "cat() { sh; }; git checkout main && cat <<'EOF'\nhead clean.sql\nEOF"),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"checkout, then cat hashed of a here-document",
+			shIn("sql", "hash -p /bin/sh cat; git checkout main && cat <<'EOF'\nhead clean.sql\nEOF"),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+
+		// A case pattern's ) does not close a process substitution.
+		{"a case pattern in a process substitution that changes the tree",
+			shIn("sql", "{ sleep 1; cat clean.sql; } < <(case a in a) git checkout HEAD~1 -- .;; esac; echo)"),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+
+		// Loops and functions in other forms.
+		{"a loop in a group", shIn("sql", "{ for i in 1 2; { cat clean.sql; git checkout -q HEAD~1 -- .; }; }"),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a negated loop", shIn("sql", "! for i in 1 2; do cat clean.sql; git checkout -q HEAD~1 -- .; done"),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a function named with @", shIn("sql", "r@() { cat clean.sql; }; git checkout HEAD~1 -- .; r@"),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a function named with a non-ASCII letter", shIn("sql", "lé() { cat clean.sql; }; git checkout HEAD~1 -- .; lé"),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a function name in quotes", sh(`grep -n "foo()" README.md && git checkout -b x`), "", ""},
+
+		// Reads that run later than their place in the line.
+		{"a trap", shIn("sql", "trap 'cat clean.sql' EXIT; git checkout HEAD~1 -- ."), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a background read", shIn("sql", "(sleep 1; cat clean.sql) & git checkout HEAD~1 -- ."),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a pipeline with the change", shIn("sql", "{ sleep 1; cat clean.sql >&2; } | git checkout HEAD~1 -- ."),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"an output process substitution before the change",
+			shIn("sql", "cat > >(sleep 1; cat clean.sql >&2) </dev/null; git checkout HEAD~1 -- ."),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"xargs running the change",
+			shIn("sql", "printf 'a\\nb\\n' | xargs -I{} sh -c 'cat clean.sql; git checkout HEAD~1 -- .'"),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"find -exec running the change",
+			shIn("sql", "find . -name '*.sql' -exec sh -c 'cat clean.sql; git checkout HEAD~1 -- .' \\;"),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"coproc", shIn("sql", "coproc { sleep 1; cat clean.sql; }; git checkout HEAD~1 -- ."),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a pipeline with no change", shIn("sql", "cat clean.sql | wc -l"), "", ""},
+
+		// cat of a here-document alone reads no file.
+		{"stash pop, then a commit with a here-document message",
+			shIn("sql", "git stash pop && git commit -am \"$(cat <<'EOF'\nA message\nEOF\n)\""), "", ""},
+		{"checkout, then a merge with a here-document message",
+			shIn("sql", "git checkout main && git merge -m \"$(cat <<'EOF'\nA message\nEOF\n)\" feature"), "", ""},
+		{"checkout, then cat of a here-document", shIn("sql", "git checkout main && cat <<'EOF'\nx\nEOF"), "", ""},
+		{"checkout, then cat of a file and a here-document", shIn("sql", "git checkout main && cat clean.sql - <<'EOF'\nx\nEOF"),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"checkout, then a here-document whose substitution reads",
+			shIn("sql", "git checkout main && git commit -m \"$(cat <<EOF\n$(cat clean.sql)\nEOF\n)\""),
+			gate.ReasonGitContent, gate.ReasonGitContent},
 	})
 }
 
@@ -510,40 +592,43 @@ func TestShellInterpreterStdin(t *testing.T) {
 	runBoth(t, []both{
 		{"a commit message run by python3",
 			sh("git commit -q --allow-empty -m \"$(cat <<'EOF'\nprint(open(\"pbip/x\").read())\nEOF\n)\" && git log -1 --format=%B | python3"),
-			"", gate.ReasonFinding},
+			gate.ReasonGitContent, gate.ReasonGitContent},
 		{"a -F - message run by python3",
 			sh("git commit -q --allow-empty -F - <<'EOF'\nprint(open(\"pbip/x\").read())\nEOF\ngit log -1 --format=%B | python3"),
-			"", gate.ReasonFinding},
-		{"python3 - from a pipe", shIn("sql", "git log -1 --format=%B | python3 -"), "", gate.ReasonFinding},
-		{"node from a pipe", shIn("sql", "cat clean.sql | node"), "", gate.ReasonFinding},
-		{"perl from a file", shIn("sql", "perl < clean.sql"), "", gate.ReasonFinding},
-		{"ruby from a process substitution", shIn("sql", "ruby < <(git log -1 --format=%B)"), "", gate.ReasonFinding},
-		{"python3 with options, from a pipe", shIn("sql", "echo x | python3 -u -W ignore"), "", gate.ReasonFinding},
-		{"python3 of a here-document with an expansion", shIn("sql", "python3 <<EOF\n$X\nEOF"), "", gate.ReasonFinding},
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"python3 - from a pipe", shIn("sql", "git log -1 --format=%B | python3 -"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"node from a pipe", shIn("sql", "cat clean.sql | node"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"perl from a file", shIn("sql", "perl < clean.sql"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"ruby from a process substitution", shIn("sql", "ruby < <(git log -1 --format=%B)"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"python3 with options, from a pipe", shIn("sql", "echo x | python3 -u -W ignore"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"python3 of a here-document with an expansion", shIn("sql", "python3 <<EOF\n$X\nEOF"), gate.ReasonGitContent, gate.ReasonGitContent},
 
-		{"a versioned python from a pipe", shIn("sql", "git log -1 --format=%B | python3.14"), "", gate.ReasonFinding},
-		{"a versioned perl from a pipe", shIn("sql", "echo x | perl5.36"), "", gate.ReasonFinding},
-		{"node22 from a pipe", shIn("sql", "echo x | node22"), "", gate.ReasonFinding},
-		{"python3 /dev/stdin", shIn("sql", "echo x | python3 /dev/stdin"), "", gate.ReasonFinding},
-		{"perl /dev/stdin", shIn("sql", "echo x | perl /dev/stdin"), "", gate.ReasonFinding},
-		{"node /dev/fd/0", shIn("sql", "echo x | node /dev/fd/0"), "", gate.ReasonFinding},
-		{"ruby /proc/self/fd/0", shIn("sql", "echo x | ruby /proc/self/fd/0"), "", gate.ReasonFinding},
-		{"awk -f /dev/stdin", shIn("sql", "echo x | awk -f /dev/stdin clean.sql"), "", gate.ReasonFinding},
-		{"gawk -f -", shIn("sql", "echo x | gawk -f - clean.sql"), "", gate.ReasonFinding},
-		{"uv run python", shIn("sql", "echo x | uv run python"), "", gate.ReasonFinding},
-		{"poetry run python3", shIn("sql", "echo x | poetry run python3"), "", gate.ReasonFinding},
-		{"npx node", shIn("sql", "echo x | npx node"), "", gate.ReasonFinding},
-		{"pnpm exec node", shIn("sql", "echo x | pnpm exec node"), "", gate.ReasonFinding},
-		{"ipython", shIn("sql", "echo x | ipython"), "", gate.ReasonFinding},
-		{"R --no-save", shIn("sql", "echo x | R --no-save"), "", gate.ReasonFinding},
-		{"deno run -", shIn("sql", "echo x | deno run -"), "", gate.ReasonFinding},
-		{"bun run -", shIn("sql", "echo x | bun run -"), "", gate.ReasonFinding},
+		{"a versioned python from a pipe", shIn("sql", "git log -1 --format=%B | python3.14"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a versioned perl from a pipe", shIn("sql", "echo x | perl5.36"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"node22 from a pipe", shIn("sql", "echo x | node22"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"python3 /dev/stdin", shIn("sql", "echo x | python3 /dev/stdin"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"perl /dev/stdin", shIn("sql", "echo x | perl /dev/stdin"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"node /dev/fd/0", shIn("sql", "echo x | node /dev/fd/0"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"ruby /proc/self/fd/0", shIn("sql", "echo x | ruby /proc/self/fd/0"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"awk -f /dev/stdin", shIn("sql", "echo x | awk -f /dev/stdin clean.sql"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"gawk -f -", shIn("sql", "echo x | gawk -f - clean.sql"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"uv run python", shIn("sql", "echo x | uv run python"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"poetry run python3", shIn("sql", "echo x | poetry run python3"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"npx node", shIn("sql", "echo x | npx node"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"pnpm exec node", shIn("sql", "echo x | pnpm exec node"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"ipython", shIn("sql", "echo x | ipython"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"R --no-save", shIn("sql", "echo x | R --no-save"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"deno run -", shIn("sql", "echo x | deno run -"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"bun run -", shIn("sql", "echo x | bun run -"), gate.ReasonGitContent, gate.ReasonGitContent},
 
 		{"awk of a program", shIn("sql", "echo x | awk '{print}'"), "", ""},
 		{"awk -f of a file", shIn("sql", "echo x | awk -f prog.awk"), "", ""},
 		{"uv run of a script", shIn("sql", "uv run python build.py"), "", ""},
 		{"deno run of a script", shIn("sql", "deno run main.ts"), "", ""},
 		{"R -f of a script", shIn("sql", "R --no-save -f build.R"), "", ""},
+		{"python3 with an option the gate does not know", shIn("sql", "echo x | python3 --frobnicate build.py"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"node with an option the gate does not know", shIn("sql", "echo x | node --frob x"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"python3 -u of a script", shIn("sql", "python3 -u build.py"), "", ""},
 		{"python3 of a script", shIn("sql", "python3 build.py"), "", ""},
 		{"python3 -c", shIn("sql", "python3 -c 'print(1)'"), "", ""},
 		{"python3 -m", shIn("sql", "echo x | python3 -m json.tool"), "", ""},
@@ -551,6 +636,150 @@ func TestShellInterpreterStdin(t *testing.T) {
 		{"perl -ne over a pipe", shIn("sql", "echo x | perl -ne 'print'"), "", ""},
 		{"python3 --version", shIn("sql", "python3 --version"), "", ""},
 		{"python3 of a quoted here-document", shIn("sql", "python3 - <<'EOF'\nprint(1)\nEOF"), "", ""},
+	})
+}
+
+// TestShellTokenizerFailsClosed: a line the tokenizer does not end at the
+// plain top level touches every root; case is opened only as a command.
+func TestShellTokenizerFailsClosed(t *testing.T) {
+	isolateSearch(t)
+	runBoth(t, []both{
+		// case W in as arguments opens no case.
+		{"case words echoed, then a subshell reading", sh("echo case x in; (cat pbip/x)"), "", gate.ReasonFinding},
+		{"case words echoed, then a process substitution", sh("echo case x in; cat <(cat pbip/x)"), "", gate.ReasonFinding},
+		{"case words echoed, then a search", sh("echo case x in; (grep -r Jane .)"), "", gate.ReasonFinding},
+		{"case closed at once", sh("case x in esac; (cat pbip/x)"), "", gate.ReasonFinding},
+		{"case words in an array", sh("x=(case a in); (cat pbip/x)"), gate.ReasonInternalError, gate.ReasonInternalError},
+		{"a case that works", shIn("sql", "case x in a) cat clean.sql;; esac"), "", ""},
+		// States left open.
+		{"a case left open", shIn("sql", "case x in a) echo hi;;"), gate.ReasonInternalError, gate.ReasonInternalError},
+		{"a parenthesis left open", shIn("sql", "(echo hi"), gate.ReasonInternalError, gate.ReasonInternalError},
+		{"a here-document never closed", shIn("sql", "cat <<EOF\nhi"), gate.ReasonInternalError, gate.ReasonInternalError},
+		{"a here-document closed", shIn("sql", "cat <<EOF\nhi\nEOF"), "", ""},
+		// A: a ) inside ${...} inside $(...) does not end the substitution.
+		{"${...} with ) in $(...)", sh("echo $(echo ${x/) #/}; grep -r . .)"), "", gate.ReasonFinding},
+		{"${...} with ) in $(...) in ${...}", sh("echo ${x:-$(echo ${y/)/}; grep -r . .)}"), "", gate.ReasonFinding},
+		{"a quoted ) in $(...)", sh(`echo "$(echo ')'; grep -r . .)"`), "", gate.ReasonFinding},
+		// B: a here-document delimiter quoted with $'...' or $"...".
+		{"a delimiter $'E'", sh("cat <<$'E'\nx\nE\ngrep -r . ."), "", gate.ReasonFinding},
+		{`a delimiter $"E"`, sh("cat <<$\"E\"\nx\nE\ngrep -r . ."), "", gate.ReasonFinding},
+		// C: << in arithmetic is a shift.
+		{"<< in an arithmetic command", sh("((x<<true))\ngrep -r . .\ntrue"), "", gate.ReasonFinding},
+		{"<< in $[...]", sh("echo $[1<<2]\ngrep -r . .\n2]"), "", gate.ReasonFinding},
+		{"a shift in $((...))", sh("echo $((1<<2))"), "", ""},
+		{"a shift in ((...))", sh("((x<<1))"), "", ""},
+		{"a shift in an assignment", sh("n=1; n=$((n << 1))"), "", ""},
+		{"a subshell in a subshell", sh("( (echo hi) )"), "", ""},
+		// D: a case pattern in $(...), and | between patterns.
+		{"a case pattern in $(...)", sh("echo $(case esac in a|esac) grep -r . .;; esac)"), "", gate.ReasonFinding},
+		{"a case with a glob pattern in $(...)", sh("echo $(case x in (esac|*) echo hi;; esac)"), "", ""},
+		// E: a word brace expansion leaves empty is dropped.
+		{"{grep,} -r", sh("{grep,} -r Doe"), "", gate.ReasonFinding},
+		{"{rg,}", sh("{rg,} Doe"), "", gate.ReasonFinding},
+		{"if {rg,}", sh("if {rg,} Doe; then :; fi"), "", gate.ReasonFinding},
+		// A ) that closes nothing.
+		{"a stray )", shIn("sql", "echo hi )"), gate.ReasonInternalError, gate.ReasonInternalError},
+		// A named descriptor is part of the redirection.
+		{"a named descriptor", shIn("sql", "grep x clean.sql {fd}>/dev/null"), "", ""},
+		{"cd defined, then a search", sh("cd() { :; }; rg ."), "", gate.ReasonFinding},
+		// A function defined after reserved words.
+		{"a function in an if", shIn("sql", "if true; then f() { cat clean.sql; }; fi; git checkout HEAD~1 -- .; f"),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a function in a group", shIn("sql", "{ f() { cat clean.sql; }; }; git checkout HEAD~1 -- .; f"),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a negated function", shIn("sql", "! f() { cat clean.sql; }; git checkout HEAD~1 -- .; f"),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+		{"a timed function", shIn("sql", "time f() { cat clean.sql; }; git checkout HEAD~1 -- .; f"),
+			gate.ReasonGitContent, gate.ReasonGitContent},
+	})
+}
+
+// TestShellOrderAndScope: aliases, eval, source and detached jobs make a
+// line unordered; a pipeline is unordered among its own stages only; a
+// filter reading only a pipe reads no file; a cd target reads nothing.
+func TestShellOrderAndScope(t *testing.T) {
+	isolateSearch(t)
+	git := gate.ReasonGitContent
+	runBoth(t, []both{
+		{"an alias run after a change", shIn("sql", "alias c='cat clean.sql'\ngit checkout HEAD~1 -- .\nc"), git, git},
+		{"eval run after a change", shIn("sql", "x='cat clean.sql'; git checkout HEAD~1 -- .; eval \"$x\""), git, git},
+		{"a detached job", shIn("sql", "setsid -f sh -c 'sleep 1; cp clean.sql out.txt'; git checkout HEAD~1 -- ."), git, git},
+		{"a disowned job", shIn("sql", "sh -c 'sleep 1; cat clean.sql' & disown; git checkout HEAD~1 -- ."), git, git},
+		{"at", shIn("sql", "echo 'cat clean.sql' | at now; git checkout HEAD~1 -- ."), git, git},
+		{"systemd-run", shIn("sql", "systemd-run --user cat clean.sql; git checkout HEAD~1 -- ."), git, git},
+		{"screen detached", shIn("sql", "screen -dm sh -c 'sleep 1; cat clean.sql'; git checkout HEAD~1 -- ."), git, git},
+		{"tmux detached", shIn("sql", "tmux new -d 'sleep 1; cat clean.sql'; git checkout HEAD~1 -- ."), git, git},
+		{"tmux send-keys", shIn("sql", "tmux send-keys 'make all' Enter"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"zsh repeat", shIn("sql", "repeat 2 { cat clean.sql; git checkout -q HEAD~1 -- .; }"), git, git},
+		{"zsh foreach", shIn("sql", "foreach i (1 2) { cat clean.sql; git checkout -q HEAD~1 -- .; }"), git, git},
+		{"nohup in the foreground", shIn("sql", "nohup make build; git checkout main"), "", ""},
+
+		// A pipeline is unordered among its own stages.
+		{"a pipeline before a change", sh("go test ./... 2>&1 | tail -5; git stash pop"), "", ""},
+		{"a reader piped before a change", shIn("sql", "cat clean.sql | head -5 && git pull"), "", ""},
+		{"git log piped before a rebase", sh("git log --oneline | head -3; git rebase main"), "", ""},
+		{"a change in one stage, a read in another", shIn("sql", "git checkout HEAD~1 -- . | cat clean.sql"), git, git},
+
+		// A filter reading only a pipe reads no file.
+		{"tail of a pipe after a change", sh("git checkout main && go test ./... 2>&1 | tail -20"), "", ""},
+		{"head of git log after a pull", sh("git pull && git log --oneline | head -5"), "", ""},
+		{"tail of make after a switch", sh("git switch main && make 2>&1 | tail -3"), "", ""},
+		{"wc of status after stash pop", sh("git stash pop && git status --short | wc -l"), "", ""},
+		{"grep of a pipe after a change", sh("git pull && make 2>&1 | grep -n error"), "", ""},
+		{"a filter given a file after a change", shIn("sql", "git pull && make | tail -5 clean.sql"), git, git},
+		{"a filter given a file option after a change", shIn("sql", "git pull && make | grep -f clean.sql"), git, git},
+		{"a filter of a pipe, cat redefined", shIn("sql", "tail() { cat clean.sql; }; git pull && make | tail -5"), git, git},
+
+		// gh runs none of its words.
+		{"gh pr create with a here-document body",
+			sh("gh pr create --title 'Fix the parser' --body \"$(cat <<'EOF'\nSummary of the change\nEOF\n)\""), "", ""},
+		{"gh with a body file in the root", sh("gh pr create --body-file pbip/x"), "", gate.ReasonFinding},
+
+		// jq's first operand is its filter, not a path.
+		{"jq . of a file", sh("jq . package.json"), "", ""},
+		{"jq '.' of a file", sh("jq '.' x.json"), "", ""},
+		{"yq . of a file", sh("yq . x.yml"), "", ""},
+		{"jq of a file in the root", sh("jq . pbip/x.json"), "", gate.ReasonFinding},
+		{"jq -f with . as a path", sh("jq -f prog.jq ."), "", gate.ReasonFinding},
+		{"jq -L of a glob into the root, importing",
+			sh(`jq -L p*/*/*/*/*/*/0001 -n 'import "visual" as $v; $v'`), "", gate.ReasonFinding},
+		{"jq importing from its working directory", sh(`jq -n 'import "visual" as $v; $v'`), "", gate.ReasonFinding},
+		{"jq --arg values are not the filter", sh(`jq --arg x pbip '.' package.json`), "", gate.ReasonFinding},
+		{"jq --slurpfile of a file in the root", sh(`jq --slurpfile v pbip/x.json -n '$v'`), "", gate.ReasonFinding},
+		{"jq --arg of a plain value", shIn("sql", `jq --arg x y '.' clean.json`), "", ""},
+		// A cd target moves the working directory and reads nothing.
+		{"cd up after a build", shIn("sql", "cd ../notes && go build ./... && cd .."), "", ""},
+		{"cd into the root, then a build", sh("cd pbip && make"), "", gate.ReasonFinding},
+		{"gofmt of the repository", sh("gofmt -l ."), "", gate.ReasonFinding},
+	})
+}
+
+// TestShellBraceExpansion: a word with an unquoted brace expression is
+// expanded as bash expands it, each word judged on its own; past 64 words
+// it is unknown, as a variable is.
+func TestShellBraceExpansion(t *testing.T) {
+	isolateSearch(t)
+	runBoth(t, []both{
+		{"a reader of a brace list", shIn("sql", "cat clean{.sql,.txt}"), "", ""},
+		{"a reader of a brace sequence", shIn("sql", "head -n {1..2} clean.sql"), "", ""},
+		{"a reader of a brace list naming the root", sh("cat {pbip,sql}/x"), "", gate.ReasonFinding},
+		{"a reader of a prefix and a brace list naming the root", sh("cat p{bip,x}/A.Report/x"), "", gate.ReasonFinding},
+		{"a reader of a nested brace list naming the root", sh("cat {sql,{pb,x}ip}/x"), "", gate.ReasonFinding},
+		{"a reader of a letter sequence naming the root", sh("cat pbi{o..q}/x"), "", gate.ReasonFinding},
+		{"a reader of zero-padded numbers", shIn("sql", "cat clean{01..02}.sql"), "", ""},
+		{"a reader of a stepped sequence", shIn("sql", "cat clean{1..9..4}.sql"), "", ""},
+		{"a reader of more brace words than the gate expands", shIn("sql", "cat clean{1..100}.sql"), "", gate.ReasonFinding},
+		{"a reader of an invalid brace", shIn("sql", "cat {clean.sql}"), "", ""},
+		{"git add of a brace list", sh("git add src/{a,b}.go"), "", ""},
+		{"git diff of a brace list", sh("git diff -- src/{a,b}.go"), "", ""},
+		{"cat of a brace list", sh("cat src/{a,b}.go"), "", ""},
+		{"a reader of a quoted brace list", shIn("sql", "cat 'clean{.sql,.txt}'"), "", ""},
+		{"echo of a brace list", sh("echo {a,b}"), "", ""},
+		{"mkdir of a brace list", sh("mkdir -p build/{a,b}"), "", ""},
+		{"find -exec with {}", shIn("sql", `find . -name '*.sql' -exec cat {} \;`), "", ""},
+		{"xargs -I{}", shIn("sql", "ls | xargs -I{} echo {}"), "", ""},
+		{"a group", shIn("sql", "{ cat clean.sql; }"), "", ""},
+		{"a variable in braces", shIn("sql", `F=clean.sql; cat "${F}"`), "", gate.ReasonFinding},
 	})
 }
 
@@ -597,8 +826,8 @@ func TestShellWrappersAndRemote(t *testing.T) {
 		{"bash -c --", shIn("sql", "bash -c -- 'git log -p'"), gate.ReasonGitContent, gate.ReasonGitContent},
 		{"bash --rcfile", shIn("sql", "bash --rcfile /dev/null -c 'git log -p'"), gate.ReasonGitContent, gate.ReasonGitContent},
 		{"busybox sh -c", shIn("sql", "busybox sh -c 'git log -p'"), gate.ReasonGitContent, gate.ReasonGitContent},
-		{"pwsh -c", shIn("sql", "pwsh -c 'Get-Content x'"), "", gate.ReasonFinding},
-		{"powershell -Command", shIn("sql", "powershell -Command 'gc x'"), "", gate.ReasonFinding},
+		{"pwsh -c", shIn("sql", "pwsh -c 'Get-Content x'"), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"powershell -Command", shIn("sql", "powershell -Command 'gc x'"), gate.ReasonGitContent, gate.ReasonGitContent},
 		{"su -c", shIn("sql", "su -c 'cat x' nobody"), "", gate.ReasonFinding},
 		{"ssh with a command", shIn("sql", "ssh localhost 'cat x'"), "", gate.ReasonFinding},
 
@@ -649,6 +878,26 @@ func TestShellBounded(t *testing.T) {
 		"deep **":              "cat " + strings.Repeat("**/", 2000) + "x",
 		"many **":              "cat " + strings.Repeat("**/*/", 30) + "x " + strings.Repeat("pbip/**/*/**/x ", 1000),
 		"unbalanced":           "'" + strings.Repeat("cat x; ", 140<<10),
+		"a brace sequence near the integer limit": "echo {9223372036854775806..9223372036854775807..5} >/dev/null; cat pbip/x",
+		"a brace sequence over the integer range": "echo {-9223372036854775808..9223372036854775807} >/dev/null; cat pbip/x",
+		"a brace step at the integer limit":       "echo {1..2..-9223372036854775808} >/dev/null; cat pbip/x",
+		"a brace end past the integer range":      "echo {1..99999999999999999999} >/dev/null; cat pbip/x",
+		"many brace words":                        strings.Repeat("{a,b,c,d}{e,f,g,h}{i,j,k,l} ", 40<<10),
+		// Nested constructs are read in linear time.
+		"nested arithmetic, spaced":    "echo " + strings.Repeat("$(( ", 200) + "1" + strings.Repeat(" ) )", 200),
+		"nested arithmetic":            "echo " + strings.Repeat("$((1+", 200) + "1" + strings.Repeat("))", 200),
+		"nested substitutions, spaced": "echo " + strings.Repeat("$( echo ", 200) + "x" + strings.Repeat(" )", 200),
+		"nested parameter defaults":    "echo " + strings.Repeat("${x:-", 200) + "y" + strings.Repeat("}", 200),
+		"nested substring defaults":    "echo " + strings.Repeat("${x:-${s:0:1}", 200) + strings.Repeat("}", 200),
+		"many expansions in a default": "echo ${x:-" + strings.Repeat("${a[0]:1}", 20000) + "}",
+		"backticks in substitutions":   "echo " + strings.Repeat("$(echo `true` ", 200) + strings.Repeat(")", 200),
+		"case in substitutions":        "echo " + strings.Repeat("$(case x in x) ", 200) + "true" + strings.Repeat(";; esac)", 200),
+		"subshells in arithmetic":      "echo " + strings.Repeat("$(( (", 200) + "1" + strings.Repeat(") ))", 200),
+		// Below the nesting cap, where each level is read.
+		"nested arithmetic, spaced, 60":    "echo " + strings.Repeat("$(( ", 60) + "1" + strings.Repeat(" ) )", 60),
+		"nested substitutions, spaced, 60": "echo " + strings.Repeat("$( echo ", 60) + "x" + strings.Repeat(" )", 60),
+		"case in substitutions, 60":        "echo " + strings.Repeat("$(case x in x) ", 60) + "true" + strings.Repeat(";; esac)", 60),
+		"subshells in arithmetic, 60":      "echo " + strings.Repeat("$(( (", 60) + "1" + strings.Repeat(") ))", 60),
 	} {
 		t.Run(name, func(t *testing.T) {
 			if len(cmd) > 1<<20+16 {
@@ -659,8 +908,11 @@ func TestShellBounded(t *testing.T) {
 			if el := time.Since(start); el > slowdown*2*time.Second {
 				t.Errorf("took %v", el)
 			}
-			if name == "many commands" {
+			switch {
+			case name == "many commands", name == "many brace words":
 				check(t, d, gate.ReasonInternalError)
+			case strings.HasPrefix(name, "a brace"):
+				check(t, d, gate.ReasonFinding)
 			}
 		})
 	}
@@ -717,13 +969,13 @@ func TestShellGitMessageText(t *testing.T) {
 	runBoth(t, []both{
 		// cat, or git, may not be the program it names: then a message is
 		// not text.
-		{"cat redefined as a function", sh("cat() { sh; };" + body), "", gate.ReasonFinding},
-		{"cat hashed to a shell", sh("hash -p /bin/sh cat;" + body), "", gate.ReasonFinding},
-		{"cat aliased to a shell", sh("shopt -s expand_aliases; alias cat=sh;" + body), "", gate.ReasonFinding},
+		{"cat redefined as a function", sh("cat() { sh; };" + body), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"cat hashed to a shell", sh("hash -p /bin/sh cat;" + body), gate.ReasonGitContent, gate.ReasonGitContent},
+		{"cat aliased to a shell", sh("shopt -s expand_aliases; alias cat=sh;" + body), gate.ReasonGitContent, gate.ReasonGitContent},
 		{"PATH assigned", sh("PATH=/tmp/x:$PATH;" + body), "", gate.ReasonFinding},
 		{"PATH exported", sh("export PATH=/tmp/x:$PATH;" + body), "", gate.ReasonFinding},
 		{"a script sourced", sh(". ./env.sh;" + body), "", gate.ReasonFinding},
-		{"git redefined as a function", sh(`git() { sh -c "$3"; }; git commit -m 'cat pbip/x'`), "", gate.ReasonFinding},
+		{"git redefined as a function", sh(`git() { sh -c "$3"; }; git commit -m 'cat pbip/x'`), gate.ReasonGitContent, gate.ReasonGitContent},
 		{"a function named in a message", sh(`git commit -m "Fix f() in the parser"`), "", ""},
 		// A substitution in ${...} runs, and is judged as any other.
 		{"-m of ${...} holding a cat of the root", sh(`git commit --allow-empty -m "${X:-$(cat pbip/x)}"`), "", gate.ReasonFinding},
@@ -770,13 +1022,13 @@ func TestShellGitMessageText(t *testing.T) {
 			sh("git commit -m \"$(cat <<EOF\n$(cat pbip/x)\nEOF\n)\""), "", gate.ReasonFinding},
 		{"a here-document read by another program in the message",
 			sh("git commit -m \"$(python3 <<'EOF'\nopen('pbip/x')\nEOF\n)\""), "", gate.ReasonFinding},
-		{"git under xargs, reading a here-document", sh("xargs git commit -F - <<'EOF'\npbip\nEOF"), "", gate.ReasonFinding},
+		{"git under xargs, reading a here-document", sh("xargs git commit -F - <<'EOF'\npbip\nEOF"), gate.ReasonGitContent, gate.ReasonGitContent},
 		{"git under a wrapper, a message naming the root", sh(`nice git commit -m "Leave pbip alone"`), "", gate.ReasonFinding},
 		{"a here-document to git without -F -", sh("git commit -F msg.txt <<'EOF'\npbip\nEOF"), "", gate.ReasonFinding},
 		{"another command after the commit", sh(`git commit -m "Leave pbip alone" && cat pbip/x`), "", gate.ReasonFinding},
 		{"python3 -c naming the root", sh(`python3 -c "open('pbip/x')"`), "", gate.ReasonFinding},
 		{"python3 reading a here-document naming the root", sh("python3 - <<'EOF'\nopen('pbip/x')\nEOF"), "", gate.ReasonFinding},
-		{"a here-document piped to an interpreter", sh("cat <<'EOF' | python3\nopen('pbip/x')\nEOF"), "", gate.ReasonFinding},
+		{"a here-document piped to an interpreter", sh("cat <<'EOF' | python3\nopen('pbip/x')\nEOF"), gate.ReasonGitContent, gate.ReasonGitContent},
 		// A known over-block: echo and printf can feed an interpreter.
 		{"echo naming the root", sh("echo pbip"), "", gate.ReasonFinding},
 		{"printf naming the root", sh("printf '%s\\n' pbip"), "", gate.ReasonFinding},

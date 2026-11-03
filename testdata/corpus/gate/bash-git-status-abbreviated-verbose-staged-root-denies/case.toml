@@ -1,0 +1,8 @@
+description = "git status --verb is git status --verbose, an unambiguous abbreviation git accepts, which prints the staged diff: the staged file under the protected root denies with git-content"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
+staged      = ["pbip/Example.Report/definition/pages/0000/visuals/0001/visual.json"]
+known       = "predecessor"

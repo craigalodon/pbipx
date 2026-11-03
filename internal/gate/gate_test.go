@@ -323,7 +323,7 @@ func TestShell(t *testing.T) {
 		{"names the root", sh("cat " + reportJSON), "", gate.ReasonFinding},
 		{"names the root by absolute path", sh("wc -c /x/../" + reportJSON), "", gate.ReasonFinding},
 		{"names the root in quotes", sh(`wc -c "pbip"`), "", gate.ReasonFinding},
-		{"unbalanced quotes still name the root", sh("cat 'pbip/A.Report"), "", gate.ReasonFinding},
+		{"unbalanced quotes still name the root", sh("cat 'pbip/A.Report"), gate.ReasonInternalError, gate.ReasonInternalError},
 		{"a longer word is not the root", sh("ls pbipx-notes pbip.bak my-pbip"), "", ""},
 		{"a glob matching the root", sh("wc -c p*"), "", gate.ReasonFinding},
 		{"a quoted glob is not expanded", sh("ls 'p*'"), "", ""},

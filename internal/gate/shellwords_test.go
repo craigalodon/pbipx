@@ -346,7 +346,7 @@ func TestMayWriteAll(t *testing.T) {
 		"cat a b > c", "ls ls", "nice -n 5 cat x", "cp a b", "timeout 5 grep -r x .", "sed -i s/a/b/ f",
 		"cat", "> x", "env A=1 cat a", "less +s x",
 	} {
-		v := s.viewOf(splitCommands(line)[0], cwdState{dirs: []string{"/"}})
+		v := s.viewOf(splitCommands(line)[0], cwdState{dirs: []string{"/"}}, nil)
 		all := mayWriteAll(v)
 		for i, xw := range v.words {
 			if all[i] != mayWrite(v, xw) {

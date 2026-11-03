@@ -1,0 +1,8 @@
+description = "$(which git) log -p runs git through a command word the gate cannot expand, and git log -p prints the history of a file deleted under the protected root: a command word built at run time denies with git-content in a repository the gate covers"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
+deleted     = ["pbip/Example.Report/definition/pages/0000/visuals/0001/visual.json"]
+known       = "predecessor"

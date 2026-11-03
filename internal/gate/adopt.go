@@ -86,6 +86,11 @@ func decideAdopted(ev Event, opts Options) Decision {
 		f.records = records
 		for _, r := range roots {
 			f.index = append(f.index, r, resolve(r))
+			// Every linked work tree of the clone counts too: a search
+			// from a common parent reaches a sibling git worktree add made.
+			for _, wt := range linkedWorktrees(r) {
+				f.index = append(f.index, wt, resolve(wt))
+			}
 		}
 		slices.Sort(f.index)
 		f.index = slices.Compact(f.index)
@@ -304,7 +309,7 @@ func (f *finder) spots() (spots []spot, unknown bool) {
 	}
 	addAll(spellings(ev.Cwd, "."), false)
 	switch ev.Tool {
-	case Read, Write:
+	case Read, Write, Edit:
 		if ev.Path != "" {
 			addAll(spellings(ev.Cwd, expandHome(ev.Path, f.home)), false)
 		}
@@ -408,7 +413,7 @@ func (w *walker) probeIn(st cwdState, p string) {
 func (f *finder) controls() Decision {
 	ctl := loadControls()
 	switch f.ev.Tool {
-	case Write:
+	case Write, Edit:
 		if f.ev.Path == "" {
 			break
 		}

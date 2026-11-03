@@ -1,0 +1,7 @@
+description = "git log -p with the unquoted pathspec p?ip: the shell expands it to the protected root pbip before git runs, so git is given pbip and prints its history; the gate judges the words bash produces, not the pattern, and the leak denies with git-content"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
+known       = "predecessor"

@@ -1,0 +1,8 @@
+{
+  "hook_event_name": "PreToolUse",
+  "cwd": "{root}",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "for f in $(git ls-files); do shuf \"$f\"; done"
+  }
+}

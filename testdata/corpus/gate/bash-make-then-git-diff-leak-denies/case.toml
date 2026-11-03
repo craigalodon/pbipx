@@ -1,0 +1,7 @@
+description = "make fmt, then git diff: make may rewrite files under the protected root without naming them, and git diff, judged against the working tree as it was before the line, would print what it wrote, so the protected tree is scanned as for Grep and its finding denies"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
+known       = "predecessor"

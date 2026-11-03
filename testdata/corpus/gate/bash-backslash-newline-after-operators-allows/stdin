@@ -1,0 +1,8 @@
+{
+  "hook_event_name": "PreToolUse",
+  "cwd": "{root}",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "npm ci &&\\\nnpm test |\\\n  tail -5;\\\nmake build \\\n&& make test"
+  }
+}

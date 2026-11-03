@@ -1,0 +1,8 @@
+description = "git symbolic-ref pointing HEAD at another ref, then git diff --cached, prints the index against it, which holds the file under the protected root: the gate judges HEAD as it is before the line runs, so a content-printing git command after a HEAD change denies with git-content; the file is deleted from the working tree, its value only in history and the index"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
+deleted     = ["pbip/Example.Report/definition/pages/0000/visuals/0001/visual.json"]
+known       = "predecessor"

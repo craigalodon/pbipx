@@ -1,0 +1,6 @@
+description = "grep for the word xargs in a file outside the protected roots: xargs here is an argument, not a runner, so nothing feeds the grep input words, and the line is allowed though a root holds a finding"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = ["Doe, Jane"]

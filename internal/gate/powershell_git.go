@@ -1,8 +1,10 @@
 package gate
 
 import (
+	"cmp"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"unicode"
@@ -462,7 +464,10 @@ type psUnit struct {
 type psLine struct {
 	units []psUnit
 	moved bool
-	env   []string
+	// legacy is set when the line sets $PSNativeCommandArgumentPassing to
+	// Legacy or Windows (psLegacy).
+	legacy bool
+	env    []string
 }
 
 // collect reads line, nested depth deep, into p. It returns a deny for a
@@ -479,6 +484,7 @@ func (s *setup) collect(p *psLine, line string, depth int) (Decision, bool) {
 			"too many to judge", maxPSWords, maxPSGroups), true
 	}
 	p.env = append(p.env, psEnv(stmts)...)
+	p.legacy = p.legacy || psLegacy(line)
 	for _, st := range stmts {
 		f := s.psStatement(st)
 		if f.opaque != "" {
@@ -514,7 +520,27 @@ func (s *setup) psGit(line string) (Decision, bool) {
 	if d, ok := s.collect(&p, line, 0); ok {
 		return d, true
 	}
-	changed := ""
+	// git config setting a key that a git command anywhere in the line
+	// reads, as for Bash.
+	configured := false
+	for _, u := range p.units {
+		for _, c := range u.calls {
+			argv, unknown, _ := psArgv(c, nil, false)
+			configured = configured || configWrite(argv, unknown)
+		}
+	}
+	if configured {
+		for _, u := range p.units {
+			for _, c := range u.calls {
+				argv, _, _ := psArgv(c, nil, false)
+				if sub := afterConfig(argv); sub != "" {
+					return deny(ReasonGitContent, "%s", gitDenial{sub, whyAfterConfig, hintAfterConfig}.message()), true
+				}
+			}
+		}
+	}
+	changed, indexChanged := "", ""
+	var before [][]string
 	seen := map[string]bool{}
 	for _, u := range p.units {
 		if changed != "" && u.reads {
@@ -533,11 +559,23 @@ func (s *setup) psGit(line string) (Decision, bool) {
 				continue
 			}
 			seen[key.String()] = true
-			if g := s.psJudge(c, p.env, p.moved); g != nil {
+			if g := s.psJudge(c, p.env, p.moved, p.legacy); g != nil {
 				return deny(ReasonGitContent, "%s", g.message()), true
+			}
+			argv, _, _ := psArgv(c, nil, false)
+			// HEAD is not taken to stay a commit: the statements are not
+			// all read first.
+			if indexChanged != "" && s.contentAfter(argv, s.cwd, before, false) {
+				return deny(ReasonGitContent, "%s can change the index, HEAD or a ref, and a later git command in the line "+
+					"could print file content; it would be judged against the repository as it was before. %s",
+					indexChanged, hintChange), true
 			}
 			if changed == "" {
 				changed = s.psChanges(c)
+			}
+			if change := s.indexChangeOf(argv, s.cwd); change != "" {
+				indexChanged = cmp.Or(indexChanged, change)
+				before = append(before, argv)
 			}
 		}
 	}
@@ -820,7 +858,14 @@ func psEnv(stmts []psStmt) []string {
 // whether its value may be several arguments: an expansion outside double
 // quotes (psWord.bare), or %NAME% after --%, whose value the program's
 // command line splits. PowerShell does not expand globs for a program.
-func psArgv(c psGitCall, env []string) (argv, unknown []string, shapes []argShape) {
+//
+// A double quote inside an argument can split it again on its way to
+// git: Windows PowerShell 5.1, and PowerShell 7 with
+// $PSNativeCommandArgumentPassing set to Legacy or Windows (legacy), do
+// not escape it in the command line they build. So a word whose literal
+// text holds one cannot be told and may be several, and with legacy set a
+// double-quoted word holding an expansion may be several too.
+func psArgv(c psGitCall, env []string, legacy bool) (argv, unknown []string, shapes []argShape) {
 	argv = append(slices.Clone(env), "git")
 	shapes = make([]argShape, len(argv))
 	stop := false
@@ -831,20 +876,35 @@ func psArgv(c psGitCall, env []string) (argv, unknown []string, shapes []argShap
 		}
 		argv = append(argv, w.text)
 		pct := stop && strings.Contains(w.text, "%")
-		shapes = append(shapes, argShape{splits: w.bare || pct})
-		if w.unknown || pct {
+		quote := strings.Contains(w.text, `"`) || (legacy && w.unknown)
+		shapes = append(shapes, argShape{splits: w.bare || pct || quote})
+		if w.unknown || pct || quote {
 			unknown = append(unknown, w.text)
 		}
 	}
 	return argv, unknown, shapes
 }
 
+// psLegacy reports whether a PowerShell line may set
+// $PSNativeCommandArgumentPassing to Legacy or Windows: it names the
+// variable in any form ($global:..., Set-Variable, sv, New-Variable) and
+// does not name Standard alone as its value.
+func psLegacy(line string) bool {
+	return psPassing.MatchString(line) && (!psStandard.MatchString(line) || psLegacyValue.MatchString(line))
+}
+
+var (
+	psPassing     = regexp.MustCompile(`(?i)PSNativeCommandArgumentPassing`)
+	psStandard    = regexp.MustCompile(`(?i)Standard`)
+	psLegacyValue = regexp.MustCompile(`(?i)\b(Legacy|Windows)\b`)
+)
+
 // psJudge judges one git call: from the call's working directory, and when
 // the line may change it (cd, Set-Location, Start-Process
 // -WorkingDirectory), from each protected root and the repository's root
 // as well, as the Bash rule judges a working directory it cannot tell.
-func (s *setup) psJudge(c psGitCall, env []string, moved bool) *gitDenial {
-	argv, unknown, shapes := psArgv(c, env)
+func (s *setup) psJudge(c psGitCall, env []string, moved, legacy bool) *gitDenial {
+	argv, unknown, shapes := psArgv(c, env, legacy)
 	dirs := []string{s.cwd}
 	if moved || c.moved {
 		dirs = append(dirs, s.repo.Root)
@@ -865,13 +925,15 @@ func (s *setup) psJudge(c psGitCall, env []string, moved bool) *gitDenial {
 // psChanges is "git SUB" when a git call changes the working tree, as the
 // Bash rule reads it (treeChange), and "" otherwise.
 func (s *setup) psChanges(c psGitCall) string {
-	argv, unknown, _ := psArgv(c, nil)
+	argv, unknown, _ := psArgv(c, nil, false)
 	inv, ok := parseGit(argv[1:], s.cwd)
 	switch {
 	case !ok:
 		return ""
 	case slices.Contains(unknown, inv.sub) || !gitBuiltins[inv.sub]:
 		return "git"
+	case inv.ambiguous && isTreeChanger(inv.sub):
+		return "git " + inv.sub
 	case s.branchOnly(inv):
 		return ""
 	case gitChangesTree(inv.sub, inv.rest):

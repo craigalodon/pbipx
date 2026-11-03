@@ -1,0 +1,7 @@
+description = "shuf is a content printer outside the readers table: given a file name the gate cannot tell from a loop variable, it is taken to read it, so every protected root is read and the leak denies"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
+known       = "predecessor"

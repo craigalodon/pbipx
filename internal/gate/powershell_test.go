@@ -164,6 +164,12 @@ func TestPowerShellGitHistory(t *testing.T) {
 		// A change to the tree, then a read.
 		{"checkout, then a read", ps("git checkout HEAD~1; Get-Content README.md"), git},
 		{"pull, then git status", ps("git pull; git status"), ""},
+		// The index or HEAD changed, then a git command that could print
+		// content, judged against them as they were before.
+		{"checkout of paths, then diff --cached", ps("git checkout HEAD~2 -- pbip; git diff --cached"), git},
+		{"checkout of paths, nested, then diff --cached", ps("iex 'git checkout HEAD~2 -- pbip'; git diff --cached"), git},
+		{"add, commit and push", ps(`git add -A; git commit -m "msg"; git push`), ""},
+		{"diff --cached alone", ps("git diff --cached"), ""},
 		// A subexpression in git's own arguments runs before git.
 		{"merge, a message from a subexpression", ps(`git merge --no-ff -m "$(Get-Content msg.txt)" main`), ""},
 		{"stash push, a message from a subexpression", ps(`git stash push -m "$(Get-Content msg.txt)"`), ""},
@@ -183,6 +189,16 @@ func TestPowerShellGitHistory(t *testing.T) {
 		{"commit -m with one unquoted part", ps(`git commit -m "$m"$n`), git},
 		{"Start-Process, a message from a variable", ps(`Start-Process git -ArgumentList 'commit','-m',"$m"`), git},
 		{"commit -m of a quoted variable", ps(`git commit -m "$m"`), ""},
+		// A double quote in an argument can split it again on the way to
+		// git, under PowerShell's legacy argument passing.
+		{"commit -m of a literal holding double quotes", ps(`git commit --dry-run -m 'a" -v "b'`), git},
+		{"log of a literal holding a double quote", ps(`git log --oneline 'x" -p "y'`), git},
+		{"commit -m of a variable, legacy passing", ps(`$PSNativeCommandArgumentPassing = 'Legacy'; git commit -m "$m"`), git},
+		{"commit -m of a variable, Windows passing", ps(`$PSNativeCommandArgumentPassing = "Windows"; git commit -m "$m"`), git},
+		{"commit -m of a variable, standard passing", ps(`$PSNativeCommandArgumentPassing = 'Standard'; git commit -m "$m"`), ""},
+		{"commit -m of a variable, legacy set with Set-Variable",
+			ps(`Set-Variable PSNativeCommandArgumentPassing Legacy; git commit -m "$m"`), git},
+		{"commit -m of a variable, legacy set globally", ps(`$global:PSNativeCommandArgumentPassing = 'Legacy'; git commit -m "$m"`), git},
 		{"commit -m of a literal", ps(`git commit -m 'literal'`), ""},
 		{"commit -m of a here-string", ps("git commit -m @\"\n$m\n\"@"), ""},
 		{"commit -pm of a variable", ps(`git commit -pm "$x"`), git},

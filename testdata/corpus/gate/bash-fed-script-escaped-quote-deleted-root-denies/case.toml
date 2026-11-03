@@ -1,0 +1,8 @@
+description = "echo -e keeps a backslash-quote as written, which bash does not read as an escape, so the gate cannot tell the script piped to bash and takes it as built at run time: it could run git log -p, printing the history of a file deleted under the protected root, so the line denies with git-content"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
+deleted     = ["pbip/Example.Report/definition/pages/0000/visuals/0001/visual.json"]
+known       = "predecessor"
