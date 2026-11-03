@@ -928,12 +928,15 @@ path, is denied with `event-error`: the call cannot be judged.
        `--stdin` and the like cannot be placed either;
      - `stash show` with any option but the summary formats (`--stat`,
        `--numstat`, `--shortstat`, `--name-only`, `--name-status`,
-       `--summary`, `--dirstat`, `--compact-summary`, `--raw`) and `-u` /
-       `--include-untracked`: git 2.53 prints a patch for any diff option
-       that is not an output format (`-w`, `-R`, `--color`, `--histogram`,
-       `--abbrev`, `--pretty=raw`, `--graph` ...), so such a command goes
-       through the name-only run; with no option, when `stash.showPatch`
-       is true; `cat-file` except `-t`, `-s`, `-e`,
+       `--summary`, `--dirstat`, `--compact-summary`, `--raw`): git 2.53
+       prints a patch for any diff option that is not an output format
+       (`-w`, `-R`, `--color`, `--histogram`, `--abbrev`, `--pretty=raw`,
+       `--graph` ...), so such a command goes through the name-only run.
+       `-u`, `--include-untracked` and `--only-untracked` say which files
+       the stash holds and are no output format: with no format given,
+       alone or not, `stash.showPatch` decides (true: the name-only run),
+       as with no option at all; a summary format given as well settles
+       it; `cat-file` except `-t`, `-s`, `-e`,
        `--batch-check`, and an object name other than `REV:path` cannot be
        placed;
      - hunks shown interactively: `add -p` and `add -i`, `checkout -p`,

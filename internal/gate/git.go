@@ -1887,15 +1887,23 @@ func (s *setup) stashCheck(inv gitInvocation) gitCheck {
 				options = append(options, a)
 			}
 		}
-		summaryOnly := len(options) > 0 && !slices.ContainsFunc(options, func(o string) bool {
+		// -u, --include-untracked and --only-untracked say which files
+		// the stash holds; they are no output format, so with none given
+		// stash.showPatch still decides.
+		var formats []string
+		for _, o := range options {
+			if o != "-u" && o != "--include-untracked" && o != "--only-untracked" {
+				formats = append(formats, o)
+			}
+		}
+		summaryOnly := len(formats) > 0 && !slices.ContainsFunc(formats, func(o string) bool {
 			name, _, _ := strings.Cut(o, "=")
-			return !slices.Contains(gitSummaryFlags, name) && name != "-u" && name != "--include-untracked" &&
-				name != "--only-untracked" && name != "--stat" && name != "--dirstat"
+			return !slices.Contains(gitSummaryFlags, name) && name != "--stat" && name != "--dirstat"
 		})
 		switch {
 		case summaryOnly:
 			return noContent()
-		case len(options) == 0:
+		case len(formats) == 0:
 			v, err := s.git().configValue(inv.dir, "stash.showPatch", "bool")
 			if errors.Is(err, errNotSet) || (err == nil && v == "false") {
 				return noContent()
