@@ -1,0 +1,7 @@
+description = "xargs -I with a nested sh -c running jq: the replacement string stands for each file name its input carries, so jq reads every protected root and the leak denies"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
+known       = "predecessor"

@@ -1135,6 +1135,9 @@ type xword struct {
 	input, here bool
 	// rw is word's: a redirection that reads and writes (<>).
 	rw bool
+	// fed is set for a word that holds an input word a runner (xargs,
+	// parallel) substitutes (markFed): known is false too.
+	fed bool
 	// message is set for git's message text (gitMessageText), which is
 	// not placed as a path.
 	message bool
@@ -1204,7 +1207,11 @@ type walker struct {
 	// code, readsFile once a read or mapfile reads a value from a file,
 	// and evaluates once a command makes bash evaluate a string.
 	quotedValue, quotedAny, readsFile, evaluates bool
-	message                                      map[int]bool
+	// ph are the placeholders of the runners (xargs, parallel) the command
+	// being read runs under (feedOf), which stand for input words in the
+	// lines nested in it.
+	ph      []string
+	message map[int]bool
 	// anywhere names a change after which every read in the line counts,
 	// wherever it is: one in a process substitution, which starts before
 	// or alongside the command it is given to, and any change in a line
@@ -1297,7 +1304,7 @@ func (w *walker) commands(line string, cmds []simple, st *cwdState, depth int) {
 		}
 		if v.name == "find" || v.name == "fd" || v.name == "fdfind" {
 			lister = &v
-		} else if lister != nil && (slices.Contains(v.under, "xargs") || v.name == "parallel") {
+		} else if lister != nil && feedOf(v.argv).runner != "" {
 			// find P ... | xargs ... reads every file find prints.
 			for _, p := range listRoots(*lister) {
 				w.reachesIn(lister.cwd, p, "xargs or parallel reads the files find or fd lists")
@@ -1379,7 +1386,7 @@ func (w *walker) pipedScript(prev *simple, v view, depth int) {
 		w.setRuntime(whyPipedScript, hintPlain)
 		return
 	}
-	pv := w.s.viewOf(*prev, v.cwd)
+	pv := w.s.viewOf(*prev, v.cwd, w.ph)
 	fed := false
 	for _, doc := range prev.docs {
 		w.nested(doc.body, docKnown(doc), v.cwd.clone(), depth)
@@ -1513,8 +1520,13 @@ const (
 // applies a cd to st.
 func (w *walker) simple(c simple, st *cwdState, depth int) view {
 	s := w.s
-	v := s.viewOf(c, *st)
+	v := s.viewOf(c, *st, w.ph)
 	v.cache = w.cache
+	// The lines nested in this command are read with the placeholders of
+	// the runners it runs under: they stand for input words there too.
+	feed := feedOf(v.argv)
+	defer func(old []string) { w.ph = old }(w.ph)
+	w.ph = slices.Concat(w.ph, feed.placeholders)
 	if c.funcDef {
 		// A function definition's name is no command: it never runs
 		// here (cd() would otherwise move the directory). Its body is
@@ -1749,15 +1761,19 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 	if line, known, ok := envSplit(v); ok {
 		w.nested(line, known, v.cwd.clone(), depth)
 	}
-	// xargs running a reader reads files named on its input, from here.
-	if slices.Contains(v.under, "xargs") && readers[v.name] {
-		w.reachesIn(v.cwd, ".", "xargs runs a reader on the file names its input carries")
+	// xargs or parallel running a reader, a search or an interpreter,
+	// with the input words added to its own, reads files named on its
+	// input, from here. (With a placeholder the words are marked, and
+	// judged where they are used: markFed.)
+	_, searching := searchers[v.name]
+	if feed.fromInput && (readers[v.name] || feed.appends && (searching || isInterpreter(v.name))) {
+		w.reachesIn(v.cwd, ".", feed.runner+" runs a reader on the file names its input carries")
 	}
 	return v
 }
 
 // viewOf is the simple command c, run from st, as the rules see it.
-func (s *setup) viewOf(c simple, st cwdState) view {
+func (s *setup) viewOf(c simple, st cwdState, ph []string) view {
 	v := view{cwd: st.clone(), pipeIn: c.pipeIn}
 	v.docOnly = len(c.docs) == 1 && !c.pipeIn && !slices.ContainsFunc(c.words, func(wd word) bool { return wd.redirect && wd.input })
 	var args []string
@@ -1779,6 +1795,11 @@ func (s *setup) viewOf(c simple, st cwdState) view {
 	v.argvShapes = shapes[len(shapes)-len(v.argv):]
 	v.name, v.rest, v.under = command(v.argv)
 	v.restKnown = v.argvKnown[len(v.argvKnown)-len(v.rest):]
+	// Words a runner (xargs, parallel) substitutes input words for: those
+	// of the runners this command runs under, and of any it is nested in.
+	if phs := slices.Concat(ph, feedOf(v.argv).placeholders); len(phs) > 0 {
+		markFed(&v, known, len(args)-len(v.argv), phs)
+	}
 	return v
 }
 
@@ -2974,7 +2995,7 @@ func unknownArgs(v view) []string {
 // (gitContent).
 func (s *setup) gitRule(v view) *gitDenial {
 	unknown := unknownArgs(v)
-	if v.name == "git" && (slices.Contains(v.under, "xargs") || slices.Contains(v.under, "parallel")) {
+	if v.name == "git" && feedOf(v.argv).runner != "" {
 		// xargs (and parallel) add the words they read to git's: words
 		// the gate cannot tell, which could be options (echo -p | xargs
 		// git log). With -I they replace a word instead, as unknown.
@@ -3128,7 +3149,7 @@ func (w *walker) reaches() trigger {
 				continue
 			}
 			abss, unknown := s.wordSpellings(v, xw)
-			if unknown && reader && !optionOnly(xw.text) {
+			if unknown && (reader || xw.fed && isInterpreter(v.name)) && !optionOnly(xw.text) {
 				return trigger{v.name + " is given a word with an expansion the gate cannot resolve", hintExpand}
 			}
 			if i := slices.IndexFunc(abss, touches); i >= 0 {
