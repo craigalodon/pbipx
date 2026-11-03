@@ -1875,11 +1875,27 @@ func (s *setup) stashCheck(inv gitInvocation) gitCheck {
 	}
 	switch sub {
 	case "show":
-		patchFlags := slices.DeleteFunc(slices.Clone(gitPatchFlags), func(f string) bool { return f == "-u" })
-		if !hasFlag(args, patchFlags) {
-			if hasFlag(args, gitSummaryFlags) {
-				return noContent()
+		// git 2.53 prints a patch when stash show is given any diff
+		// option that is not an output format (-w, -R, --color,
+		// --histogram, --abbrev, --graph ...), as it does for -p. It
+		// prints none with no option and stash.showPatch unset, or with
+		// only summary formats (and -u). Any other option goes through the
+		// name-only run.
+		var options []string
+		for _, a := range args {
+			if strings.HasPrefix(a, "-") && a != "-" {
+				options = append(options, a)
 			}
+		}
+		summaryOnly := len(options) > 0 && !slices.ContainsFunc(options, func(o string) bool {
+			name, _, _ := strings.Cut(o, "=")
+			return !slices.Contains(gitSummaryFlags, name) && name != "-u" && name != "--include-untracked" &&
+				name != "--only-untracked" && name != "--stat" && name != "--dirstat"
+		})
+		switch {
+		case summaryOnly:
+			return noContent()
+		case len(options) == 0:
 			v, err := s.git().configValue(inv.dir, "stash.showPatch", "bool")
 			if errors.Is(err, errNotSet) || (err == nil && v == "false") {
 				return noContent()
