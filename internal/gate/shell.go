@@ -3187,7 +3187,7 @@ func (w *walker) reaches() trigger {
 		_, search := searchers[v.name]
 		reader := readers[v.name] || search
 		operands := operandWords(v)
-		operandReader := !reader && v.name != "" && readsOperands(v.name)
+		operandReader := !reader && v.name != "" && v.name != "gh" && readsOperands(v.name)
 		mover := v.name == "cd" || v.name == "pushd" || v.name == "chdir"
 		filter := jqFilter(v)
 		for wi, xw := range v.words {
@@ -3205,7 +3205,7 @@ func (w *walker) reaches() trigger {
 			}
 			abss, unknown := s.wordSpellings(v, xw)
 			readsInput := xw.redirect && xw.input // < FILE, <> FILE: read by whatever it is for
-			if unknown && !xw.here && (reader || readsInput || operandReader && operands[wi] || xw.fed && isInterpreter(v.name)) && !optionOnly(xw.text) {
+			if unknown && !xw.here && (reader || readsInput || operandReader && operands[wi] || v.name == "gh" && ghFileValue(v, wi) || xw.fed && isInterpreter(v.name)) && !optionOnly(xw.text) {
 				return trigger{v.name + " is given a word with an expansion the gate cannot resolve", hintExpand}
 			}
 			if i := slices.IndexFunc(abss, touches); i >= 0 {

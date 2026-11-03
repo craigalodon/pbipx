@@ -757,7 +757,13 @@ path, is denied with `event-error`: the call cannot be judged.
     GOOS=$(go env GOOS) go build`, `sudo -u "$USER" make` are read as `go
     test`, `go build`, `make`. An unknown word in the program position
     stays unknown (built at run time), and so does one after a wrapper
-    option the table does not know. `time` and `coproc` are followed by
+    option the tables do not know: for the wrappers with operands
+    (`timeout`, `taskset`, `flock`), whose no-value options are listed,
+    an unknown option leaves its operands unread, since it may take a
+    value of its own (`timeout --frobnicate "$X" 5 go test` is built at
+    run time); for the others the unknown word is in the program's place
+    already (`nice`, `sudo`, `env`, `stdbuf`). `time` and `coproc` are
+    followed by
     the reserved words after them, as bash reads them (`time { git log
     -p; }`, `time -p ! cmd`, `time function f { ...; }`). git run by
     `xargs` or `parallel`, and git under `find -exec` given `{}`, `{/}`
@@ -1305,16 +1311,25 @@ path, is denied with `event-error`: the call cannot be judged.
        does. The table is one list in the code, checked by a test: `echo`,
        `printf`, `mkdir`, `rmdir`, `touch`, `rm`, `mv`, `ln`, `chmod`,
        `chown`, `chgrp`, `ls`, `stat`, `du`, `df`, `tree`, `test`, `[`,
-       `[[`, `basename`, `dirname`, `realpath`, `readlink`, `file`,
-       `which`, `type`, `sleep`, `kill`, `ps`, `date`, `pwd`, `id`, the
-       shell's own commands (`cd`, `export`, `set`, `declare`, `read`,
-       `getopts`, `trap`, `shift` ...), `git`, `gh`, `hub`, `pbipx`, and
-       build and package tools (`make`, `go`, `npm`, `pnpm`, `yarn`,
-       `cargo`, `pip`, `gem`, `apt`, `brew` ...). `cp`, `tar`, `zip`,
-       `unzip`, `rsync`, the interpreters and everything not listed are
-       not in it. The unknown operand also covers a word that stands for a
-       runner's input (below); the words of an option, the program's own
-       name and the wrappers' operands (below) are not operands;
+       `[[`, `basename`, `dirname`, `realpath`, `readlink`, `file` (it
+       reads a file's start to print its type, never a line of it),
+       `which`, `type`, `sleep`, `kill`, `ps`, `pwd`, `id`, the shell's
+       own commands (`cd`, `export`, `set`, `declare`, `read`, `getopts`,
+       `trap`, `shift` ...), `git` (its own rule), `hub` and `pbipx`.
+       Build and package tools are not in it: `make -f "$f"`, `go run
+       "$f"`, `go vet "$f"`, `npm`/`yarn`/`pnpm` with a path, `pip install
+       -r "$f"` (which quotes invalid lines), `cargo --manifest-path`,
+       `gem install "$f"`, `apt install ./"$f"`, `brew install "$f"`,
+       `man "$f"` and `info "$f"` read the files their operands name; nor
+       is `date` (`date -f`), `cp`, `tar`, `zip`, `unzip`, `rsync`, the
+       interpreters or anything not listed. `gh` is read by its options:
+       a word that is the value of `-F`, `-f`, `--field`, `--raw-field`,
+       `--body-file`, `--input`, `--notes-file` or `--file` is a file gh
+       reads; its other words, a title or a body (`--body "$(cat <<'EOF'
+       ...)"`), are text. The unknown operand also covers a word that
+       stands for a runner's input (below); the words of an option, the
+       program's own name and the wrappers' operands (below) are not
+       operands;
      - a file an input redirection names that the gate cannot tell
        (`cat < "$f"`, `tee /dev/null < "$f"`, `while read l; do ...; done
        < "$f"`, `exec 3< "$f"`) is read by whatever the redirection is
@@ -2329,7 +2344,9 @@ behavior (2026-10-29).
     - a program not in the table of programs that leave their operands
       unread, given a word the gate cannot tell, or fed names by a
       runner: `curl -H "$H" https://...`, `docker run "$IMG"`, `gofmt -l
-      "$d"`, `git ls-files | xargs gofmt -l`, `shuf "$f"`. A clean tree
+      "$d"`, `git ls-files | xargs gofmt -l`, `shuf "$f"`, and the build
+      and package tools: `go test "$pkg"`, `make "$target"`, `npm run
+      "$script"`, `pip install "$p"`, `date -d "$when"`. A clean tree
       allows; a leaky one denies;
     - an input redirection from a file the gate cannot tell, whatever the
       program: `sort < "$f"`, `while read l; do ...; done < "$f"`;

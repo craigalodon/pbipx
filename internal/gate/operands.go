@@ -33,7 +33,7 @@ func textNamesSettings(text string) bool {
 // runner's placeholder) is no read of a protected file: they print their
 // own arguments, make, move, link, remove or change files without reading
 // their content, only list, test or stat them, change the shell's own
-// state, or are judged by a rule of their own (git, gh, hub, pbipx, the
+// state, or are judged by a rule of their own (git, hub, pbipx, the
 // shells). Any other program given such a word is a reader of it: a
 // content printer outside the readers table (shuf, expand, ptx, nl, od,
 // fmt, python3 -m json.tool, perl -pe, node -p, curl -d @file) reads it
@@ -48,12 +48,14 @@ var neverReadsOperands = map[string]bool{
 	// Make, remove, move, link and change files without reading them.
 	"mkdir": true, "rmdir": true, "touch": true, "rm": true, "mv": true, "ln": true, "chmod": true,
 	"chown": true, "chgrp": true, "mkfifo": true, "unlink": true,
-	// Only list, test, name or stat files.
+	// Only list, test, name or stat files (ls, stat and du print metadata;
+	// ln makes a link without reading; file reads a file's start to name
+	// its type and prints the type, never a line of it).
 	"ls": true, "dir": true, "vdir": true, "stat": true, "du": true, "df": true, "tree": true, "test": true,
 	"[": true, "[[": true, "basename": true, "dirname": true, "realpath": true, "readlink": true, "file": true,
 	"which": true, "whereis": true, "type": true,
 	// Time, processes and the machine.
-	"sleep": true, "kill": true, "pkill": true, "pgrep": true, "killall": true, "ps": true, "date": true,
+	"sleep": true, "kill": true, "pkill": true, "pgrep": true, "killall": true, "ps": true,
 	"pwd": true, "whoami": true, "id": true, "uname": true, "hostname": true, "uptime": true, "wait": true,
 	"jobs": true, "fg": true, "bg": true, "disown": true, "exit": true, "return": true,
 	// The shell's own state.
@@ -62,13 +64,12 @@ var neverReadsOperands = map[string]bool{
 	"read": true, "alias": true, "unalias": true, "hash": true, "trap": true, "complete": true,
 	"compgen": true, "getopts": true, "let": true, "mapfile": true, "readarray": true,
 	// Judged by a rule of their own.
-	"git": true, "gh": true, "hub": true, "pbipx": true,
-	// Build, package and language tools: their operands are targets,
-	// packages and subcommands.
-	"make": true, "go": true, "npm": true, "pnpm": true, "yarn": true, "cargo": true, "rustup": true,
-	"pip": true, "pip3": true, "pipx": true, "gem": true, "apt": true, "apt-get": true, "apt-cache": true,
-	"brew": true, "dnf": true, "yum": true, "pacman": true, "apk": true, "snap": true, "man": true,
-	"info": true, "help": true, "apropos": true, "whatis": true,
+	"git": true, "hub": true, "pbipx": true,
+	// Build and package tools, man, info, gh and date are not here: make
+	// -f, go run, go vet, npm, pip install -r, cargo --manifest-path,
+	// gem install, apt install ./, brew install, man and info with a path,
+	// gh -F/--body-file/--input and date -f read the files their operands
+	// name, and some quote the lines they cannot parse.
 }
 
 // readsOperands reports whether program name reads an operand it is

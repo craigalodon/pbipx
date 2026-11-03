@@ -2072,6 +2072,13 @@ type wrapper struct {
 	// operands is how many words, after the options, come before the
 	// command: timeout's duration, taskset's mask, flock's file.
 	operands int
+	// flags and longFlags are the options that take no value, listed for
+	// the wrappers with operands: an option in neither list nor in short
+	// and long is unknown, and it may take a value of its own, so the
+	// operands after it cannot be told from that value or from the
+	// command (commandIdx leaves them unread).
+	flags     string
+	longFlags []string
 }
 
 // wrappers run the command that follows them, by name.
@@ -2087,15 +2094,17 @@ var wrappers = map[string]wrapper{
 	"xargs": {short: "IndPaELsE", long: []string{
 		"arg-file", "delimiter", "max-lines", "max-args", "max-procs", "max-chars", "process-slot-var",
 	}},
-	"stdbuf":      {short: "ioe", long: []string{"input", "output", "error"}},
-	"timeout":     {short: "sk", long: []string{"signal", "kill-after"}, operands: 1},
-	"ionice":      {short: "cnp", long: []string{"class", "classdata", "pid"}},
-	"setsid":      {},
-	"caffeinate":  {short: "tw"},
-	"unbuffer":    {},
-	"chronic":     {},
-	"taskset":     {operands: 1},
-	"flock":       {short: "wE", long: []string{"timeout", "wait", "conflict-exit-code"}, operands: 1},
+	"stdbuf": {short: "ioe", long: []string{"input", "output", "error"}},
+	"timeout": {short: "sk", long: []string{"signal", "kill-after"}, operands: 1, flags: "v",
+		longFlags: []string{"foreground", "preserve-status", "verbose", "help", "version"}},
+	"ionice":     {short: "cnp", long: []string{"class", "classdata", "pid"}},
+	"setsid":     {},
+	"caffeinate": {short: "tw"},
+	"unbuffer":   {},
+	"chronic":    {},
+	"taskset":    {operands: 1, flags: "acpr", longFlags: []string{"all-tasks", "cpu-list", "pid", "reset", "help", "version"}},
+	"flock": {short: "wE", long: []string{"timeout", "wait", "conflict-exit-code"}, operands: 1, flags: "sxunoFc",
+		longFlags: []string{"shared", "exclusive", "unlock", "nonblock", "nb", "no-fork", "close", "command", "help", "version"}},
 	"coproc":      {},
 	"busybox":     {},
 	"xvfb-run":    {short: "efnpsw", long: []string{"error-file", "auth-file", "server-num", "xauth-protocol", "server-args", "wait"}},
@@ -2413,6 +2422,7 @@ func commandIdx(args []string) (name string, rest []string, under []string, skip
 		}
 		under = append(under, base)
 		i++
+		unknownOpt := false // an option the wrapper's tables do not know
 		for i < len(args) && (strings.HasPrefix(args[i], "-") || isAssignment(args[i])) {
 			o := args[i]
 			skip(i, i+1)
@@ -2423,7 +2433,14 @@ func commandIdx(args []string) (name string, rest []string, under []string, skip
 			if base == "command" && (strings.ContainsRune(o, 'v') || strings.ContainsRune(o, 'V')) && !strings.HasPrefix(o, "--") {
 				return "", nil, under, skipped
 			}
+			if isAssignment(o) {
+				continue
+			}
 			if long, ok := strings.CutPrefix(o, "--"); ok {
+				name, _, _ := strings.Cut(long, "=")
+				if !slices.Contains(wr.long, name) && !slices.Contains(wr.longFlags, name) {
+					unknownOpt = true
+				}
 				if !strings.Contains(long, "=") && slices.Contains(wr.long, long) && i < len(args) {
 					skip(i, i+1) // the option's value, whatever it is
 					i++
@@ -2440,7 +2457,16 @@ func commandIdx(args []string) (name string, rest []string, under []string, skip
 					}
 					break
 				}
+				if strings.IndexByte(wr.flags, o[k]) < 0 {
+					unknownOpt = true
+				}
 			}
+		}
+		if unknownOpt && wr.operands > 0 {
+			// The unknown option may take a value of its own: the words
+			// after it are not told apart as operands, and an unknown one
+			// among them is taken for the command.
+			wr.operands = 0
 		}
 		skip(i, min(i+wr.operands, len(args))) // timeout's duration, flock's file
 		i = min(i+wr.operands, len(args))

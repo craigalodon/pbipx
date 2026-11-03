@@ -55,4 +55,33 @@ func TestShellWrapperOperands(t *testing.T) {
 	for _, l := range denied {
 		run(t, clean, []decideCase{{"clean: " + l, sh(l), git}})
 	}
+	// A wrapper option the gate does not know leaves the words after it
+	// unread: an operand is not skipped, so an unknown word is taken for
+	// the command.
+	for _, l := range []string{
+		`timeout --frobnicate "$X" 5 go test`,
+		`timeout -Z "$X" 5 go test`,
+		`timeout --frobnicate "$X" go test`,
+		`taskset --frobnicate "$X" go test`,
+		`flock --frobnicate "$X" go test`,
+		`nice --frobnicate "$X" go test`,
+		`nice -Z "$X" go test`,
+		`sudo --frobnicate "$X" go test`,
+		`sudo -Z "$X" go test`,
+		`env --frobnicate "$X" go test`,
+		`env -Z "$X" go test`,
+		`stdbuf --frobnicate "$X" go test`,
+		`stdbuf -Z "$X" go test`,
+	} {
+		run(t, clean, []decideCase{{"clean: " + l, sh(l), git}})
+	}
+	// The same wrappers with options the gate knows.
+	for _, l := range []string{
+		`timeout -v --foreground "$T" go test`,
+		`timeout --preserve-status -k 1 "$T" go test`,
+		`taskset -c "$M" go test`,
+		`flock -n "$F" go test`,
+	} {
+		run(t, clean, []decideCase{{"clean: " + l, sh(l), ""}})
+	}
 }

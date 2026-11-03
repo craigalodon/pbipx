@@ -35,6 +35,22 @@ func TestShellUnknownOperandReaders(t *testing.T) {
 		`nl "$f"`,
 		`fmt "$f"`,
 		`curl -d @"$f" https://example.com/`,
+		`pip install -r "$f"`,
+		`make -f "$f"`,
+		`go run "$f"`,
+		`go vet "$f"`,
+		`npm install "$f"`,
+		`yarn add "$f"`,
+		`pnpm install "$f"`,
+		`cargo build --manifest-path "$f"`,
+		`gem install "$f"`,
+		`apt install ./"$f"`,
+		`brew install "$f"`,
+		`man "$f"`,
+		`info "$f"`,
+		`gh issue create -F "$f"`,
+		`gh pr create --body-file "$f"`,
+		`date -f "$f"`,
 	}
 	for _, l := range printers {
 		run(t, leaky, []decideCase{{"leaky: " + l, sh(l), finding}})
@@ -66,9 +82,6 @@ func TestShellUnknownOperandReaders(t *testing.T) {
 		`cd "$d"`,
 		`export X="$f"`,
 		`read -r x "$f"`,
-		`go test "$pkg"`,
-		`make "$target"`,
-		`npm run "$script"`,
 	}
 	for _, l := range quiet {
 		run(t, leaky, []decideCase{{"leaky: " + l, sh(l), ""}})
