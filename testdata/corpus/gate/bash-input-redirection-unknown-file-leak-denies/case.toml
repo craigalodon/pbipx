@@ -1,0 +1,7 @@
+description = "an input redirection from a variable the gate cannot expand: whatever program reads it, tee here, reads a file that could be under a protected root, so the tree is scanned and the leak denies"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
+known       = "predecessor"

@@ -330,9 +330,7 @@ func carriesLines(name string) bool {
 // v.argvKnown and v.restKnown; first is the index in them of the first
 // word of v.argv.
 func markFed(v *view, known []bool, first int, phs []string) {
-	if carriesLines(v.name) {
-		return
-	}
+	carries := carriesLines(v.name)
 	skip := -1
 	if shells[v.name] {
 		skip = shellString(v.rest)
@@ -340,6 +338,15 @@ func markFed(v *view, known []bool, first int, phs []string) {
 	k, at := 0, 0
 	for wi := range v.words {
 		if v.words[wi].redirect {
+			// A file an input redirection names is read by whatever the
+			// redirection is for, so a placeholder there stands for a
+			// file name too.
+			if w := &v.words[wi]; w.input && !w.here && containsAny(w.text, phs) {
+				w.known, w.fed = false, true
+			}
+			continue
+		}
+		if carries {
 			continue
 		}
 		pos := k - first - (len(v.argv) - len(v.rest))

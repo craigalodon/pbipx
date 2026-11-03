@@ -3176,7 +3176,8 @@ func (w *walker) reaches() trigger {
 				continue
 			}
 			abss, unknown := s.wordSpellings(v, xw)
-			if unknown && (reader || xw.fed && isInterpreter(v.name)) && !optionOnly(xw.text) {
+			readsInput := xw.redirect && xw.input // < FILE, <> FILE: read by whatever it is for
+			if unknown && !xw.here && (reader || readsInput || xw.fed && isInterpreter(v.name)) && !optionOnly(xw.text) {
 				return trigger{v.name + " is given a word with an expansion the gate cannot resolve", hintExpand}
 			}
 			if i := slices.IndexFunc(abss, touches); i >= 0 {

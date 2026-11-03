@@ -145,7 +145,7 @@ func differentialStubs(t *testing.T, bash string) (dir, logFile string) {
 	dir = t.TempDir()
 	logFile = filepath.Join(t.TempDir(), "log")
 	logArgs := "{ printf '%s' \"${0##*/}\"; for a in \"$@\"; do printf '\\037%s' \"$a\"; done; printf '\\036'; } >> \"$PBIPX_DIFF_LOG\"\n"
-	reader := "#!/bin/sh\n" + logArgs + "if [ -f /dev/stdin ] && '" + realGrep + "' -qF '" + sentinel + "' </dev/stdin; then\n" +
+	reader := "#!/bin/sh\n" + logArgs + "case $(readlink /proc/self/fd/0 2>/dev/null) in */pbip/*) in=1 ;; *) in= ;; esac\nif [ -n \"$in\" ] && [ -f /dev/stdin ] && '" + realGrep + "' -qF '" + sentinel + "' </dev/stdin; then\n" +
 		"\tprintf 'stdin-leak\\036' >> \"$PBIPX_DIFF_LOG\"\nfi\n"
 	for _, name := range []string{"grep", "egrep", "rg", "cat", "head", "tail", "sed", "jq", "python3", "ls", "wc", "sort"} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(reader), 0o700); err != nil { //nolint:gosec // G306: a test's own stub

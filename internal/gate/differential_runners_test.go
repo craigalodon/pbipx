@@ -26,8 +26,17 @@ func init() {
 				p+" | parallel '"+r+" {}'",
 				p+" | parallel "+r,
 				p+" | parallel "+r+" {/}",
+				p+" | xargs -I{} sh -c '"+r+" < {}'",
+				p+" | parallel '"+r+" < {}'",
+				p+" | xargs -I{} sh -c '< {} "+r+"'",
 			)
 		}
+	}
+	for _, p := range producers {
+		out = append(out,
+			p+" | xargs -I{} sh -c 'while IFS= read -r l; do cat; done < {}'",
+			p+" | xargs -I{} sh -c 'exec 3< {}; cat <&3'",
+		)
 	}
 	for _, r := range readers {
 		out = append(out,

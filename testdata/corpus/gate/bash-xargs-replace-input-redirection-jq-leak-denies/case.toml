@@ -1,0 +1,7 @@
+description = "xargs -I with a nested sh -c reading the placeholder through an input redirection: the redirection names a file the gate cannot tell, which jq reads, so every protected root is read and the leak denies"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
+known       = "predecessor"
