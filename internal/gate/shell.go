@@ -380,6 +380,74 @@ func quotedCode(c simple) bool {
 	return false
 }
 
+// holdsCode reports whether s holds text bash would run if it were
+// evaluated: $(, a backtick or ${.
+func holdsCode(s string) bool {
+	return strings.Contains(s, "$(") || strings.Contains(s, "`") || strings.Contains(s, "${")
+}
+
+// valueSetters are the commands whose words, here-strings and
+// here-documents can become a variable's value.
+var valueSetters = map[string]bool{
+	"read": true, "declare": true, "typeset": true, "local": true, "export": true, "readonly": true,
+	"mapfile": true, "readarray": true, "let": true,
+}
+
+// assignWord matches a word that assigns a variable or an array element,
+// NAME=, NAME+=, NAME[...]= or NAME[...]+=, or a compound array's
+// [...]= element.
+var assignWord = regexp.MustCompile(`^(?:[A-Za-z_][A-Za-z0-9_]*)?(?:\[[^\]]*\])?\+?=`)
+
+// valueCode reports whether c holds quoted code (holdsCode) where it can
+// become a variable's value, the only way an arithmetic context or a
+// prompt expansion can read it: an assignment word; a word of a command
+// that sets values (valueSetters, printf -v), of a for or select list, or
+// of a compound array; a ${x=...} or ${x:=...} default; a here-string or
+// here-document a value setter reads; and anything at all a command in a
+// substitution or a nested line prints (depth above 0), or one whose
+// output a pipe or a process substitution passes on. A git message, a sed
+// script or an echo at the top of the line becomes no value.
+func valueCode(c simple, v view, depth int) bool {
+	setter := valueSetters[v.name] || v.name == "printf" && slices.Contains(v.rest, "-v")
+	if setter {
+		for _, doc := range c.docs {
+			if holdsCode(doc.body) {
+				return true
+			}
+		}
+	}
+	lead := c.words[:min(len(c.words), leadingKeywords(c.words)+1)]
+	list := slices.ContainsFunc(lead, func(w word) bool { return !w.quoted && (w.text == "for" || w.text == "select") })
+	// test -v, [[ -v and unset evaluate the subscript of the name they
+	// are given, as the setters do.
+	names := v.name == "test" || v.name == "[" || v.name == "[[" || v.name == "unset"
+	whole := depth > 0 || c.pipeOut || c.procSub || c.arrayElems || setter || list || names
+	for _, wd := range c.words {
+		for _, p := range wd.parts {
+			switch {
+			case p.kind == litPart && p.quoted && holdsCode(p.text):
+				if whole || wd.here || assignWord.MatchString(wd.text) {
+					return true
+				}
+			case p.kind == opaquePart && strings.HasPrefix(p.raw, "${") && strings.Contains(p.raw, "=") && holdsCode(p.raw[2:]):
+				// ${x=...} and ${x:=...} assign their default.
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// readsValueFromFile reports whether v reads a variable's value from a
+// file (read or mapfile with an input redirection that is not a
+// here-string), whose content the gate cannot see.
+func readsValueFromFile(v view) bool {
+	if v.name != "read" && v.name != "mapfile" && v.name != "readarray" {
+		return false
+	}
+	return slices.ContainsFunc(v.words, func(xw xword) bool { return xw.redirect && xw.input && !xw.here })
+}
+
 // evaluates reports whether c makes bash evaluate a string as code: an
 // array subscript or a name that test -v, [[ -v, printf -v, read,
 // mapfile, declare -n (or a subscripted name), let or unset reads, an
@@ -1131,10 +1199,12 @@ type walker struct {
 	// hashed are the names the line made stand for another program (hash
 	// -p, alias): a command that runs one runs what the gate cannot tell.
 	hashed map[string]bool
-	// quotedCode is set once a command holds quoted code, and evaluates
-	// once one makes bash evaluate a string (evaluates).
-	quotedCode, evaluates bool
-	message               map[int]bool
+	// quotedValue is set once a command holds quoted code that can become
+	// a variable's value (valueCode), quotedAny once one holds any quoted
+	// code, readsFile once a read or mapfile reads a value from a file,
+	// and evaluates once a command makes bash evaluate a string.
+	quotedValue, quotedAny, readsFile, evaluates bool
+	message                                      map[int]bool
 	// anywhere names a change after which every read in the line counts,
 	// wherever it is: one in a process substitution, which starts before
 	// or alongside the command it is given to, and any change in a line
@@ -1213,6 +1283,7 @@ func (w *walker) commands(line string, cmds []simple, st *cwdState, depth int) {
 		if !c.pipeIn {
 			prev = nil
 		}
+		c.pipeOut = i+1 < len(cmds) && cmds[i+1].pipeIn
 		v := w.simple(c, st, depth)
 		if c.fallback {
 			// The line did not tokenize: what it runs cannot be told.
@@ -1470,11 +1541,15 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 	if why := w.unknownProgram(c, v); why != "" {
 		w.setRuntime(why, hintPlain)
 	}
-	// Quoted code bash evaluates later (F4): quoted $(...) with a
-	// construct that evaluates a string, in any order in the line.
-	w.quotedCode = w.quotedCode || quotedCode(c)
+	// Quoted code bash evaluates later (F4): quoted $(...) that can become
+	// a variable's value, with a construct that evaluates a string, in
+	// any order in the line. A value read from a file the line may have
+	// written cannot be seen: then any quoted code counts.
+	w.quotedValue = w.quotedValue || valueCode(c, v, depth)
+	w.quotedAny = w.quotedAny || quotedCode(c)
+	w.readsFile = w.readsFile || readsValueFromFile(v)
 	w.evaluates = w.evaluates || evaluates(c, v)
-	if w.quotedCode && w.evaluates {
+	if (w.quotedValue || w.quotedAny && w.readsFile) && w.evaluates {
 		w.setRuntime("quoted code is evaluated by bash (an array subscript, test -v, printf -v, read, declare -n, "+
 			"let, arithmetic or a prompt expansion)", hintPlain)
 	}

@@ -119,6 +119,12 @@ type simple struct {
 	// <(...) or >(...), which starts before or alongside the command it
 	// is given to.
 	procSub bool
+	// arrayElems is true for the words of a compound array assignment,
+	// a=(...): each becomes an element's value.
+	arrayElems bool
+	// pipeOut is set by the walker for a command whose output the next
+	// command in its pipeline reads.
+	pipeOut bool
 }
 
 // args is the command's words without redirection targets.
@@ -177,6 +183,9 @@ type tokenizer struct {
 	// parens are the open parentheses, each true for a process
 	// substitution, <(...) or >(...).
 	parens []bool
+	// arrays runs beside parens: true for one that opens a compound array
+	// assignment, a=(...).
+	arrays []bool
 	// braceWords counts the words brace expansion made in the line.
 	braceWords int
 	// cases counts the case commands open (after "case WORD in", before
@@ -705,6 +714,7 @@ func (t *tokenizer) endCommand() {
 	if len(t.cur.words) > 0 || len(t.cur.subs) > 0 || len(t.cur.docs) > 0 || t.cur.arith {
 		t.cur.pipeIn = t.pipe
 		t.cur.procSub = slices.Contains(t.parens, true)
+		t.cur.arrayElems = len(t.arrays) > 0 && t.arrays[len(t.arrays)-1]
 		t.cmds = append(t.cmds, t.cur)
 		t.pipe = false
 	}
@@ -970,12 +980,15 @@ func (t *tokenizer) run(start int, sub bool) (int, bool) {
 					continue
 				}
 			}
+			// a=( and a+=( open a compound array assignment.
+			array := !proc && t.inWord && strings.HasSuffix(t.raw.String(), "=")
 			if t.definesFunction(i) {
 				t.endWord()
 				t.cur.funcDef = true
 			}
 			t.endCommand()
 			t.parens = append(t.parens, proc)
+			t.arrays = append(t.arrays, array)
 		case ')':
 			// The word before ends first: an esac there closes the case.
 			t.endWord()
@@ -998,6 +1011,7 @@ func (t *tokenizer) run(start int, sub bool) (int, bool) {
 			t.endCommand()
 			if len(t.parens) > 0 {
 				t.parens = t.parens[:len(t.parens)-1]
+				t.arrays = t.arrays[:len(t.arrays)-1]
 			}
 		case ';':
 			t.endCommand()
