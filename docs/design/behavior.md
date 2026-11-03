@@ -765,14 +765,21 @@ path, is denied with `event-error`: the call cannot be judged.
     does: `git ls-files | xargs -I{} sh -c 'cat {}'`, `... | xargs -I{}
     sh -c 'jq . {}'`, `... | parallel 'cat {}'` and `... | parallel cat`
     scan the tree. `parallel` with literal `:::` arguments reads nothing
-    from input. find's `{}` is not one: find's own walk names the files,
-    which the path it searches covers (`find src -exec sh -c 'jq . {}'
-    \;` is allowed when src holds no root, `find . -exec sh -c 'cat {}'
-    \;` scans). `command -v` and `-V` run nothing. Any other program,
-    unless it is one known never to run its words (`echo`, `which`, `man`,
-    package managers and the like), whose first word that is not an option
-    is a reader, a search, git, `find`, `fd`, a shell or `eval`, is judged
-    as that program: an unknown wrapper is judged by what it runs;
+    from input. When the gate cannot read a runner's options completely
+    (an option it does not know, a cluster it cannot split such as
+    `-n1I{}`, a value that cannot be told or is no number where one is
+    due, a word it cannot expand among them or as the command), every
+    word of the command the runner runs counts as an input word, nested
+    lines included: `xargs -Z -I{} sh -c 'cat {}'` and `xargs -Z sh -c
+    'cat README.md'` scan the tree. find's `{}` is not one: find's own
+    walk names the files, which the path it searches covers (`find src
+    -exec sh -c 'jq . {}' \;` is allowed when src holds no root, `find .
+    -exec sh -c 'cat {}' \;` scans). `command -v` and `-V` run nothing.
+    Any other program, unless it is one known never to run its words
+    (`echo`, `which`, `man`, package managers and the like), whose first
+    word that is not an option is a reader, a search, git, `find`, `fd`,
+    a shell or `eval`, is judged as that program: an unknown wrapper is
+    judged by what it runs;
   - `sh`, `bash`, `zsh` and kin with `-c` (after `--`, and after
     long options that take a value such as `--rcfile`), `script -c`,
     `flock FILE -c`, `watch` (its words, joined), `env -S`, GNU `parallel`

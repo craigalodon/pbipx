@@ -69,30 +69,80 @@ var parallelPlaceholders = func() []string {
 	return out
 }()
 
-// feedOf reads argv, a command's words, for a runner (xargs or parallel,
-// the first of them) and how it feeds what it runs.
-func feedOf(argv []string) runnerFeed {
+// fedAll stands in a runner's placeholders for "every word": the gate
+// could not read the runner's options completely, so any word of the
+// command it runs, nested lines included, may be an input word.
+const fedAll = "\x00fed-all"
+
+// feedOf reads argv, a command's words (known says which the gate can
+// tell), for a runner (xargs or parallel, the first of them) and how it
+// feeds what it runs. A runner whose options it cannot read completely —
+// an option it does not know, a cluster it cannot split, a value it
+// cannot tell or that is no number where one is due, a word it cannot
+// expand among them or as the command — feeds every word (fedAll).
+func feedOf(argv []string, known []bool) runnerFeed {
 	for i, a := range argv {
+		var f runnerFeed
 		switch progName(a) {
 		case "xargs":
-			return xargsFeed(argv[i+1:])
+			f = xargsFeed(argv[i+1:], known[i+1:])
 		case "parallel":
-			return parallelFeed(argv[i+1:])
+			f = parallelFeed(argv[i+1:], known[i+1:])
+		default:
+			continue
 		}
+		return f
 	}
 	return runnerFeed{}
 }
 
-// xargsFeed reads xargs's options, in args (the words after xargs): its
-// replacement string -I R, -IR, -i[R] (default {}), --replace[=R]; with
-// one, the input replaces the string in the command, with none it is
-// appended.
-func xargsFeed(args []string) runnerFeed {
+// unsureFeed is f when the runner's options could not be read: input
+// from anywhere, every word fed, the input appended.
+func unsureFeed(f runnerFeed) runnerFeed {
+	f.fromInput, f.appends, f.placeholders = true, true, []string{fedAll}
+	return f
+}
+
+// xargsShort and xargsLongFlags are the options xargs has (GNU xargs
+// 4.9): short ones with a value (a d E I L n P s), with an optional value
+// attached (e i l), with none (0 o p r t x); long ones with none, the
+// valued ones being the wrapper table's.
+const (
+	xargsShortValue    = "adEILnPs"
+	xargsShortOptional = "eil"
+	xargsShortFlag     = "0oprtx"
+	xargsNumeric       = "LnPs"
+)
+
+var xargsLongFlags = []string{
+	"null", "interactive", "no-run-if-empty", "open-tty", "show-limits", "verbose", "exit", "help", "version",
+}
+
+// xargsFeed reads xargs's options, in args (the words after xargs, known
+// as given): its replacement string -I R, -IR, -i[R] (default {}),
+// --replace[=R]; with one, the input replaces the string in the command,
+// with none it is appended. The options end at the first word that is
+// not one, or at --; the command is the word after, and must be known.
+func xargsFeed(args []string, known []bool) runnerFeed {
 	f := runnerFeed{runner: "xargs", fromInput: true}
-	withValue := wrappers["xargs"]
-	for i := 0; i < len(args); i++ {
+	table := wrappers["xargs"]
+	next := func(i int) (string, bool) { // the word after i, known
+		if i+1 < len(args) && known[i+1] {
+			return args[i+1], true
+		}
+		return "", false
+	}
+	i := 0
+	for ; i < len(args); i++ {
 		a := args[i]
-		if a == "--" || !strings.HasPrefix(a, "-") || a == "-" {
+		if !known[i] {
+			return unsureFeed(f)
+		}
+		if a == "--" {
+			i++
+			break
+		}
+		if !strings.HasPrefix(a, "-") || a == "-" {
 			break
 		}
 		if strings.HasPrefix(a, "--") {
@@ -103,53 +153,145 @@ func xargsFeed(args []string) runnerFeed {
 					value = "{}"
 				}
 				f.placeholders = append(f.placeholders, value)
-			case slices.Contains(withValue.long, name) && !hasValue:
-				i++
+			case name == "eof" || name == "max-lines":
+				// An optional value, attached only.
+			case slices.Contains(table.long, name):
+				if !hasValue {
+					if _, ok := next(i); !ok {
+						return unsureFeed(f)
+					}
+					i++
+				}
+			case slices.Contains(xargsLongFlags, name) && !hasValue:
+			default:
+				return unsureFeed(f)
 			}
 			continue
 		}
 		// A cluster of short options, to the first that takes a value.
+	cluster:
 		for j := 1; j < len(a); j++ {
 			c := a[j]
-			if c == 'i' {
-				rest := a[j+1:]
-				if rest == "" {
-					rest = "{}"
+			switch {
+			case strings.IndexByte(xargsShortFlag, c) >= 0:
+			case strings.IndexByte(xargsShortOptional, c) >= 0:
+				if c == 'i' {
+					rest := a[j+1:]
+					if rest == "" {
+						rest = "{}"
+					}
+					f.placeholders = append(f.placeholders, rest)
 				}
-				f.placeholders = append(f.placeholders, rest)
-				break
-			}
-			if strings.IndexByte(withValue.short, c) >= 0 {
+				break cluster
+			case strings.IndexByte(xargsShortValue, c) >= 0:
 				value := a[j+1:]
-				if value == "" && i+1 < len(args) {
+				if value == "" {
+					v, ok := next(i)
+					if !ok {
+						return unsureFeed(f)
+					}
 					i++
-					value = args[i]
+					value = v
+				}
+				if strings.IndexByte(xargsNumeric, c) >= 0 && strings.Trim(value, "0123456789") != "" {
+					return unsureFeed(f)
 				}
 				if c == 'I' {
 					f.placeholders = append(f.placeholders, value)
 				}
-				break
+				break cluster
+			default:
+				return unsureFeed(f)
 			}
 		}
+	}
+	if i < len(args) && !known[i] {
+		return unsureFeed(f) // the command is a word the gate cannot tell
 	}
 	f.appends = len(f.placeholders) == 0
 	return f
 }
 
-// parallelFeed reads GNU parallel's words after parallel: with ::: (literal
-// arguments) and no :::: or -a, the arguments are its own and nothing
-// comes from input; otherwise every input line is a word. -I R / --replace
-// R changes {} to R. Placeholders are the defaults and R; with none in the
-// command, the input is appended.
-func parallelFeed(args []string) runnerFeed {
+// parallelFlags and parallelValues are the GNU parallel options the gate
+// reads: with none, and with a value (given apart or attached). Any other
+// option leaves the runner unread.
+var parallelFlags = []string{
+	"-k", "--keep-order", "--bar", "--progress", "--eta", "-X", "-m", "--will-cite", "--tag", "-v", "--verbose",
+	"--dry-run", "-r", "--no-run-if-empty", "-u", "--ungroup", "-g", "--group", "--line-buffer", "--lb",
+	"--linebuffer", "-0", "--null", "--halt-on-error", "--shuf", "-q", "--quote", "--pipe", "--pipepart",
+	"--citation", "--no-notice", "--nice", "-t", "--link", "--xargs", "--sshdelay", "--plain", "--bibtex",
+}
+
+var parallelValues = []string{
+	"-j", "--jobs", "-P", "-S", "--sshlogin", "-a", "--arg-file", "-d", "--delimiter", "-I", "--replace",
+	"--replace-str", "-N", "-n", "--max-args", "-L", "-l", "--max-lines", "-s", "--max-chars", "-E", "--eof",
+	"--colsep", "-C", "--results", "--res", "--joblog", "--tmpdir", "--timeout", "--halt", "--memfree", "--load",
+	"--retries", "--delay", "--tag-string", "--tagstring", "--workdir", "--wd", "--block", "-b", "--header",
+	"--recstart", "--recend", "--env", "--sshloginfile", "--slf", "--jobs-file", "--max-procs", "--delay-to",
+}
+
+// parallelFeed reads GNU parallel's words after parallel (known as
+// given): with ::: (literal arguments) and no :::: or -a, the arguments
+// are its own and nothing comes from input; otherwise every input line is
+// a word. -I R / --replace R changes {} to R. Placeholders are the
+// defaults and R; with none in the command, the input is appended. The
+// options end at the first word that is not one, or at ::: ; an option the
+// gate does not know, or a word it cannot tell among them or as the
+// command, leaves it unread (unsureFeed).
+func parallelFeed(args []string, known []bool) runnerFeed {
 	f := runnerFeed{runner: "parallel", fromInput: true}
-	template := parallelTemplate(args)
+	var replace []string
+	i := 0
+	for ; i < len(args); i++ {
+		a := args[i]
+		if !known[i] {
+			return unsureFeed(f)
+		}
+		if strings.HasPrefix(a, ":::") || !strings.HasPrefix(a, "-") || a == "-" {
+			break
+		}
+		name, value, hasValue := a, "", false
+		if strings.HasPrefix(a, "--") {
+			name, value, hasValue = strings.Cut(a, "=")
+		} else if len(a) > 2 && slices.Contains(parallelValues, a[:2]) {
+			name, value, hasValue = a[:2], a[2:], true // -j4, -IR
+		}
+		switch {
+		case slices.Contains(parallelValues, name):
+			if !hasValue {
+				if i+1 >= len(args) || !known[i+1] {
+					return unsureFeed(f)
+				}
+				i++
+				value = args[i]
+			}
+			if name == "-I" || name == "--replace" || name == "--replace-str" {
+				replace = append(replace, value)
+			}
+		case slices.Contains(parallelFlags, name) && !hasValue:
+		case name == "-i":
+			replace = append(replace, "{}")
+		default:
+			return unsureFeed(f)
+		}
+	}
+	if i < len(args) && !known[i] {
+		return unsureFeed(f)
+	}
+	template := args[min(i, len(args)):]
+	for k, a := range template {
+		if strings.HasPrefix(a, ":::") {
+			template = template[:k]
+			break
+		}
+	}
 	literal := false
 	for _, a := range args {
 		switch {
 		case a == "::::" || a == "-a" || a == "--arg-file" || a == "--pipe" || a == "--pipepart" ||
-			strings.HasPrefix(a, "--arg-file="):
-			f.fromInput, literal = true, false
+			strings.HasPrefix(a, "--arg-file=") || strings.HasPrefix(a, "-a") && len(a) > 2 && a[1] == 'a' && !strings.HasPrefix(a, "--"):
+			literal = false
+			f.fromInput = true
 			goto parsed
 		case strings.HasPrefix(a, ":::"):
 			literal = true
@@ -158,26 +300,16 @@ func parallelFeed(args []string) runnerFeed {
 parsed:
 	if literal {
 		f.fromInput = false
-	}
-	for i, a := range args {
-		if (a == "-I" || a == "--replace" || a == "--replace-str") && i+1 < len(args) {
-			f.placeholders = append(f.placeholders, args[i+1])
-		} else if strings.HasPrefix(a, "-I") && len(a) > 2 || strings.HasPrefix(a, "--replace=") {
-			f.placeholders = append(f.placeholders, strings.TrimPrefix(strings.TrimPrefix(a, "--replace="), "-I"))
-		}
-	}
-	if !f.fromInput {
-		f.placeholders = nil
 		return f
 	}
-	f.placeholders = append(f.placeholders, parallelPlaceholders...)
+	f.placeholders = slices.Concat(replace, parallelPlaceholders)
 	f.appends = !slices.ContainsFunc(template, func(w string) bool { return containsAny(w, f.placeholders) })
 	return f
 }
 
-// containsAny reports whether s holds one of subs.
+// containsAny reports whether s holds one of subs, or subs holds fedAll.
 func containsAny(s string, subs []string) bool {
-	return slices.ContainsFunc(subs, func(p string) bool { return p != "" && strings.Contains(s, p) })
+	return slices.ContainsFunc(subs, func(p string) bool { return p == fedAll || p != "" && strings.Contains(s, p) })
 }
 
 // carriesLines are the commands whose words are command lines read in

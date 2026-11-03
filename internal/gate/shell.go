@@ -1316,7 +1316,7 @@ func (w *walker) commands(line string, cmds []simple, st *cwdState, depth int) {
 		}
 		if v.name == "find" || v.name == "fd" || v.name == "fdfind" {
 			lister = &v
-		} else if lister != nil && feedOf(v.argv).runner != "" {
+		} else if lister != nil && feedOf(v.argv, v.argvKnown).runner != "" {
 			// find P ... | xargs ... reads every file find prints.
 			for _, p := range listRoots(*lister) {
 				w.reachesIn(lister.cwd, p, "xargs or parallel reads the files find or fd lists")
@@ -1536,7 +1536,7 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 	v.cache = w.cache
 	// The lines nested in this command are read with the placeholders of
 	// the runners it runs under: they stand for input words there too.
-	feed := feedOf(v.argv)
+	feed := feedOf(v.argv, v.argvKnown)
 	defer func(old []string) { w.ph = old }(w.ph)
 	w.ph = slices.Concat(w.ph, feed.placeholders)
 	// The shell running the lines nested in a shell command is that
@@ -1824,7 +1824,7 @@ func (s *setup) viewOf(c simple, st cwdState, ph []string) view {
 	v.restKnown = v.argvKnown[len(v.argvKnown)-len(v.rest):]
 	// Words a runner (xargs, parallel) substitutes input words for: those
 	// of the runners this command runs under, and of any it is nested in.
-	if phs := slices.Concat(ph, feedOf(v.argv).placeholders); len(phs) > 0 {
+	if phs := slices.Concat(ph, feedOf(v.argv, v.argvKnown).placeholders); len(phs) > 0 {
 		markFed(&v, known, len(args)-len(v.argv), phs)
 	}
 	return v
@@ -3022,7 +3022,7 @@ func unknownArgs(v view) []string {
 // (gitContent).
 func (s *setup) gitRule(v view) *gitDenial {
 	unknown := unknownArgs(v)
-	if v.name == "git" && feedOf(v.argv).runner != "" {
+	if v.name == "git" && feedOf(v.argv, v.argvKnown).runner != "" {
 		// xargs (and parallel) add the words they read to git's: words
 		// the gate cannot tell, which could be options (echo -p | xargs
 		// git log). With -I they replace a word instead, as unknown.

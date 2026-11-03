@@ -55,6 +55,38 @@ func TestShellRunnerPlaceholders(t *testing.T) {
 		{"parallel with literal arguments", sh(`parallel cat ::: README.md`), ""},
 		{"xargs -I mkdir", sh(`git ls-files | xargs -I{} mkdir -p {}.d`), ""},
 	})
+	// A runner whose options the gate cannot fully read feeds every word of
+	// the command it runs, nested lines too.
+	unsure := []struct{ name, line string }{
+		{"xargs cluster -0rI{}", `git ls-files | xargs -0rI{} sh -c 'cat {}'`},
+		{"xargs cluster -n1I{}", `git ls-files | xargs -n1I{} sh -c 'cat {}'`},
+		{"xargs unknown short option before -I", `git ls-files | xargs -Z -I{} sh -c 'cat {}'`},
+		{"xargs unknown long option before -I", `git ls-files | xargs --frobnicate -I{} sh -c 'cat {}'`},
+		{"xargs unknown option, a reader of a file", `git ls-files | xargs -Z sh -c 'cat README.md'`},
+		{"xargs -n with a non-number", `git ls-files | xargs -nX -I{} sh -c 'cat {}'`},
+		{"parallel unknown option", `git ls-files | parallel --frobnicate 'cat {}'`},
+		{"parallel unknown short option", `git ls-files | parallel -Z 'sh -c "cat {}"'`},
+	}
+	for _, l := range unsure {
+		run(t, leaky, []decideCase{{l.name + ", leaky", sh(l.line), finding}})
+	}
+	// A word it cannot expand among the options, or as the command: built
+	// at run time, a stricter deny than the scan.
+	for _, line := range []string{
+		`git ls-files | xargs $OPTS -I{} sh -c 'cat {}'`,
+		`git ls-files | xargs -I "$R" sh -c 'cat X'`,
+		`git ls-files | xargs $OPTS sh -c 'cat {}'`,
+		`git ls-files | parallel $OPTS 'cat {}'`,
+		`git ls-files | parallel -j "$N" 'cat {}'`,
+	} {
+		run(t, leaky, []decideCase{{"unreadable options: " + line, sh(line), gate.ReasonGitContent}})
+	}
+	// A runner whose options the gate reads fully keeps its precision.
+	run(t, leaky, []decideCase{
+		{"xargs cluster -0rI{} with echo", sh(`git ls-files | xargs -0rI{} sh -c 'echo {}'`), ""},
+		{"xargs -n2 -P4 with echo", sh(`git ls-files | xargs -n2 -P4 echo`), ""},
+		{"parallel -j4 --will-cite with echo", sh(`git ls-files | parallel -j4 --will-cite echo {}`), ""},
+	})
 	// A clean tree has nothing to leak: the scan finds nothing.
 	for _, l := range deny {
 		run(t, clean, []decideCase{{l.name + ", clean", sh(l.line), ""}})
