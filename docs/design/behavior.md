@@ -462,11 +462,15 @@ repositories a call is the gate's to judge
   and a repository that has not adopted pbipx, nested in one that has,
   leaves its paths to the one around it. An indexed work tree below a
   Grep's path or a Bash word counts too, since those can reach under it;
-  the working directory alone does not reach below itself. Every linked
-  work tree of an indexed clone counts as indexed, as `git worktree list`
-  reports them (read from the clone's `worktrees/*/gitdir` files, without
-  running git): `grep -rn X ..` from a clone reaches a sibling made by
-  `git worktree add ../wt`. When the call
+  the working directory alone does not reach below itself. Every work
+  tree of an indexed clone counts as indexed, as `git worktree list`
+  reports them, read without running git: each linked one (the common git
+  directory's `worktrees/*/gitdir` files), and the main one (the parent of
+  a non-bare common directory, `<main>/.git`, or `core.worktree` in the
+  common config). So `grep -rn X ..` from a clone reaches a sibling made by
+  `git worktree add ../wt`, and a record that roots only a linked work
+  tree reaches the main one (`grep -r X sub` from a parent of both). When
+  the call
   touches something that cannot be placed (the shell rule's "touches
   every root": a working directory that cannot be told, a reading
   command's word that cannot be placed, a line built
@@ -679,8 +683,15 @@ path, is denied with `event-error`: the call cannot be judged.
     `$'...'`, a comment or the body of a here-document with a quoted
     delimiter (a join that splits `<<` makes the text after it such a
     body: `cat <\<newline><'E'`). The script `echo` or `printf` feeds a
-    shell is the text it prints (printf's `%s`, `%b` and escapes), read
-    the same way, joins included;
+    shell is the text it prints, read the same way, joins included. The
+    gate reads exactly two tables of escapes, as bash's builtins do:
+    printf's format reads `\\`, `\a`, `\b`, `\f`, `\n`, `\r`, `\t`, `\v`,
+    `\"` and `\'`; an `echo -e` or `%b` argument reads the same but `\"`
+    and `\'`, which it keeps as written. Any other escape (`\x`, `\0NNN`,
+    `\NNN`, `\u`, `\U`, `\c`, `\e`), any conversion but `%s`, `%b` and
+    `%%`, and `printf -v` leave the text untold, and the script counts as
+    built at run time (below). A test checks every text the gate claims
+    against what bash prints;
   - the tokenizer fails closed on its own uncertainty. These are lines the
     gate cannot read as bash would, each named in the deny in its own
     fixed words: a line it does not end at the plain top level (a `case`
@@ -692,8 +703,10 @@ path, is denied with `event-error`: the call cannot be judged.
     backslash-newline in an unquoted here-document body that changes
     which line ends it (the line after it is the delimiter, or the
     joined line is) or that is in a line with a `$(` or a backtick, a
-    backslash-newline next to `<` or `>` (one that can split a
-    redirection or a here-document operator), a join that the second
+    backslash-newline between two operator characters that join into one
+    redirection or here-document operator (`<\<newline><`, `>\<newline>>`,
+    `&\<newline>>`, `<\<newline>(`; a blank on either side joins nothing:
+    `go test ./... \<newline>> out.txt` is read), a join that the second
     reading finds inside quotes, a comment or a quoted here-document
     body, and a here-document inside a command substitution with a line that starts
     with its delimiter (bash 5.2 ends the body there, later versions do
@@ -767,18 +780,34 @@ path, is denied with `event-error`: the call cannot be judged.
     function named as a program the gate models (`cd() { ...; }`, `cat()
     { ...; }`; a function definition's name is never run as a command),
     `mapfile` or `readarray` with a callback (`-C`), quoted code that bash
-    evaluates later (a quoted `$(`, backtick or `${` in a line that also
-    has an array subscript or name read by `test -v`, `[[ -v`, `printf
-    -v`, `read`, `mapfile`, `declare -n`, `let` or `unset`, a variable
-    declared with `-i` (`declare`, `typeset`, `local`, `export`,
-    `readonly`), whose every assignment is evaluated, an operand of `[[`
-    with `-eq`, `-ne`, `-lt`, `-le`, `-gt` or `-ge`, or any arithmetic
-    context that names a variable or holds an expansion, anywhere in the
-    line, a case pattern included: `$((...))`, `$[...]`, `((...))`, a
-    subscript in an expansion (`${a[x]}`, `${b[$x]}`) or in an assignment
-    (`b[x]=1`, `a=([x]=1)`), a substring offset (`${PWD:x:1}`, `${@:x}`),
-    or a `${x@P}` or `${x@E}` expansion), setting a variable whose value
-    bash
+    evaluates later: a quoted `$(`, backtick or `${` that can become a
+    variable's value, in a line that also evaluates one. It can become a
+    value in an assignment word (`v=...`, `v+=...`, `a[i]=...`), a word
+    of `read`, `printf -v`, `declare`, `typeset`, `local`, `export`,
+    `readonly`, `mapfile`, `readarray` or `let`, of a `for` or `select`
+    list or of a compound array (`a=(...)`), a `${x=...}` or `${x:=...}`
+    default, a here-string or here-document a value setter reads, a word
+    `test -v`, `[[ -v` or `unset` reads as a name, and anything a command
+    in a substitution or a nested line prints or a pipe or a process
+    substitution passes on (`v=$(echo '...')`, `echo '...' | read v`).
+    When a `read` or `mapfile` reads a value from a file, which the gate
+    cannot see, any quoted code in the line counts. A git message, a sed
+    script or an echo at the top of the line becomes no value:
+    ``for ((i=0; i<3; i++)); do ...; done && git commit -qm 'Use `make`'``
+    is allowed. A line evaluates a value when it has an array subscript or
+    name read by `test -v`, `[[ -v`, `printf -v`, `read`, `mapfile`,
+    `declare -n`, `let` or `unset`, a variable declared with `-i`
+    (`declare`, `typeset`, `local`, `export`, `readonly`), whose every
+    assignment is evaluated, an operand of `[[` with `-eq`, `-ne`, `-lt`,
+    `-le`, `-gt` or `-ge`, or any arithmetic context that names a variable
+    or holds an expansion, anywhere in the line, a case pattern included:
+    `$((...))`, `$[...]`, `((...))`, a subscript in an expansion
+    (`${a[x]}`, `${b[$x]}`) or in an assignment (`b[x]=1`, `a=([x]=1)`), a
+    substring offset (`${PWD:x:1}`, `${@:x}`), after a subscript too
+    (`${a[@]:x}`, `${a[0]:x}`), and any of these nested in an operator's
+    operand (`${y:-${s:x}}`, `${s#${s:x}}`, `${s/a/${s:x}}`); or a `${x@P}`
+    or `${x@E}` expansion. Code built at run time is also setting a
+    variable whose value bash
     runs later (`PS0`, `PS1`, `PS2`, `PS4`, `PROMPT_COMMAND`, `BASH_ENV`,
     `ENV`, `SHELLOPTS`, `BASHOPTS`, after reserved words such as `time`
     and under a wrapper such as `env` included), `tmux send-keys`, `at
@@ -2126,37 +2155,56 @@ behavior (2026-10-29).
 - **Known over-blocks of the shell rule, in full.** Each denies though
   the line may print nothing protected; each is the price of a rule
   above, and each has a plain form that is allowed:
-  - `eval "$(pyenv init -)"` and any `eval`, `bash -c`, `sh -c` or
-    `source` of text built at run time (`git-content`);
-  - a command word whose value cannot be told and could split, or whose
-    last element is a shell, an interpreter or a wrapper
-    (`"$(dirname x)/bash" -c ...`);
-  - a git command after one not known to be read-only that could print
-    content with no pathspec proof: `git fetch && git diff --cached`,
-    `git branch --contains X && git diff --cached`, `git switch main &&
-    git pull && git diff`, `git add -A && git show HEAD -- src`, `git
-    reset && git diff`, and, in PowerShell, a summary of `HEAD` after a
-    commit;
-  - a read-only git form the allowlist does not hold (`git apply
-    --check`, `git branch --contains X`, `git tag --points-at X`), which
-    then counts as a change;
-  - `echo pbip` and `printf` naming a root, which scan the tree;
-  - a git command that prints the working tree after any command not
-    known to write nothing, while a root holds a finding (`make fmt &&
-    git diff`), even when that command wrote nothing, unless the print's
-    pathspecs provably avoid every root;
-  - a git command that puts history in the working tree, then any
-    command that may write, then a working-tree print (`git checkout
-    main && make && git diff`), whatever the tree holds;
-  - a backslash-newline next to `<` or `>` (`echo x >\<newline>>
-    log`), which can split an operator (`internal-error`);
-  - a write to a target that cannot be told before git (`echo x >
-    "$LOG"; git log --oneline -1`, `go test | tee "$LOG"; git status`),
-    which may be git's configuration;
-  - a here-document delimiter holding `$`, a backtick or a newline, and a
-    backslash-newline in an unquoted here-document body next to its
-    delimiter line or in a line with a `$(` or a backtick
-    (`internal-error`).
+  - code built at run time (`git-content`):
+    - `eval "$(pyenv init -)"` and any `eval`, `bash -c`, `sh -c` or
+      `source` of text built at run time;
+    - a script fed to a shell by `echo` or `printf` that the gate does
+      not read exactly: an escape outside its tables (`\x`, `\0NNN`,
+      `\NNN`, `\u`, `\U`, `\c`, `\e`, and `\"` or `\'` in an `echo -e`
+      or `%b` argument), or a conversion but `%s`, `%b` and `%%`
+      (`printf '%5s\n' x | sh`, `printf '%d\n' 1 | bash`);
+    - a command word whose value cannot be told and could split, or
+      whose last element is a shell, an interpreter or a wrapper
+      (`"$(dirname x)/bash" -c ...`);
+    - quoted code that can become a variable's value (a `$(`, backtick
+      or `${` in an assignment, a value setter's word, a `for` list, a
+      substitution's output) in a line with any arithmetic context or
+      evaluated name, though the value is never evaluated
+      (`v='${HOME}'; echo $((n+1))`), and any quoted code in such a line
+      once `read` or `mapfile` reads a value from a file;
+  - git's history and index (`git-content`):
+    - a git command after one not known to be read-only that could print
+      content with no pathspec proof: `git fetch && git diff --cached`,
+      `git branch --contains X && git diff --cached`, `git switch main
+      && git pull && git diff`, `git add -A && git show HEAD -- src`,
+      `git reset && git diff`, and, in PowerShell, a summary of `HEAD`
+      after a commit;
+    - a read-only git form the allowlist does not hold (`git apply
+      --check`, `git branch --contains X`, `git tag --points-at X`),
+      which then counts as a change;
+    - a git command that puts history in the working tree, then any
+      command that may write, then a working-tree print (`git checkout
+      main && make && git diff`), whatever the tree holds;
+    - a write to a target that cannot be told before git (`echo x >
+      "$LOG"; git log --oneline -1`, `go test | tee "$LOG"; git status`),
+      which may be git's configuration;
+  - a tree scan (`finding` while a root holds one):
+    - `echo pbip` and `printf` naming a root;
+    - a git command that prints the working tree after any command not
+      known to write nothing (`make fmt && git diff`), even when that
+      command wrote nothing, unless the print's pathspecs after `--`
+      provably avoid every root: `git diff src/main.go` without `--`,
+      and `git status -vv -- src`, scan;
+    - any git command before such a print in a repository with a
+      `post-index-change` or `reference-transaction` hook (`git status
+      && git diff`);
+  - lines the gate cannot read as bash would (`internal-error`):
+    - a backslash-newline between two operator characters that join into
+      one redirection operator (`echo x >\<newline>> log`);
+    - a here-document delimiter holding `$` or a backtick;
+    - a backslash-newline in an unquoted here-document body next to its
+      delimiter line or in a line with a `$(` or a backtick
+      (`cat > build.sh <<EOF` with `x=$(date) \<newline>`).
 
 ### Baseline
 
