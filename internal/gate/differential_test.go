@@ -16,21 +16,26 @@ import (
 	"github.com/craigalodon/pbipx/internal/gate"
 )
 
-// A planted finding is in one of three places: in the working tree (and
-// committed, HEAD adding it), in history only (HEAD deletes it), or staged
-// only (in the index and a stash, HEAD clean). What is dangerous to run
-// depends on which.
+// A planted finding is in one of four places: in the working tree (and
+// committed, HEAD adding it), in history only (HEAD deletes it), staged
+// only (in the index and a stash, HEAD clean), or in HEAD with its fix
+// staged (the working tree and the index clean, git diff empty). What is
+// dangerous to run depends on which.
 type findingAt int
 
 const (
 	inTree findingAt = iota
 	inHistory
 	inIndex
+	inFixedHead
 )
 
 func (f findingAt) String() string {
-	return [...]string{"in the working tree", "in history only", "staged only"}[f]
+	return [...]string{"in the working tree", "in history only", "staged only", "in HEAD, its fix staged"}[f]
 }
+
+// inWorktree reports whether the working tree holds the finding at f.
+func (f findingAt) inWorktree() bool { return f == inTree || f == inIndex }
 
 // sentinel is the planted value, which output is searched for.
 const sentinel = "Doe, Jane"
@@ -53,8 +58,9 @@ const sentinel = "Doe, Jane"
 // holds it (cat < pbip/x); make and npm rewrite the protected file, as a
 // formatter would. The gate decides against the repository as it was.
 //
-// Each line runs in one of three repositories, by the generator: the
-// finding in the working tree, in history only, or staged only.
+// Each line runs in one of four repositories, by the generator: the
+// finding in the working tree, in history only, staged only, or in HEAD
+// with its fix staged.
 // PBIPX_DIFF_LINES sets how many lines (default 300); PBIPX_DIFF_SEED the
 // seed. A failure prints the line alone.
 func TestDifferentialBash(t *testing.T) {
@@ -98,7 +104,7 @@ func TestDifferentialBash(t *testing.T) {
 	t.Logf("bash ran a dangerous command in %d of %d lines", ran, lines)
 }
 
-// differentialRepos makes the three repositories, indexed by findingAt.
+// differentialRepos makes the four repositories, indexed by findingAt.
 func differentialRepos(t *testing.T) []string {
 	t.Helper()
 	tree := newRepo(t, leakyFiles())
@@ -112,7 +118,10 @@ func differentialRepos(t *testing.T) []string {
 	gitIn(t, staged, "add", "--all")
 	gitIn(t, staged, "stash", "--quiet")
 	gitIn(t, staged, "stash", "apply", "--quiet", "--index")
-	return []string{inTree: tree, inHistory: history, inIndex: staged}
+	fixed := newRepo(t, leakyFiles())
+	write(t, fixed, leakVisual, slicer("enrollment", "cohort_year", "2150"))
+	gitIn(t, fixed, "add", "--all")
+	return []string{inTree: tree, inHistory: history, inIndex: staged, inFixedHead: fixed}
 }
 
 // differentialStubs writes the stub programs into a directory of their own.
@@ -254,11 +263,11 @@ func dangerous(name string, args []string, at findingAt) bool {
 	case "git-leak", "stdin-leak":
 		return true
 	case "grep", "egrep":
-		return at != inHistory && has("-r", "-R", "--recursive")
+		return at.inWorktree() && has("-r", "-R", "--recursive")
 	case "rg":
-		return at != inHistory
+		return at.inWorktree()
 	case "cat", "head", "tail", "sed":
-		return at != inHistory && slices.ContainsFunc(args, func(a string) bool { return strings.HasPrefix(a, "pbip/") })
+		return at.inWorktree() && slices.ContainsFunc(args, func(a string) bool { return strings.HasPrefix(a, "pbip/") })
 	}
 	return false
 }
@@ -283,6 +292,16 @@ var (
 		"git diff-files -p", "make fmt && git diff-files -p", "make && git diff-index -p HEAD",
 		"git stash && make fmt && git diff", "git stash; npm run fmt; git diff", "cat < " + leakVisual,
 		"git tag -f t HEAD~1 && git diff t", "git add -A && git diff --cached",
+		// The working-tree rule's proof: status ignores its pathspec, and
+		// an option's value is no pathspec.
+		"make fmt && git status -vv -- README.md", "make fmt && git diff -I x README.md",
+		"make fmt && git diff --line-prefix=x README.md", "make fmt && git diff -- README.md",
+		"git stash -u && npm run format && git diff",
+		// Scripts fed to a shell through echo -e and printf escapes.
+		`echo -e 'git log \x2dp' | bash`, `echo -e 'git log \055p' | bash`,
+		`printf 'git log \x2dp\n' | bash`, `printf '%b\n' 'git log -\0160' | bash`,
+		`echo -ne 'git log -\x70' | bash`, `echo -e 'echo \"; git log -p; echo \"' | bash`,
+		`echo -e 'git log -p\c' | bash`, `printf '%s\n' 'git log --oneline -1' | bash`,
 	}
 	differentialWrappers = []string{
 		"%s",
@@ -350,6 +369,11 @@ var (
 		"echo x >\\\n> /dev/null; %s",
 		"cat <\\\n(%s)",
 		"echo $\\\n(%s)",
+		// A continuation before a redirection, which joins no operator.
+		"%s \\\n> /dev/null",
+		// The payload fed to a shell through echo -e and printf %b.
+		"echo -e \"%s\" | bash",
+		"printf '%b\\n' \"%s\" | bash",
 	}
 )
 
