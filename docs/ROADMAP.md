@@ -17,7 +17,7 @@ is phases 1 to 4. Stage, collect and perf can follow it.
 - [x] pre-commit for every lint (golangci-lint, rumdl, actionlint), run
       locally and in CI; govulncheck; Dependabot
 - [x] CLI on cobra (ADR-0005)
-- [ ] Push to a private GitHub repository; CI green there
+- [x] Push to a private GitHub repository; CI green there
 
 ## Phase 1: the corpus, and the predecessor passing it (done 2026-10-29)
 
@@ -73,7 +73,7 @@ marked as known differences. None showed a predecessor bug.
 
 **Exit:** the `tmdl`, `sql`, `yaml` and `explain` areas pass.
 
-## Phase 4: the gate, and hardening
+## Phase 4: the gate, and hardening (done 2026-11-03)
 
 - [x] Gate decision logic, independent of any agent
 - [x] Claude Code adapter; a configured hook command that fails closed;
@@ -91,8 +91,14 @@ Met on a synthetic sample, 2026-10-29: a fresh clone set up with `pbipx init`
 denied a planted finding, a recursive search, `git show`, a write to Claude
 Code settings and every call after a policy edit through the exact hook
 command init registered, and allowed a clean read; a missing binary denied.
-Still to do before tagging v0.1: one run of the full matrix on Windows and
-macOS (a manual CI run), and one session in Claude Code itself.
+Met in full 2026-11-03: CI passed on Linux and Windows for the release
+commit, and on macOS for the release candidates (GitHub found no macOS
+runner for the final commit's runs; the tag's run covers it). Sessions in
+Claude Code itself on the release candidate denied every planted read that
+reached the registered hook. Before tagging, the gate went
+through thirteen rounds of independent security review, closed with a
+differential test against real bash (`TestDifferentialBash`); behavior.md
+records the known over-blocks and limitations.
 
 ## Phase 5: cutover of the predecessor's repository
 
