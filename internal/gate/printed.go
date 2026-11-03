@@ -10,23 +10,32 @@ import "strings"
 // read exactly (another conversion, printf -v which prints nothing, or an
 // escape outside its tables): the text cannot be told, and the caller
 // takes the script as built at run time.
-func printed(name string, args []string) (string, bool) {
+//
+// echo reads escapes with -e, never with -E, and, with neither, in some
+// shells and not in others: zsh, sh (dash), ksh and bash with xpg_echo
+// read them, bash does not. mayEscape says the shell running echo might
+// be one that does (it is not known to be bash): then a backslash in the
+// text of an echo with neither option leaves the text untold.
+func printed(name string, args []string, mayEscape bool) (string, bool) {
 	if name == "echo" {
-		escapes, newline := false, true
+		escapes, explicit, newline := false, false, true
 		for len(args) > 0 && len(args[0]) > 1 && args[0][0] == '-' && strings.Trim(args[0][1:], "neE") == "" {
 			for _, c := range args[0][1:] {
 				switch c {
 				case 'n':
 					newline = false
 				case 'e':
-					escapes = true
+					escapes, explicit = true, true
 				case 'E':
-					escapes = false
+					escapes, explicit = false, true
 				}
 			}
 			args = args[1:]
 		}
 		text := strings.Join(args, " ")
+		if mayEscape && !explicit && strings.Contains(text, `\`) {
+			return "", false
+		}
 		if escapes {
 			t, ok := unescape(text, ebEscapes)
 			if !ok {
@@ -92,6 +101,14 @@ func printed(name string, args []string) (string, bool) {
 		rest = rest[used:]
 	}
 	return b.String(), true
+}
+
+// echoMayEscape reports whether the echo of the line being read might
+// read escapes without -e: the shell running it is not known to be bash
+// (the top level, where the Bash tool's shell may be zsh; sh, dash, zsh,
+// ksh), or the line sets xpg_echo.
+func (w *walker) echoMayEscape() bool {
+	return w.xpgEcho || progName(w.shellName) != "bash"
 }
 
 // fmtEscapes are the backslash escapes printf's format string reads, as

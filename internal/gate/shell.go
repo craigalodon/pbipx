@@ -1213,6 +1213,12 @@ type walker struct {
 	// funcNames are the functions the line defines, whose calls pass their
 	// arguments on as values.
 	funcNames map[string]bool
+	// shellName is the shell running the line being read when a shell
+	// command names it (sh -c, bash -c), "" for the top level, where the
+	// Bash tool's shell is not known; xpgEcho is set once the line sets
+	// bash's xpg_echo option.
+	shellName string
+	xpgEcho   bool
 	// ph are the placeholders of the runners (xargs, parallel) the command
 	// being read runs under (feedOf), which stand for input words in the
 	// lines nested in it.
@@ -1407,7 +1413,7 @@ func (w *walker) pipedScript(prev *simple, v view, depth int) {
 	if !fed && (pv.name == "echo" || pv.name == "printf") {
 		// The script is what echo or printf prints, read as any line is
 		// (its backslash-newlines joined): printf '%s\n' 'git log \' -p.
-		if text, ok := printed(pv.name, pv.rest); ok {
+		if text, ok := printed(pv.name, pv.rest, w.echoMayEscape()); ok {
 			w.nested(text, !slices.Contains(pv.restKnown, false), v.cwd.clone(), depth)
 			fed = true
 		}
@@ -1533,6 +1539,16 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 	feed := feedOf(v.argv)
 	defer func(old []string) { w.ph = old }(w.ph)
 	w.ph = slices.Concat(w.ph, feed.placeholders)
+	// The shell running the lines nested in a shell command is that
+	// shell, whose echo is read as it reads it (echoMayEscape); xpg_echo,
+	// set anywhere in the line, makes bash's echo read escapes.
+	if shells[v.name] {
+		defer func(old string) { w.shellName = old }(w.shellName)
+		w.shellName = v.name
+	}
+	if slices.Contains(v.rest, "xpg_echo") {
+		w.xpgEcho = true
+	}
 	if c.funcDef {
 		// A function definition's name is no command: it never runs
 		// here (cd() would otherwise move the directory). Its body is

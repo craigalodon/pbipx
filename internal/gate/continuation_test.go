@@ -99,6 +99,37 @@ func TestShellFedScriptJoins(t *testing.T) {
 	})
 }
 
+// TestShellEchoShells: whose echo prints the text a shell is fed matters.
+// bash's echo reads escapes only with -e (or with xpg_echo set); the
+// shell the Bash tool runs may be zsh, and sh, dash, zsh and ksh read
+// escapes without -e. Where the shell running echo is not known to be
+// bash, a backslash in echo's text with no -e or -E leaves the text
+// untold.
+func TestShellEchoShells(t *testing.T) {
+	root, _ := historyRepo(t)
+	sh := func(cmd string) gate.Event { return gate.Event{Tool: gate.Shell, Command: cmd} }
+	git := gate.ReasonGitContent
+	run(t, root, []decideCase{
+		// A top-level echo: the shell may be zsh.
+		{"top-level echo with an escape, fed to bash", sh(`echo 'git log \055p' | bash`), git},
+		{"top-level echo with an escape and -e, fed to bash", sh(`echo -e 'git log \055p' | bash`), git},
+		{"top-level echo with an escape and -E, fed to bash", sh(`echo -E 'git log --oneline -1 \055p' | bash`), ""},
+		{"top-level echo with no backslash", sh(`echo 'git log --oneline -1' | bash`), ""},
+		{"top-level echo -n with no backslash", sh(`echo -n 'git log --oneline -1' | sh`), ""},
+		// A nested line: the shell running echo is the one -c names.
+		{"bash -c echo with an escape, fed to bash", sh(`bash -c "echo 'git log \\055p' | bash"`), ""},
+		{"sh -c echo with an escape, fed to bash", sh(`sh -c "echo 'git log \\055p' | bash"`), git},
+		{"dash -c echo with an escape", sh(`dash -c "echo 'git log \\055p' | sh"`), git},
+		{"zsh -c echo with an escape", sh(`zsh -c "echo 'git log \\055p' | sh"`), git},
+		{"ksh -c echo with an escape", sh(`ksh -c "echo 'git log \\055p' | sh"`), git},
+		{"sh -c echo with no backslash", sh(`sh -c "echo 'git log --oneline -1' | sh"`), ""},
+		// xpg_echo makes bash's echo read escapes without -e.
+		{"shopt -s xpg_echo, then echo with an escape", sh(`shopt -s xpg_echo; echo 'git log \055p' | bash`), git},
+		{"bash -O xpg_echo -c echo with an escape", sh(`bash -O xpg_echo -c "echo 'git log \\055p' | bash"`), git},
+		{"set -o posix alone changes nothing here", sh(`bash -c "set -o posix; echo 'git log --oneline -1' | bash"`), ""},
+	})
+}
+
 // TestShellUnreadableMessages: each construct the gate cannot read as bash
 // would is named in its own fixed words.
 func TestShellUnreadableMessages(t *testing.T) {
