@@ -647,6 +647,16 @@ path, is denied with `event-error`: the call cannot be judged.
     denied with `internal-error`, as one with too many commands is.
     (Decided 2026-11-02.) The predecessor reads such a word
     literally;
+  - an unquoted word with a glob character in git's arguments is read as
+    the words bash expands it to in the working directory, before git
+    sees them: `git log -p -- p?ip` is `git log -p -- pbip` where the root
+    is there (and the tree is scanned for naming it). A pattern that
+    matches nothing stays as written, which git reads as a pathspec glob,
+    unprovable but judged by the name-only run; a word whose expansion
+    cannot be done (the directory or the word cannot be told, or the glob
+    budget runs out) is unknown. A quoted glob is left to git. The words
+    of `commit`, `merge`, `tag`, `notes` and `stash` (messages and names)
+    are judged as written. (Decided 2026-11-02.)
   - a here-document (`<<WORD`, `<<-WORD`) is read as bash reads it: its
     body runs from the line after the operator to the line that is the
     delimiter (leading tabs removed for `<<-`), or to the end of the line

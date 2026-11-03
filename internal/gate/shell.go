@@ -3049,6 +3049,7 @@ func unknownArgs(v view) []string {
 // directory: a subcommand that prints content is then unprovable
 // (gitContent).
 func (s *setup) gitRule(v view) *gitDenial {
+	v = s.expandShellGlobs(v)
 	unknown := unknownArgs(v)
 	if v.name == "git" && feedOf(v.argv, v.argvKnown).runner != "" {
 		// xargs (and parallel) add the words they read to git's: words

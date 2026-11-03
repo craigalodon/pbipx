@@ -298,6 +298,9 @@ var (
 		"git stash && make fmt && git diff", "git stash; npm run fmt; git diff", "cat < " + leakVisual,
 		"git tag -f t HEAD~1 && git diff t", "git add -A && git diff --cached",
 		"git commit -v -v", "git commit -vv -m x", "git commit --verbose --verbose",
+		// Glob pathspecs the shell expands, and ones git does.
+		"git log -p -- p?ip", "git log -p -- p[b]ip", "git diff HEAD~1 -- pb[i]p", "git show HEAD~1 -- p?ip/B.Report",
+		"git log -p -- 'p?ip'", "git diff HEAD~1 -- 'pbi*'",
 		// A cd with a glob target.
 		"cd pb* && cat B.Report/definition/pages/0000/visuals/0001/visual.json",
 		"cd pb?p; head -1 B.Report/definition/pages/0000/visuals/0001/visual.json",
