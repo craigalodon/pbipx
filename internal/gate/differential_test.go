@@ -129,8 +129,8 @@ func differentialRepos(t *testing.T) []string {
 // new one each run). The readers (grep, cat, head ...) do nothing else,
 // but note "stdin-leak" when their input is a file holding the planted
 // value; git runs real git with its arguments and notes "git-leak" when
-// its output holds it; make and npm rewrite the protected file, the
-// planted value in it. sh, bash, env, xargs and a few wrappers are links
+// its output holds it; make and npm reformat the protected file as it is, its
+// content kept. sh, bash, env, xargs and a few wrappers are links
 // to the real ones, so what they run is the stubs too.
 func differentialStubs(t *testing.T, bash string) (dir, logFile string) {
 	t.Helper()
@@ -159,13 +159,14 @@ fi
 	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(gitStub), 0o700); err != nil { //nolint:gosec // G306: a test's own stub
 		t.Fatal(err)
 	}
-	// A formatter: the slicer, its value kept, laid out anew.
-	formatted := filepath.Join(t.TempDir(), "formatted.json")
-	if err := os.WriteFile(formatted, []byte(strings.ReplaceAll(slicer("student", "full_name", sentinel), "\n", " ")+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	rewrite := "#!/bin/sh\n" + logArgs + "mkdir -p '" + path0(leakVisual) + "' && while IFS= read -r l; do printf '%s\\n' \"$l\"; done < '" +
-		formatted + "' > '" + leakVisual + "'\n"
+	// A formatter: the protected file as it is, its content kept, laid
+	// out anew on one line. It writes only what the file holds: it puts no
+	// value there that was not, but what a stash or a checkout put back is
+	// what it rewrites.
+	rewrite := "#!/bin/sh\n" + logArgs + "f='" + leakVisual + "'\n" +
+		"[ -f \"$f\" ] || exit 0\n" +
+		"c=$(while IFS= read -r l || [ -n \"$l\" ]; do printf '%s ' \"$l\"; done < \"$f\")\n" +
+		"printf '%s\\n' \"$c\" > \"$f\"\n"
 	for _, name := range []string{"make", "npm"} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(rewrite), 0o700); err != nil { //nolint:gosec // G306: a test's own stub
 			t.Fatal(err)
@@ -186,9 +187,6 @@ fi
 
 // differentialRuns counts the lines run, for their logs' and copies' names.
 var differentialRuns int
-
-// path0 is the directory of a slash-separated path.
-func path0(p string) string { return p[:strings.LastIndexByte(p, '/')] }
 
 // bashRunsDanger runs line under bash with opts, in a scratch copy of
 // root under scratch, with only the stubs on PATH, and reports whether it
