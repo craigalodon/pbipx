@@ -582,8 +582,9 @@ names: `Read|Grep|Bash|PowerShell|LSP|Write|Edit|MultiEdit|NotebookEdit`.
 | Bash | `command` | Bash, below |
 | PowerShell (pbipx only) | `command`, required | the protected tree, below |
 | LSP (pbipx only) | every string field named like a path | Read of each path, or the protected tree, below |
-| Write, Edit, MultiEdit | `file_path` | Write, below |
-| NotebookEdit | `notebook_path`, else `file_path`; one is required | Write, below |
+| Write | `file_path` | Write, below |
+| Edit, MultiEdit | `file_path` | Read of the file, then Write, below |
+| NotebookEdit | `notebook_path`, else `file_path`; one is required | Read of the file, then Write, below |
 | Glob | not gated | prints names only |
 | any other | not gated | allowed |
 
@@ -696,15 +697,17 @@ path, is denied with `event-error`: the call cannot be judged.
     (dash), zsh and ksh read them without `-e`. Where the shell running
     the echo is not known to be bash (the top level; `sh -c`, `dash -c`,
     `zsh -c`, `ksh -c`; any line that sets `xpg_echo`), a backslash in the
-    text of an echo with neither `-e` nor `-E` leaves the text untold:
+    text of an echo with no `-e` leaves the text untold (`-E` is an
+    option only to bash and zsh; sh prints it as a word and reads the
+    escapes, so `echo -E 'x\ngit log -p' | sh` is built at run time):
     `echo 'git log \055p' | bash` is built at run time, `echo 'git log
     --oneline -1' | bash` is read. Only inside `bash -c` is the echo
-    bash's. A test checks every text the gate claims against what the
-    shells print: printf and `echo -e`/`-E`/`-n`, a plain echo and the
-    xpg_echo variant against bash, and a plain echo against the system
-    `sh` (and zsh when installed), over a few thousand random feeds and
-    the escapes the reviews found (the test never calls an unread text
-    wrong);
+    bash's, and `-E` trusted. A test checks every text the gate claims
+    against what the shells print: printf and `echo -e`/`-E`/`-n`, a
+    plain echo and the xpg_echo variant against bash, and a plain echo
+    against the system `sh` (and zsh when installed), over a few thousand
+    random feeds and the escapes the reviews found (the test never calls
+    an unread text wrong);
   - the tokenizer fails closed on its own uncertainty. These are lines the
     gate cannot read as bash would, each named in the deny in its own
     fixed words: a line it does not end at the plain top level (a `case`
@@ -746,10 +749,19 @@ path, is denied with `event-error`: the call cannot be judged.
     `caffeinate`, `unbuffer`, `chronic`, `taskset`, `flock`, `coproc`,
     `busybox`, `xvfb-run` and a few tracers and sandboxes. Their long
     options that take a value given apart (`timeout --signal KILL 5`) are
-    read as such. `time` and `coproc` are followed by the reserved words
-    after them, as bash reads them (`time { git log -p; }`, `time -p !
-    cmd`, `time function f { ...; }`). git run by `xargs` or `parallel`,
-    and git under `find -exec` given `{}`, `{/}` or `{.}`, is given words
+    read as such. The value of a wrapper's option the table says takes one
+    (timeout's duration and `-s`/`-k`, nice's `-n`, sudo's `-u` and `-g`,
+    xargs's `-P`, `-n`, `-L`, `-s`, `-d`, `-E`, ionice, taskset and stdbuf
+    values) and an `env NAME=value` operand are not the command word, even
+    when the gate cannot expand them: `timeout "$T" go test ./...`, `env
+    GOOS=$(go env GOOS) go build`, `sudo -u "$USER" make` are read as `go
+    test`, `go build`, `make`. An unknown word in the program position
+    stays unknown (built at run time), and so does one after a wrapper
+    option the table does not know. `time` and `coproc` are followed by
+    the reserved words after them, as bash reads them (`time { git log
+    -p; }`, `time -p ! cmd`, `time function f { ...; }`). git run by
+    `xargs` or `parallel`, and git under `find -exec` given `{}`, `{/}`
+    or `{.}`, is given words
     the line does not show: they are unknown words of git's, which rule 2
     denies wherever an unknown word could be an option (`echo -p | xargs
     git log`; `xargs git push` stays allowed). The words `xargs` and GNU
@@ -759,7 +771,15 @@ path, is denied with `event-error`: the call cannot be judged.
     `{.}`, `{/}`, `{//}`, `{/.}`, `{#}`, `{%}`, `{n}`, `{= ... =}`, and
     `-I R`), and, with no placeholder, the words added after the command.
     They count in a nested `sh -c` or `bash -c` string, in a function or
-    any other nested line, and as any program's argument. A reader or
+    any other nested line (`script -qc`, `flock -c`, `watch`, `eval`,
+    `find -exec` included), as any program's argument, and as the file an
+    input redirection names. Only a wrapper of the command or its program
+    is a runner: `git checkout -b parallel`, `git commit -m xargs`, `rg
+    parallel src` and `head xargs` name a runner as a word. `rush`,
+    `rargs`, `xe`, `entr`, `sem`, `env_parallel` and the like are runners
+    whose options are not read, so every word of their command counts. A
+    runner's output piped into a shell is a script built at run time
+    (`... | xargs echo cat | sh`). A reader or
     search given one, or an interpreter (`perl -e`, `python3`) given one
     or the appended input, touches every protected root, as `xargs cat`
     does: `git ls-files | xargs -I{} sh -c 'cat {}'`, `... | xargs -I{}
@@ -897,8 +917,14 @@ path, is denied with `event-error`: the call cannot be judged.
        resolve prints content that cannot be placed, whatever the summary
        flags say. `--all`, `--branches`, `--tags`, `--remotes`, `--glob`,
        `--stdin` and the like cannot be placed either;
-     - `stash show` with a patch flag, or with no summary flag when
-       `stash.showPatch` is true; `cat-file` except `-t`, `-s`, `-e`,
+     - `stash show` with any option but the summary formats (`--stat`,
+       `--numstat`, `--shortstat`, `--name-only`, `--name-status`,
+       `--summary`, `--dirstat`, `--compact-summary`, `--raw`) and `-u` /
+       `--include-untracked`: git 2.53 prints a patch for any diff option
+       that is not an output format (`-w`, `-R`, `--color`, `--histogram`,
+       `--abbrev`, `--pretty=raw`, `--graph` ...), so such a command goes
+       through the name-only run; with no option, when `stash.showPatch`
+       is true; `cat-file` except `-t`, `-s`, `-e`,
        `--batch-check`, and an object name other than `REV:path` cannot be
        placed;
      - hunks shown interactively: `add -p` and `add -i`, `checkout -p`,
@@ -1271,6 +1297,30 @@ path, is denied with `event-error`: the call cannot be judged.
      - a word of a reading or searching command (`cat`, `head`, `less`,
        the grep family, `rg`, `sed`, `awk`, `sort`, `jq`, `cp`, `tar` and
        the like) is unknown;
+     - an operand of any other program is unknown, unless the program is
+       in the table of programs known not to read their operands as files:
+       a content printer outside the readers (`shuf`, `expand`,
+       `unexpand`, `ptx`, `nl`, `od`, `fmt`, `python3 -m json.tool`,
+       `perl -pe`, `node -p`, `curl -d @file`, `tee`) reads it as `cat`
+       does. The table is one list in the code, checked by a test: `echo`,
+       `printf`, `mkdir`, `rmdir`, `touch`, `rm`, `mv`, `ln`, `chmod`,
+       `chown`, `chgrp`, `ls`, `stat`, `du`, `df`, `tree`, `test`, `[`,
+       `[[`, `basename`, `dirname`, `realpath`, `readlink`, `file`,
+       `which`, `type`, `sleep`, `kill`, `ps`, `date`, `pwd`, `id`, the
+       shell's own commands (`cd`, `export`, `set`, `declare`, `read`,
+       `getopts`, `trap`, `shift` ...), `git`, `gh`, `hub`, `pbipx`, and
+       build and package tools (`make`, `go`, `npm`, `pnpm`, `yarn`,
+       `cargo`, `pip`, `gem`, `apt`, `brew` ...). `cp`, `tar`, `zip`,
+       `unzip`, `rsync`, the interpreters and everything not listed are
+       not in it. The unknown operand also covers a word that stands for a
+       runner's input (below); the words of an option, the program's own
+       name and the wrappers' operands (below) are not operands;
+     - a file an input redirection names that the gate cannot tell
+       (`cat < "$f"`, `tee /dev/null < "$f"`, `while read l; do ...; done
+       < "$f"`, `exec 3< "$f"`) is read by whatever the redirection is
+       for, whatever the program, and so is a placeholder of a runner used
+       as one (`xargs -I{} sh -c 'jq . < {}'`). A here-string is text, not
+       a file;
      - `find P ... -exec` (or `-execdir`, `-ok`, `-okdir`), or
        `find P ... | xargs ...`, has a path P (default `.`) that touches a
        root; `xargs` running a reading command counts as reading under its
@@ -1594,6 +1644,18 @@ path, is denied with `event-error`: the call cannot be judged.
 
   The message says which of these the path is, and does not name it. Every
   other write is allowed: the gate does not otherwise judge writes.
+
+  **Edit, MultiEdit and NotebookEdit (pbipx)** are judged first as a Read
+  of the same path (above): Claude Code shows the model a snippet of the
+  file around the edit in the tool result, so an edit of a file with a
+  finding, of local state, or of a file that cannot be vetted is denied
+  with that file's reason, whatever Claude Code's own rule that a file be
+  read before it is edited (not relied on). Then the Write rules apply. A
+  Write is not a Read: its result does not show the file's old content as
+  far as Claude Code documents (it says the file was created or updated),
+  so it is judged as a write alone. **Known limitation:** if Claude Code's
+  Write result ever shows a diff against the old file, a write over a file
+  with a finding would show it; this has not been seen.
 
 **Nested work trees (pbipx).** A directory inside the repository that is
 itself a git work tree, because it holds a `.git` directory or file, is a
@@ -1950,7 +2012,13 @@ behavior (2026-10-29).
   that can defeat the hook, with `hooks-disabled`, because such a file
   turns off the gate's user-level hook. (Decided 2026-10-29.) A shell
   command that only reads such a file is allowed; one that could write it
-  denies (see "The gate (Claude Code)", Bash). (Decided 2026-10-30.)
+  denies (see "The gate (Claude Code)", Bash). (Decided 2026-10-30.) The
+  code text given to an interpreter (`python3 -c`, `node -e`, `perl -e`,
+  `ruby -e`, or a here-document fed to one) is read for the file's name as
+  the root-name test reads it: a word of the text that is a path ending in
+  `.claude/settings.json` or `.claude/settings.local.json`, in either
+  slash and any case, denies. **Known limitation:** a name built at run
+  time in the code (`d=.claude; echo > $d/settings.json`) is not seen.
 - **Divergence (reading a command line):** the predecessor finds roots in a
   Bash command only as literal whole words of the line, and a command's
   program only as its first word. A command that reaches a root without
@@ -2215,7 +2283,12 @@ behavior (2026-10-29).
       (`printf '%5s\n' x | sh`, `printf '%d\n' 1 | bash`);
     - a command word whose value cannot be told and could split, or
       whose last element is a shell, an interpreter or a wrapper
-      (`"$(dirname x)/bash" -c ...`);
+      (`"$(dirname x)/bash" -c ...`), and an unknown word in the program
+      position or after a wrapper option the table does not know:
+      `$CMD test`, `env $X go test`, `nice --frobnicate "$X" cmd`, a
+      function that runs `"$@"` (`run() { "$@"; }; run go test ./...`), a
+      loop that runs what it reads (`while read l; do $l; done <
+      cmds.txt`);
     - quoted code that can become a variable's value (a `$(`, backtick
       or `${` in an assignment, a value setter's word, a `for` list, a
       substitution's output) in a line with any arithmetic context or
@@ -2240,12 +2313,28 @@ behavior (2026-10-29).
       which may be git's configuration;
     - git given a word the gate cannot expand where it could be an
       option: `git commit -m "$msg"` through PowerShell (`git commit -m
-      $m`), and `xargs git log`;
+      $m`), `xargs git log`, and `xargs git add`, `git rm` and `git
+      restore` (put `--` before the input words: `xargs git add --` is
+      allowed; the message says so);
+    - `gh pr diff` (a remote patch; `--name-only` is allowed), `git
+      checkout X && git diff` and `git stash apply && git diff` (a change
+      that puts history in the tree, then a print), and a line that reads
+      a positional parameter or OPTARG and evaluates arithmetic, with any
+      quoted code in it (`git commit -m 'Use `x`'; echo $(( $1 ))`);
     - names fed to a reader by `xargs` or `parallel`, whatever they
       name: `git ls-files | xargs cat` scans the tree (a clean tree
       allows), `xargs -I{} sh -c 'jq . {}'` likewise;
   - a tree scan (`finding` while a root holds one):
     - `echo pbip` and `printf` naming a root;
+    - a program not in the table of programs that leave their operands
+      unread, given a word the gate cannot tell, or fed names by a
+      runner: `curl -H "$H" https://...`, `docker run "$IMG"`, `gofmt -l
+      "$d"`, `git ls-files | xargs gofmt -l`, `shuf "$f"`. A clean tree
+      allows; a leaky one denies;
+    - an input redirection from a file the gate cannot tell, whatever the
+      program: `sort < "$f"`, `while read l; do ...; done < "$f"`;
+    - an Edit, MultiEdit or NotebookEdit of a file with a finding, even
+      though Claude Code requires it be read first;
     - a git command that prints the working tree after any command not
       known to write nothing (`make fmt && git diff`), even when that
       command wrote nothing, unless the print's pathspecs after `--`
