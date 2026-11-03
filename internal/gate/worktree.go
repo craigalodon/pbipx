@@ -29,7 +29,7 @@ func (w *walker) worktreeAfterWrite() bool {
 			continue
 		}
 		for _, u := range w.views {
-			if u.seq != v.seq && (unordered || u.seq < v.seq) && !writesNothing(u) {
+			if u.seq != v.seq && (unordered || u.seq < v.seq) && w.mayWrite(u) {
 				return true
 			}
 		}
@@ -52,7 +52,7 @@ func (w *walker) historyThenWrite() string {
 			continue
 		}
 		for _, u := range w.views {
-			if !before(u, v) || writesNothing(u) || gitTreeRewrite(u) {
+			if !before(u, v) || !w.mayWrite(u) || gitTreeRewrite(u) {
 				continue
 			}
 			for _, h := range w.views {

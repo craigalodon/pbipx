@@ -135,6 +135,10 @@ type setup struct {
 	// nest is what is known of nested work trees (nested.go), found on
 	// first use.
 	nest *nestCache
+	// hooks is whether the repository has a hook that runs on git
+	// commands that change nothing a later one prints (indexHooks), known
+	// once hooksKnown.
+	hooks, hooksKnown bool
 }
 
 // Decide decides one tool call. It never panics: a panic below it is a deny

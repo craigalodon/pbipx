@@ -1111,23 +1111,37 @@ path, is denied with `event-error`: the call cannot be judged.
      `annotate`, `grep` but `--cached`, and any subcommand that is not
      git's own. Index-only and history-only forms (`diff --cached`, `log
      -p`, `show`) are left to the rules above. A print whose pathspecs
-     provably avoid every root, as rule 2 proves them without asking git
-     (those after `--`, or else the operands that name existing paths:
-     `git diff src/main.go`), is left out: `make fmt && git diff -- src`
-     is allowed. The commands known to write nothing are an assignment
-     alone; a git command that runs no hook and changes no working tree
-     (`add`, `stash`, `fetch`, `tag`, `branch`, `remote`, `notes`,
-     `config`, `update-ref` and the read-only forms); and programs that
-     print, list, read or search or set the shell's state (`echo`,
-     `printf`, `cd`, `ls`, `cat`, `head`, `grep`, `rg`, `jq`, `wc`, `find`
-     without `-exec` or `-delete`, `fd` without `-x`, `sort` without `-o`
-     and the like), each with no output redirection but to `/dev/null`
-     or a descriptor. Every other command may write: a git command that
-     runs hooks (`commit`, `merge`, `rebase`, `pull`, `am`, `checkout`,
-     `switch`, `cherry-pick`, `revert`, `push`, `clone`, `worktree`, `gc`)
-     or changes the working tree, any other program, and a function or
-     alias. So `git add src && git diff` and `git stash && git diff` are
-     allowed while a root holds a finding.
+     provably avoid every root, as rule 2 proves them without asking git,
+     is left out: only pathspecs after `--` count, since an option's value
+     can read as a path (`git diff -I x src/main.go`), and only for
+     `diff`, `diff-files`, `diff-index`, `add` and `grep`, whose patch
+     honours them; `status -v -v` prints its diff whatever the pathspec
+     (checked with git 2.53). `make fmt && git diff -- src` is allowed;
+     `make fmt && git diff src/main.go` and `make fmt && git status -vv --
+     src` scan. The commands known to write nothing are an assignment
+     alone; a git command that changes no working tree and runs none of
+     the hooks that commands writing files run (`add`, `stash`, `fetch`,
+     `tag`, `branch`, `remote`, `notes`, `config`, `update-ref` and the
+     read-only forms); and programs that print, list, read or search or
+     set the shell's state (`echo`, `printf`, `cd`, `ls`, `cat`, `head`,
+     `grep`, `rg`, `jq`, `wc`, `find` without `-exec` or `-delete`, `fd`
+     without `-x`, `sort` without `-o` and the like), each with no output
+     redirection but to `/dev/null` or a descriptor. Every other command
+     may write: a git command that runs `pre-commit`, `commit-msg`,
+     `post-commit`, `post-checkout`, `post-merge`, `post-rewrite`,
+     `pre-push`, `pre-rebase`, `pre-auto-gc` and the like (`commit`,
+     `merge`, `rebase`, `pull`, `am`, `checkout`, `switch`, `cherry-pick`,
+     `revert`, `push`, `clone`, `worktree`, `gc`) or changes the working
+     tree, any other program, and a function or alias. The
+     `post-index-change` and `reference-transaction` hooks also run on
+     `status` (refreshing the index), `add`, `tag`, `branch`, `fetch` and
+     `update-ref`: when the repository has either (an executable file of
+     that name in `core.hooksPath`, or in the common git directory's
+     `hooks`; a `.sample` is none, and a hooks directory the gate cannot
+     tell counts as having one), every git command may write. Other hooks
+     those commands run are not counted. So `git add src && git diff` and
+     `git stash && git diff` are allowed while a root holds a finding, and
+     scan when such a hook is there.
 
      A git command that puts content from history in the working tree (a
      stash, a checkout or restore of paths, a reset `--hard`, a switch, a
