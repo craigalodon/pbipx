@@ -4,4 +4,3 @@ args        = []
 policy      = "default"
 exit        = 0
 sentinels   = []
-known       = "predecessor"

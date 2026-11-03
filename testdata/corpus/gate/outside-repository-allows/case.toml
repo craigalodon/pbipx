@@ -5,3 +5,4 @@ policy      = "default"
 exit        = 0
 sentinels   = []
 git         = false
+known       = "predecessor"

@@ -5,3 +5,4 @@ policy      = "tree"
 approved    = false
 exit        = 0
 sentinels   = ["Doe, Jane"]
+known       = "predecessor"
