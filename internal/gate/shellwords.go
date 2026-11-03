@@ -109,6 +109,8 @@ type simple struct {
 	// arith is set for an arithmetic command, ((...)), that names a
 	// variable.
 	arith bool
+	// arithText is the text of that command, between its parentheses.
+	arithText string
 	// background is set for a command run in the background (cmd &).
 	background bool
 	// uncertain says, on every command of a line the tokenizer cannot
@@ -1025,7 +1027,8 @@ func (t *tokenizer) run(start int, sub bool) (int, bool) {
 					t.endCommand()
 					t.cur.subs = append(t.cur.subs, bodySubs(rs[i+2:end-1], t.sc)...)
 					// A name in it is a variable whose value is evaluated.
-					t.cur.arith = strings.ContainsFunc(string(rs[i+2:end-1]), func(r rune) bool { return r == '_' || unicode.IsLetter(r) })
+					t.cur.arith = strings.ContainsFunc(string(rs[i+2:end-1]), func(r rune) bool { return r == '_' || r == '$' || unicode.IsLetter(r) })
+					t.cur.arithText = string(rs[i+2 : end-1])
 					t.endCommand()
 					i = end
 					continue

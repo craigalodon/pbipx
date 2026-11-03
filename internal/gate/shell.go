@@ -390,7 +390,7 @@ func holdsCode(s string) bool {
 // here-documents can become a variable's value.
 var valueSetters = map[string]bool{
 	"read": true, "declare": true, "typeset": true, "local": true, "export": true, "readonly": true,
-	"mapfile": true, "readarray": true, "let": true,
+	"mapfile": true, "readarray": true, "let": true, "set": true, "getopts": true,
 }
 
 // assignWord matches a word that assigns a variable or an array element,
@@ -407,7 +407,7 @@ var assignWord = regexp.MustCompile(`^(?:[A-Za-z_][A-Za-z0-9_]*)?(?:\[[^\]]*\])?
 // substitution or a nested line prints (depth above 0), or one whose
 // output a pipe or a process substitution passes on. A git message, a sed
 // script or an echo at the top of the line becomes no value.
-func valueCode(c simple, v view, depth int) bool {
+func valueCode(c simple, v view, depth int, called bool) bool {
 	setter := valueSetters[v.name] || v.name == "printf" && slices.Contains(v.rest, "-v")
 	if setter {
 		for _, doc := range c.docs {
@@ -421,7 +421,7 @@ func valueCode(c simple, v view, depth int) bool {
 	// test -v, [[ -v and unset evaluate the subscript of the name they
 	// are given, as the setters do.
 	names := v.name == "test" || v.name == "[" || v.name == "[[" || v.name == "unset"
-	whole := depth > 0 || c.pipeOut || c.procSub || c.arrayElems || setter || list || names
+	whole := depth > 0 || c.pipeOut || c.procSub || c.arrayElems || setter || list || names || called
 	for _, wd := range c.words {
 		for _, p := range wd.parts {
 			switch {
@@ -1207,6 +1207,12 @@ type walker struct {
 	// code, readsFile once a read or mapfile reads a value from a file,
 	// and evaluates once a command makes bash evaluate a string.
 	quotedValue, quotedAny, readsFile, evaluates bool
+	// posRef is set once a command reads a positional parameter or OPTARG
+	// (positionalRef).
+	posRef bool
+	// funcNames are the functions the line defines, whose calls pass their
+	// arguments on as values.
+	funcNames map[string]bool
 	// ph are the placeholders of the runners (xargs, parallel) the command
 	// being read runs under (feedOf), which stand for input words in the
 	// lines nested in it.
@@ -1536,6 +1542,10 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 		// is called.
 		w.redefines, w.loopy = true, true
 		if len(v.argv) > 0 {
+			if w.funcNames == nil {
+				w.funcNames = map[string]bool{}
+			}
+			w.funcNames[v.argv[len(v.argv)-1]] = true
 			if name := progName(v.argv[len(v.argv)-1]); modeled(name) {
 				if w.hashed == nil {
 					w.hashed = map[string]bool{}
@@ -1557,11 +1567,12 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 	// a variable's value, with a construct that evaluates a string, in
 	// any order in the line. A value read from a file the line may have
 	// written cannot be seen: then any quoted code counts.
-	w.quotedValue = w.quotedValue || valueCode(c, v, depth)
+	w.quotedValue = w.quotedValue || valueCode(c, v, depth, w.funcNames[v.name])
 	w.quotedAny = w.quotedAny || quotedCode(c)
 	w.readsFile = w.readsFile || readsValueFromFile(v)
+	w.posRef = w.posRef || positionalRef(c)
 	w.evaluates = w.evaluates || evaluates(c, v)
-	if (w.quotedValue || w.quotedAny && w.readsFile) && w.evaluates {
+	if (w.quotedValue || w.quotedAny && (w.readsFile || w.posRef)) && w.evaluates {
 		w.setRuntime("quoted code is evaluated by bash (an array subscript, test -v, printf -v, read, declare -n, "+
 			"let, arithmetic or a prompt expansion)", hintPlain)
 	}

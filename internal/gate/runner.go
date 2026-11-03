@@ -1,9 +1,35 @@
 package gate
 
 import (
+	"regexp"
 	"slices"
 	"strings"
 )
+
+// positionalText matches a positional parameter or OPTARG in the text of
+// an expansion or an arithmetic command: $1, ${1}, $@, $*, $#, ${@:2}, a
+// bare OPTARG.
+var positionalText = regexp.MustCompile(`\$\{?[0-9@*#]|OPTARG`)
+
+// positionalRef reports whether c reads a positional parameter or OPTARG,
+// in a word, an expansion or arithmetic. The arguments of set, of a
+// function and of getopts are then values arithmetic can read.
+func positionalRef(c simple) bool {
+	if positionalText.MatchString(c.arithText) {
+		return true
+	}
+	for _, wd := range c.words {
+		for _, p := range wd.parts {
+			switch {
+			case p.kind == paramPart && (p.text == "OPTARG" || p.text != "" && strings.IndexByte("0123456789@*#", p.text[0]) >= 0):
+				return true
+			case p.kind != litPart && positionalText.MatchString(p.raw):
+				return true
+			}
+		}
+	}
+	return false
+}
 
 // Runners that run a command on words they read from their input: xargs,
 // and GNU parallel. The words are file names or anything else, so for the
