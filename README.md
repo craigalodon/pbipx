@@ -3,8 +3,10 @@
 Tools for developing Power BI projects (PBIP) with AI coding agents, without
 leaking the data Power BI Desktop writes into them.
 
-> **Status: pre-alpha.** This repository holds the design and roadmap and a
-> skeleton. Nothing here is usable yet. See [docs/ROADMAP.md](docs/ROADMAP.md).
+> **Status: pre-alpha (v0.1).** `scan`, `scan-text`, `explain`, `gate`,
+> `init` and `policy` work; `stage`, `collect` and `perf` are not built yet.
+> Try it on synthetic projects before relying on it. See
+> [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## The problem
 
