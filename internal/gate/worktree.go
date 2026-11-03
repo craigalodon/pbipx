@@ -167,7 +167,9 @@ func printsWorktree(v view) bool {
 		verbose := hasShort(inv.args, 'v', "--verbose", "mFCcSt")
 		tree := hasShort(inv.args, 'a', "--all", "mFCcSt") || hasShort(inv.args, 'o', "--only", "mFCcSt") ||
 			hasShort(inv.args, 'i', "--include", "mFCcSt") || len(inv.specs) > 0
-		return dry && verbose && tree
+		// -vv prints the working tree's diff when the commit fails with
+		// nothing staged, as status -vv does.
+		return dry && verbose && tree || verbosity(inv.args, "mFCcSt") >= 2
 	case "stash":
 		return slices.Contains(inv.args, "show")
 	case "difftool", "mergetool", "blame", "annotate":

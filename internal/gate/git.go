@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -1539,6 +1540,12 @@ func (s *setup) gitSpecs(inv gitInvocation) gitCheck {
 			}
 			return c
 		}
+		// A commit with a verbose count of 2 or more (-vv, commit.verbose
+		// 2) prints the working-tree diff too when it fails with nothing
+		// staged, as git status -vv does.
+		if v := s.commitVerbosity(inv); v >= 2 {
+			return s.verboseCheck(inv, v, false)
+		}
 		return noContent()
 	case "rebase", "am":
 		if hasFlag(inv.args, []string{"--show-current-patch"}) ||
@@ -2369,9 +2376,13 @@ func (s *setup) commitVerbosity(inv gitInvocation) int {
 	if hasFlag(inv.args, []string{"--verbose", "--no-verbose"}) || hasShort(inv.args, 'v', "", "mFCcSt") {
 		return verbosity(inv.args, "mFCcSt")
 	}
-	v, err := s.git().configValue(inv.dir, "commit.verbose", "bool")
+	v, err := s.git().configValue(inv.dir, "commit.verbose", "bool-or-int")
 	if errors.Is(err, errNotSet) || (err == nil && v == "false") {
 		return 0
+	}
+	if n, convErr := strconv.Atoi(v); err == nil && convErr == nil {
+		// A level: 0 is off, 2 and more print the working tree too.
+		return max(0, min(n, 2))
 	}
 	return 1
 }

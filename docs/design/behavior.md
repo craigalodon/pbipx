@@ -1213,8 +1213,9 @@ path, is denied with `event-error`: the call cannot be judged.
      The git commands that print the working tree are `diff` but
      `--cached` or a summary alone (with or without a revision),
      `diff-files` with a patch, `diff-index` with a patch but `--cached`,
-     `status -v -v`, `add`, `checkout`, `reset` and `restore` with `-p`
-     (and `add -i`, `-e`), a dry run of `commit` with `-v` and `-a`,
+     `status -v -v`, `commit -vv`, `add`, `checkout`, `reset` and
+     `restore` with `-p` (and `add -i`, `-e`), a dry run of `commit` with
+     `-v` and `-a`,
      `-o`, `-i` or paths, `stash show`, `difftool`, `mergetool`, `blame`,
      `annotate`, `grep` but `--cached`, and any subcommand that is not
      git's own. Index-only and history-only forms (`diff --cached`, `log
@@ -2105,8 +2106,14 @@ behavior (2026-10-29).
     name-only form. `--short`, `--porcelain` and `--long` imply
     `--dry-run`. With no `-v`, `--verbose` or `--no-verbose` given, git
     commit reads `commit.verbose` (a boolean or a level): the gate asks
-    `git config --get --type=bool commit.verbose`, and anything but unset
-    or false counts as `-v`. With `--amend`, git prints the index
+    `git config --get --type=bool-or-int commit.verbose`; anything but
+    unset, false or 0 counts as `-v`, and a level of 2 or more as `-vv`.
+    A commit with a verbose count of 2 or more, from `-vv`, `-v -v`,
+    `--verbose --verbose`, a cluster with `-m` or `-F` (`-vvm x`) or
+    `commit.verbose` 2, prints the working tree's diff too when it fails
+    with nothing staged, so it is judged as `status -vv` is, dry run or
+    not (`git commit -vv` with a file deleted under a root denies; with
+    one `-v` the rule is the dry run's alone). With `--amend`, git prints the index
     against HEAD's parent, so `git diff --cached HEAD^` is judged in
     name-only form too; a root commit has no parent, that run fails, and
     the command is denied. The short and porcelain formats, and

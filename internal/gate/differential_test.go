@@ -297,6 +297,7 @@ var (
 		"git diff-files -p", "make fmt && git diff-files -p", "make && git diff-index -p HEAD",
 		"git stash && make fmt && git diff", "git stash; npm run fmt; git diff", "cat < " + leakVisual,
 		"git tag -f t HEAD~1 && git diff t", "git add -A && git diff --cached",
+		"git commit -v -v", "git commit -vv -m x", "git commit --verbose --verbose",
 		// A cd with a glob target.
 		"cd pb* && cat B.Report/definition/pages/0000/visuals/0001/visual.json",
 		"cd pb?p; head -1 B.Report/definition/pages/0000/visuals/0001/visual.json",
