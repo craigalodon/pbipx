@@ -1,0 +1,6 @@
+description = "git checkout -b parallel names a branch parallel: parallel here is an argument, not a runner, so the line is allowed though a root holds a finding"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = ["Doe, Jane"]

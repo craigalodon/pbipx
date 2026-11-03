@@ -81,7 +81,15 @@ const fedAll = "\x00fed-all"
 // cannot tell or that is no number where one is due, a word it cannot
 // expand among them or as the command — feeds every word (fedAll).
 func feedOf(argv []string, known []bool) runnerFeed {
-	for i, a := range argv {
+	// Only a wrapper of the command or its program is a runner: an
+	// argument that happens to be named xargs or parallel is a word.
+	name, rest, under := command(argv)
+	if !slices.Contains(under, "xargs") && !slices.Contains(under, "parallel") &&
+		name != "xargs" && name != "parallel" {
+		return runnerFeed{}
+	}
+	end := len(argv) - len(rest) // past the program
+	for i, a := range argv[:max(end, 0)] {
 		var f runnerFeed
 		switch progName(a) {
 		case "xargs":
