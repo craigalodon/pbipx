@@ -53,6 +53,10 @@ func (s *setup) shell(line string) Decision {
 	// repository, or approving the policy. Even the tool alone could
 	// redirect into a settings file.
 	ctl := loadControls()
+	if w.interpreterNamesSettings() {
+		return deny(ReasonAgentSettings, "an interpreter is given code that names a Claude Code settings file "+
+			"(.claude/settings.json or .claude/settings.local.json); %s", agentSettingsWhy)
+	}
 	for _, v := range w.views {
 		if what, ok := s.reachesControl(v, ctl); ok {
 			return deny(ReasonAgentSettings, "the command names a path %s; %s", what, controlWhy)

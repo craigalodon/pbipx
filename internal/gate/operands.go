@@ -1,5 +1,33 @@
 package gate
 
+import (
+	"slices"
+	"strings"
+
+	"github.com/craigalodon/pbipx/internal/scan"
+)
+
+// interpreterNamesSettings reports whether the line runs an interpreter
+// and any line read (the command line, its nested lines, the here-documents
+// in them) names a Claude Code settings file: a word of the code text that
+// is .claude/settings.json or .claude/settings.local.json at the end of a
+// path, in either slash and any case. The path is read as written; a name
+// built at run time (d=.claude; ... $d/settings.json) is not seen.
+func (w *walker) interpreterNamesSettings() bool {
+	if !slices.ContainsFunc(w.views, func(v view) bool { return isInterpreter(v.name) }) {
+		return false
+	}
+	return slices.ContainsFunc(w.lines, textNamesSettings)
+}
+
+// textNamesSettings reports whether a word of text, split at blanks,
+// quotes and punctuation, is a settings file's path.
+func textNamesSettings(text string) bool {
+	text = strings.ReplaceAll(text, `\`, "/")
+	words := strings.FieldsFunc(text, func(r rune) bool { return strings.ContainsRune(" \t\r\n'\"`;,()[]{}=<>|&+", r) })
+	return slices.ContainsFunc(words, scan.IsAgentSettings)
+}
+
 // neverReadsOperands are the programs known not to read their operands as
 // files, so that an operand the gate cannot tell (an expansion, a
 // runner's placeholder) is no read of a protected file: they print their
