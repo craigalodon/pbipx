@@ -421,7 +421,7 @@ func (f *finder) spots() (spots []spot, unknown bool) {
 // be told, a word a reading command has that cannot be placed, a line
 // nested too deep or built at run time, or one too long to judge.
 func probeShell(cwd, home, line string) (*walker, []spot, bool) {
-	ps := &setup{cwd: cwd, home: home, fold: foldCase}
+	ps := &setup{cwd: cwd, home: home, fold: foldCase, ctlVars: ctlVarsFixed(line)}
 	w := &walker{s: ps, cache: newSpellCache(), probe: true}
 	st := cwdState{dirs: []string{cwd}}
 	w.commands(line, splitCommands(line), &st, 0)

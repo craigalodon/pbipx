@@ -34,6 +34,7 @@ const maxCommands = 20000
 // the local-state divergence in Clarifications). The line is never quoted
 // in a message: it can carry anything.
 func (s *setup) shell(line string) Decision {
+	s.ctlVars = ctlVarsFixed(line)
 	top := splitCommands(line)
 	w := &walker{s: s, cache: newSpellCache(), text: line}
 	st := cwdState{dirs: []string{s.cwd}}
@@ -2328,7 +2329,9 @@ func (s *setup) expandWord(w word, st cwdState) xword {
 		case "OLDPWD":
 			return st.oldpwd, st.oldpwd != ""
 		case approval.EnvConfigDir, claudeConfigDirEnv:
-			return controlVar(name)
+			if s.ctlVars {
+				return controlVar(name)
+			}
 		}
 		return "", false
 	}

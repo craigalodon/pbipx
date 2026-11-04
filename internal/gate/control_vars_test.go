@@ -52,3 +52,43 @@ func TestControlVariables(t *testing.T) {
 		})
 	}
 }
+
+// TestControlVariablesSetByTheLine checks that the variables are expanded
+// from the gate's environment only when the line provably does not set
+// them. Otherwise the word is unknown, as it was before: the call is
+// judged as touching every protected root, and a leaky tree denies it.
+func TestControlVariablesSetByTheLine(t *testing.T) {
+	a := newAdoption(t)
+	leak := "/B.Report/definition/pages/0000/visuals/0001/visual.json" // below pbip, which the variable would hold
+	for _, tc := range []struct {
+		name, tool, cmd, reason string
+	}{
+		{"read", "sh", "read PBIPX_CONFIG_DIR < /dev/null; cat $PBIPX_CONFIG_DIR" + leak, gate.ReasonFinding},
+		{"printf -v", "sh", "printf -v PBIPX_CONFIG_DIR %s /x; cat $PBIPX_CONFIG_DIR" + leak, gate.ReasonFinding},
+		{"mapfile", "sh", "mapfile -t PBIPX_CONFIG_DIR < f; cat ${PBIPX_CONFIG_DIR}" + leak, gate.ReasonFinding},
+		{"declare", "sh", "declare PBIPX_CONFIG_DIR=/x; cat $PBIPX_CONFIG_DIR" + leak, gate.ReasonFinding},
+		{"getopts", "sh", "getopts a PBIPX_CONFIG_DIR; cat $PBIPX_CONFIG_DIR" + leak, gate.ReasonFinding},
+		{"read, Claude's variable", "sh", "read CLAUDE_CONFIG_DIR < /dev/null; cat $CLAUDE_CONFIG_DIR" + leak, gate.ReasonFinding},
+		{"in a nested line", "sh", "bash -c 'read PBIPX_CONFIG_DIR < /dev/null'; cat $PBIPX_CONFIG_DIR" + leak, gate.ReasonFinding},
+		{"eval", "sh", "eval 'x=1'; cat $PBIPX_CONFIG_DIR" + leak, gate.ReasonFinding},
+		{"source", "sh", "source ./f; cat $PBIPX_CONFIG_DIR" + leak, gate.ReasonFinding},
+		{"dot", "sh", ". ./f; cat $PBIPX_CONFIG_DIR" + leak, gate.ReasonFinding},
+		{"expansion that assigns", "sh", "cat ${PBIPX_CONFIG_DIR:=/x}" + leak, gate.ReasonFinding},
+		{"still denied when nothing sets it", "sh", "rm -rf $PBIPX_CONFIG_DIR/approved", gate.ReasonAgentSettings},
+		{"a plain read of the store", "sh", "cat $PBIPX_CONFIG_DIR/approved/x", ""},
+		{"PowerShell, assigned", "ps", `$env:PBIPX_CONFIG_DIR = 'x'; Remove-Item $env:PBIPX_CONFIG_DIR\approved`, gate.ReasonFinding},
+		{"PowerShell, Set-Item", "ps", `Set-Item env:PBIPX_CONFIG_DIR x; Remove-Item $env:PBIPX_CONFIG_DIR\approved`, gate.ReasonFinding},
+		{"PowerShell, SetEnvironmentVariable", "ps", `[Environment]::SetEnvironmentVariable('PBIPX_CONFIG_DIR','x'); Remove-Item $env:PBIPX_CONFIG_DIR\approved`, gate.ReasonFinding},
+		{"PowerShell, Invoke-Expression", "ps", `iex 'x'; Remove-Item $env:PBIPX_CONFIG_DIR\approved`, gate.ReasonAgentSettings},
+		{"PowerShell, nothing sets it", "ps", `Remove-Item $env:PBIPX_CONFIG_DIR\approved`, gate.ReasonAgentSettings},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tool := gate.Shell
+			if tc.tool == "ps" {
+				tool = gate.PowerShell
+			}
+			d := a.decide(gate.Event{Tool: tool, Command: tc.cmd, Cwd: a.adopted})
+			check(t, d, tc.reason)
+		})
+	}
+}
