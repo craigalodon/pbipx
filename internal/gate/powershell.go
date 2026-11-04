@@ -242,6 +242,7 @@ func psControl(cwd, home, line string, words []string, ctl controls) (Decision, 
 		return deny(ReasonAgentSettings, "the command may run a subcommand of the tool that is a person's step at a "+
 			"terminal (approving the policy, setting pbipx up, printing values); an agent may not run it"), true
 	}
+	psFixed := psCtlVarsFixed(line)
 	seen := map[string]bool{}
 	for _, w := range words {
 		// A word is placed once: each placing costs file system calls.
@@ -249,6 +250,9 @@ func psControl(cwd, home, line string, words []string, ctl controls) (Decision, 
 			continue
 		}
 		seen[w] = true
+		if psFixed {
+			w = expandPSControlVars(w)
+		}
 		for _, v := range psVariants(w, home) {
 			sp := spellings(cwd, v)
 			what, ok := ctl.target(sp)

@@ -3,7 +3,9 @@ package gate
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"strings"
 
 	"github.com/craigalodon/pbipx/internal/approval"
 	"github.com/craigalodon/pbipx/internal/scan"
@@ -134,4 +136,137 @@ func expandAll(dirs []string) []string {
 		out = append(out, filepath.Clean(d), approval.ResolveExisting(d))
 	}
 	return out
+}
+
+// claudeConfigDirEnv names Claude Code's configuration directory.
+const claudeConfigDirEnv = "CLAUDE_CONFIG_DIR"
+
+// controlVar is the value of PBIPX_CONFIG_DIR or CLAUDE_CONFIG_DIR as a
+// command's shell would expand it, for the gate's judgment of a path: the
+// gate's own environment's value where it is set and usable, and otherwise
+// the directory that variable would default to, the store or the user's
+// Claude Code settings directory. An agent's shell expands these, so a word
+// that names one refers to what controls the gate whether or not the gate's
+// environment sets it. ok is false when no directory can be found.
+func controlVar(name string) (string, bool) {
+	switch name {
+	case approval.EnvConfigDir:
+		if d, err := approval.ConfigDir(); err == nil {
+			return d, true
+		}
+		if base, err := os.UserConfigDir(); err == nil && base != "" {
+			return filepath.Join(base, "pbipx"), true
+		}
+	case claudeConfigDirEnv:
+		if dirs := claudesetup.UserSettingsDirs(); len(dirs) > 0 {
+			return dirs[0], true
+		}
+	}
+	return "", false
+}
+
+// psControlVar matches a PowerShell reference to PBIPX_CONFIG_DIR or
+// CLAUDE_CONFIG_DIR in the environment drive, in any case, braced or not.
+var psControlVar = regexp.MustCompile(`(?i)\$(?:\{env:(PBIPX_CONFIG_DIR|CLAUDE_CONFIG_DIR)\}|env:(PBIPX_CONFIG_DIR|CLAUDE_CONFIG_DIR))`)
+
+// expandPSControlVars is w with each such reference replaced by its
+// directory (controlVar).
+func expandPSControlVars(w string) string {
+	return psControlVar.ReplaceAllStringFunc(w, func(m string) string {
+		sub := psControlVar.FindStringSubmatch(m)
+		name := strings.ToUpper(sub[1] + sub[2])
+		if v, ok := controlVar(name); ok {
+			return v
+		}
+		return m
+	})
+}
+
+var controlVarNames = []string{approval.EnvConfigDir, claudeConfigDirEnv}
+
+// isIdent reports whether c can be part of a shell variable name.
+func isIdent(c byte) bool {
+	return c == '_' || c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
+}
+
+// lineTokens splits a line at spaces and shell punctuation.
+func lineTokens(line string) []string {
+	return strings.FieldsFunc(line, func(r rune) bool { return strings.ContainsRune(" \t\r\n;&|(){}<>`'\"", r) })
+}
+
+// ctlVarsFixed reports whether a shell line provably does not set
+// PBIPX_CONFIG_DIR or CLAUDE_CONFIG_DIR, so the gate's own value stands for
+// them: each name appears only as $NAME or ${NAME}, and the line holds no
+// eval, source or '.', which can set one by a name built at run time. The
+// name anywhere else (an assignment, export, read, printf -v, mapfile,
+// declare, for, getopts, a prefix, in a nested line or a here-document) is
+// enough, without listing what sets a variable. Then a word naming the
+// variable is unknown, as any other expansion is.
+func ctlVarsFixed(line string) bool {
+	for _, tok := range lineTokens(line) {
+		if tok == "eval" || tok == "source" || tok == "." {
+			return false
+		}
+	}
+	for _, name := range controlVarNames {
+		for from := 0; ; {
+			i := strings.Index(line[from:], name)
+			if i < 0 {
+				break
+			}
+			i += from
+			end := i + len(name)
+			from = end
+			if end < len(line) && isIdent(line[end]) {
+				return false // a longer name
+			}
+			switch {
+			case i >= 1 && line[i-1] == '$':
+			case i >= 2 && line[i-1] == '{' && line[i-2] == '$' && end < len(line) && line[end] == '}':
+			default:
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// psCtlVarsFixed is ctlVarsFixed for PowerShell: each name, in any case,
+// appears only as $env:NAME or ${env:NAME} and is not assigned, and the
+// line holds no Invoke-Expression (iex).
+func psCtlVarsFixed(line string) bool {
+	low := strings.ToLower(line)
+	for _, tok := range lineTokens(low) {
+		if tok == "iex" || tok == "invoke-expression" {
+			return false
+		}
+	}
+	for _, name := range controlVarNames {
+		name = strings.ToLower(name)
+		for from := 0; ; {
+			i := strings.Index(low[from:], name)
+			if i < 0 {
+				break
+			}
+			i += from
+			end := i + len(name)
+			from = end
+			if end < len(low) && isIdent(low[end]) {
+				return false
+			}
+			switch {
+			case strings.HasSuffix(low[:i], "$env:"):
+			case strings.HasSuffix(low[:i], "${env:") && end < len(low) && low[end] == '}':
+				end++
+			default:
+				return false
+			}
+			// An assignment: = or an operator before =, after optional space.
+			rest := strings.TrimLeft(low[end:], " \t")
+			if strings.HasPrefix(rest, "=") || len(rest) > 1 && strings.ContainsRune("+-*/%", rune(rest[0])) && rest[1] == '=' {
+				return false
+			}
+		}
+	}
+	return true
 }

@@ -37,6 +37,7 @@ never prints a value it finds.
 | `pbipx scan-text` | Scan prose such as commit messages and notes for personal-data shapes. |
 | `pbipx gate` | An AI agent's pre-tool hook. It denies reads of files with findings, and of files it cannot vet, in the repositories set up for pbipx (`pbipx init`, or an approved policy), and leaves every other repository alone. |
 | `pbipx policy approve` / `status` | Approve the repository's policy at a terminal, or report whether it is approved. The gate denies every call until a person approves the policy, and again after any change to it. |
+| `pbipx policy unenroll` | Remove this clone's setup for the gate on this machine, at a terminal, for every work tree of the clone. The gate stops protecting its files from agents, and every approval is forgotten. Refused while the work tree has a `.pbipx.toml`. |
 | `pbipx explain` | Print a report's or model's structure (pages, visuals, tables, columns, measures, relationships, sources) with no values. |
 | `pbipx stage` / `collect` | Round-trip a project between the repository and a working copy outside it that Power BI Desktop can open. |
 | `pbipx perf` | Summarize Performance Analyzer exports without printing query text. |

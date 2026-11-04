@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 
@@ -15,6 +17,7 @@ import (
 	"github.com/craigalodon/pbipx/internal/finding"
 	"github.com/craigalodon/pbipx/internal/gate"
 	"github.com/craigalodon/pbipx/internal/policy"
+	"github.com/craigalodon/pbipx/internal/shape"
 )
 
 // approveWord is what a person types, in full, to approve a policy.
@@ -32,7 +35,7 @@ func isTerminalReader(r io.Reader) bool {
 func newPolicyCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "policy",
-		Short: "approve the repository's policy, or report whether it is approved",
+		Short: "approve the repository's policy, report whether it is approved, or unenroll",
 		Long: `Approve the repository's policy, or report whether it is approved (ADR-0006).
 
 The gate denies every call while .pbipx.toml has no approval on this machine,
@@ -47,7 +50,7 @@ approved.`,
 			return errUsage
 		},
 	}
-	cmd.AddCommand(newPolicyApproveCmd(), newPolicyStatusCmd())
+	cmd.AddCommand(newPolicyApproveCmd(), newPolicyStatusCmd(), newPolicyUnenrollCmd())
 	return cmd
 }
 
@@ -66,25 +69,25 @@ or PBIPX_NO_REVEAL is set.`,
 	}
 }
 
-// approveRefusal is the usage error that refuses an approval outside a
-// person's terminal, or nil.
-func approveRefusal(stdin io.Reader, stdout io.Writer) error {
-	for _, name := range noRevealEnv {
-		if _, set := os.LookupEnv(name); set {
-			return usageError{"policy approve is refused when " + name + " is set"}
+// personRefusal is the usage error that refuses the person-only step name
+// ("policy approve") outside a person's terminal, or nil.
+func personRefusal(name string, stdin io.Reader, stdout io.Writer) error {
+	for _, env := range noRevealEnv {
+		if _, set := os.LookupEnv(env); set {
+			return usageError{name + " is refused when " + env + " is set"}
 		}
 	}
 	if !stdinIsTerminal(stdin) {
-		return usageError{"policy approve is refused when standard input is not a terminal"}
+		return usageError{name + " is refused when standard input is not a terminal"}
 	}
 	if !stdoutIsTerminal(stdout) {
-		return usageError{"policy approve is refused when standard output is not a terminal"}
+		return usageError{name + " is refused when standard output is not a terminal"}
 	}
 	return nil
 }
 
 func runPolicyApprove(cmd *cobra.Command, _ []string) error {
-	if err := approveRefusal(cmd.InOrStdin(), cmd.OutOrStdout()); err != nil {
+	if err := personRefusal("policy approve", cmd.InOrStdin(), cmd.OutOrStdout()); err != nil {
 		return err
 	}
 	cwd, repo, err := openRepo(cmd, formatHuman)
@@ -110,8 +113,7 @@ func runPolicyApprove(cmd *cobra.Command, _ []string) error {
 	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "policy  %s\ndigest  %s\nstatus  %s\n\n", policy.FileName, digest, status)
 	fmt.Fprintf(out, "Type %q to approve this policy for the gate in every work tree of this clone on this machine: ", approveWord)
-	line, _ := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
-	if strings.TrimSpace(line) != approveWord {
+	if !confirmed(cmd.InOrStdin(), approveWord) {
 		fmt.Fprintln(out)
 		return usageError{"the policy was not approved"}
 	}
@@ -120,6 +122,44 @@ func runPolicyApprove(cmd *cobra.Command, _ []string) error {
 	}
 	fmt.Fprintf(out, "pbipx: %s approved\n", policy.FileName)
 	return nil
+}
+
+// confirmed reads one line from in and reports whether it is exactly word.
+// The line must end in a newline (a word followed by end of input does not
+// count), and only that newline and a carriage return before it are
+// removed: spaces around the word do not confirm.
+func confirmed(in io.Reader, word string) bool {
+	line, err := bufio.NewReader(in).ReadString('\n')
+	if err != nil {
+		return false
+	}
+	line = strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
+	return line == word
+}
+
+// shownPath is a path as a terminal screen prints it: a segment that holds
+// a control character or is not valid UTF-8 is {?}, and one with a
+// personal-data shape too (shape.DisplayName), so a path from the file
+// system or the environment cannot move the cursor or overwrite the line a
+// person is reading.
+func shownPath(p string) string {
+	segs := strings.FieldsFunc(p, func(r rune) bool { return r == '/' || r == filepath.Separator })
+	if len(segs) == 0 {
+		return p
+	}
+	out := p
+	for _, seg := range segs {
+		var shown string
+		if !utf8.ValidString(seg) || strings.ContainsFunc(seg, unicode.IsControl) {
+			shown = shape.HiddenName
+		} else {
+			shown = shape.DisplayName(seg)
+		}
+		if shown != seg {
+			out = strings.Replace(out, seg, shown, 1)
+		}
+	}
+	return out
 }
 
 // openStore is the approval store for the repository at root, and what its

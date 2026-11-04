@@ -143,6 +143,10 @@ type setup struct {
 	// commands that change nothing a later one prints (indexHooks), known
 	// once hooksKnown.
 	hooks, hooksKnown bool
+	// ctlVars is whether the call's line provably does not set
+	// PBIPX_CONFIG_DIR or CLAUDE_CONFIG_DIR, so a word naming one is
+	// expanded from the gate's environment (ctlVarsFixed).
+	ctlVars bool
 }
 
 // Decide decides one tool call. It never panics: a panic below it is a deny

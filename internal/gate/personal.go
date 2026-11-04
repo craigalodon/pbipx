@@ -1,6 +1,7 @@
 package gate
 
 import (
+	"maps"
 	"slices"
 	"strings"
 )
@@ -124,7 +125,7 @@ func toolAloneSubcommand(rest []string) bool {
 		return true // the usage, or help
 	}
 	if rest[0] == "policy" {
-		return len(rest) == 1 || rest[1] == "status"
+		return len(rest) == 1 || slices.Contains(AgentPolicySubcommands(), rest[1])
 	}
 	return agentSubcommands[rest[0]]
 }
@@ -179,3 +180,24 @@ func personStep(v view) (string, bool) {
 	}
 	return "", false
 }
+
+// AgentSubcommands are the tool's own subcommands, and flags, that an agent
+// may run alone (agentSubcommands), sorted. 'policy' is not among them: it
+// is allowed bare and for AgentPolicySubcommands.
+func AgentSubcommands() []string {
+	return slices.Sorted(maps.Keys(agentSubcommands))
+}
+
+// AgentPolicySubcommands are the words after 'policy' that an agent may
+// run.
+func AgentPolicySubcommands() []string { return []string{"status"} }
+
+// PersonOnlyCommands are the tool's own subcommands that are a person's
+// step at a terminal, sorted (personOnlyCommands).
+func PersonOnlyCommands() []string {
+	return slices.Sorted(maps.Keys(personOnlyCommands))
+}
+
+// PersonOnlyPolicySubcommands are the words after 'policy' that are a
+// person's step at a terminal (personOnlySubcommands).
+func PersonOnlyPolicySubcommands() []string { return slices.Clone(personOnlySubcommands) }
