@@ -20,15 +20,18 @@ const (
 	commandGate     = "gate"
 	commandExplain  = "explain"
 	commandBaseline = "baseline"
+	commandStage    = "stage"
+	commandCollect  = "collect"
 )
 
 var commands = map[string]bool{
 	commandScan: true, commandScanText: true, commandGate: true,
 	commandExplain: true, commandBaseline: true,
+	commandStage: true, commandCollect: true,
 }
 
 // Areas are the corpus's case groups (docs/design/corpus.md, "Layout").
-var Areas = []string{"pbir", "tmdl", "sql", "yaml", "text", "baseline", "policy", "gate", "explain"}
+var Areas = []string{"pbir", "tmdl", "sql", "yaml", "text", "baseline", "policy", "gate", "explain", "stage", "collect"}
 
 // Files in a case directory.
 const (
@@ -37,6 +40,7 @@ const (
 	stdinFile    = "stdin"
 	treeDir      = "tree"
 	afterDir     = "after"
+	expectedTree = "expected"
 
 	policyFile     = ".pbipx.toml"
 	policyInTree   = "tree"
@@ -77,6 +81,28 @@ type Spec struct {
 	// fingerprints (corpus.md, "Baseline cases").
 	Baseline    []BaselineEntry `toml:"baseline"`
 	Fingerprint *FindingRef     `toml:"fingerprint"`
+
+	// The keys below belong to stage and collect cases (corpus.md, "Stage
+	// and collect cases").
+	//
+	// Setup is command lines run in the root, after its commit, to build the
+	// working copy; each must exit 0.
+	Setup [][]string `toml:"setup"`
+	// WorkDeleted are paths, relative to the working-copy base, removed
+	// after after/tree/ is applied: Desktop's deletions.
+	WorkDeleted []string `toml:"work-deleted"`
+	// Status is the root's `git status --porcelain` lines after the command;
+	// nil is unchecked, empty is a clean root.
+	Status *[]string `toml:"status"`
+	// ExpectRootAbsent and ExpectWorkAbsent are paths that must not exist in
+	// the root, or in the working-copy base, after the command.
+	ExpectRootAbsent []string `toml:"expect-root-absent"`
+	ExpectWorkAbsent []string `toml:"expect-work-absent"`
+}
+
+// IsWorkflow reports whether the case runs stage or collect.
+func (s *Spec) IsWorkflow() bool {
+	return s.Command == commandStage || s.Command == commandCollect
 }
 
 // FindingRef describes one finding by what every implementation agrees on.
@@ -255,6 +281,8 @@ func loadCase(dir, area, name string, vocab *Vocabulary) *Case {
 			c.HasTree = e.IsDir()
 		case afterDir:
 			c.loadAfter(dir)
+		case expectedTree:
+			c.loadExpectedTrees(dir)
 		default:
 			c.addf("", "unexpected entry %q (a case holds case.toml, expected.json, stdin, tree/ and after/tree/)", e.Name())
 		}
@@ -310,6 +338,20 @@ func (c *Case) loadAfter(dir string) {
 	}
 	if !c.HasAfter {
 		c.addf(afterDir, "has no tree/")
+	}
+}
+
+// loadExpectedTrees checks that expected/ holds only root/ and work/.
+func (c *Case) loadExpectedTrees(dir string) {
+	entries, err := os.ReadDir(filepath.Join(dir, expectedTree))
+	if err != nil {
+		c.addf(expectedTree, "is not a readable directory")
+		return
+	}
+	for _, e := range entries {
+		if (e.Name() != expectedRoot && e.Name() != expectedWork) || !e.IsDir() {
+			c.addf(expectedTree, "expected/ holds only root/ and work/ (unexpected %q)", e.Name())
+		}
 	}
 }
 

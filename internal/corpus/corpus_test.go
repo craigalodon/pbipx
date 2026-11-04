@@ -98,6 +98,9 @@ func TestCorpus(t *testing.T) {
 			for _, e := range c.Check(cs, out) {
 				t.Error(e)
 			}
+			for _, e := range corpus.CheckTrees(cs, prepared) {
+				t.Error(e)
+			}
 		})
 	}
 }

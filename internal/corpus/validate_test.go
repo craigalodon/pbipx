@@ -49,8 +49,8 @@ func findCase(t *testing.T, c *Corpus, id string) *Case {
 
 func TestValidateAcceptsTestCorpus(t *testing.T) {
 	c := openTest(t, testCorpusDir)
-	if len(c.Cases) != 8 {
-		t.Fatalf("loaded %d cases, want 8", len(c.Cases))
+	if len(c.Cases) != 9 {
+		t.Fatalf("loaded %d cases, want 9", len(c.Cases))
 	}
 	for _, e := range c.Problems() {
 		t.Error(e)

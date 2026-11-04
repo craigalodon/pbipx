@@ -48,6 +48,8 @@ type validator struct {
 	cs     *Case
 	// files are the regular files of tree/ and after/tree/.
 	files []treeFile
+	// expected are the regular files of expected/root and expected/work.
+	expected []treeFile
 }
 
 // treeFile is one fixture file. rel is its path in the root; label names it
@@ -71,7 +73,7 @@ func (v *validator) run() {
 		v.addf(caseFile, "description is empty")
 	}
 	if !commands[s.Command] {
-		v.addf(caseFile, "command is not one of scan, scan-text, gate, explain, baseline")
+		v.addf(caseFile, "command is not one of scan, scan-text, gate, explain, baseline, stage, collect")
 	}
 	if s.Known != "" && s.Known != knownPredecessor {
 		v.addf(caseFile, "known is set to something other than %q", knownPredecessor)
@@ -99,6 +101,7 @@ func (v *validator) run() {
 	}
 
 	v.checkPolicy()
+	v.checkWorkflow()
 	v.checkBaseline()
 	v.checkGit()
 	v.checkExit()
@@ -115,9 +118,21 @@ func (v *validator) readTree() {
 	if v.cs.HasAfter {
 		v.readDir(v.cs.AfterTreeDir(), afterDir+"/"+treeDir)
 	}
+	for _, name := range []string{expectedRoot, expectedWork} {
+		dir := filepath.Join(v.cs.Dir, expectedTree, name)
+		if _, err := os.Stat(dir); err == nil {
+			v.expected = append(v.expected, v.readFiles(dir, expectedTree+"/"+name)...)
+		}
+	}
 }
 
 func (v *validator) readDir(dir, label string) {
+	v.files = append(v.files, v.readFiles(dir, label)...)
+}
+
+// readFiles loads the regular files under dir; label names them in a problem.
+func (v *validator) readFiles(dir, label string) []treeFile {
+	var files []treeFile
 	tree := os.DirFS(dir)
 	err := fs.WalkDir(tree, ".", func(rel string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -130,12 +145,13 @@ func (v *validator) readDir(dir, label string) {
 		if err != nil {
 			return err
 		}
-		v.files = append(v.files, treeFile{rel: rel, label: label + "/" + rel, data: data})
+		files = append(files, treeFile{rel: rel, label: label + "/" + rel, data: data})
 		return nil
 	})
 	if err != nil {
 		v.addf(label, "cannot be read")
 	}
+	return files
 }
 
 // inTree reports whether a slash path exists under tree/, as a file,
@@ -208,8 +224,8 @@ func (v *validator) checkBaseline() {
 	case !uses && s.Fingerprint != nil:
 		v.addf(caseFile, "[fingerprint] is set, but no argument uses %s", fingerprintPlaceholder)
 	}
-	if v.cs.HasAfter && !s.NeedsResolve() && !s.Approves() {
-		v.addf(afterDir, "is applied only in a case with [[baseline]] or [fingerprint], or a gate case whose policy is approved")
+	if v.cs.HasAfter && !s.NeedsResolve() && !s.Approves() && !s.IsWorkflow() {
+		v.addf(afterDir, "is applied only in a case with [[baseline]] or [fingerprint], a stage or collect case, or a gate case whose policy is approved")
 	}
 }
 
@@ -307,6 +323,20 @@ func (v *validator) checkExit() {
 	if res == nil {
 		return
 	}
+	if s.IsWorkflow() && res.Failure == "" {
+		switch {
+		case res.OK:
+			if s.Exit != 0 {
+				v.addf(expectedFile, "ok exits 0")
+			}
+			return
+		case res.Refusal != refusalFindings:
+			if s.Exit != 3 {
+				v.addf(expectedFile, "a refusal other than findings exits 3")
+			}
+			return
+		}
+	}
 	if s.Command == commandGate {
 		want := map[string]int{decisionAllow: 0, decisionDeny: 2}[res.Decision]
 		if s.Exit != want {
@@ -358,6 +388,11 @@ func (v *validator) checkSentinels() {
 		for _, f := range v.files {
 			found = found || planted(f.data, f.rel, sen)
 		}
+		for _, f := range v.expected {
+			if planted(f.data, f.rel, sen) {
+				v.addf(f.label, "holds sentinels[%d]; an expected tree never holds a sentinel", i)
+			}
+		}
 		if !found {
 			v.addf(caseFile, "sentinels[%d] appears nowhere in tree/, after/tree/, stdin or args", i)
 		}
@@ -396,7 +431,7 @@ func (v *validator) checkReportFixtures() {
 		}
 		exemptAll = res.Reason == "scan-error"
 	}
-	for _, f := range v.files {
+	for _, f := range slices.Concat(v.files, v.expected) {
 		if !isReportFixture(f.rel) {
 			continue
 		}
@@ -414,7 +449,9 @@ func (v *validator) checkReportFixtures() {
 // case with a stdin file may also report "-", standard input.
 func (v *validator) checkFindingPaths() {
 	res := v.cs.Expected
-	if res == nil {
+	if res == nil || v.cs.Spec.IsWorkflow() {
+		// A collect finding's path is where the file would land in the
+		// repository, which the case's trees need not hold.
 		return
 	}
 	stdinOK := v.cs.Spec.Command == commandScanText && v.cs.HasStdin
@@ -435,4 +472,56 @@ func sortedKeys[V any](m map[string]V) []string {
 	}
 	slices.Sort(keys)
 	return keys
+}
+
+// checkWorkflow checks the keys that only a stage or collect case has
+// (corpus.md, "Stage and collect cases").
+func (v *validator) checkWorkflow() {
+	s := &v.cs.Spec
+	if !s.IsWorkflow() {
+		if slices.ContainsFunc(s.Args, func(a string) bool { return strings.Contains(a, workPlaceholder) }) {
+			v.addf(caseFile, "args use %s, which only a stage or collect case has", workPlaceholder)
+		}
+		for _, k := range []struct {
+			set  bool
+			name string
+			what string
+		}{
+			{len(s.Setup) > 0, "setup", "only a stage or collect case runs one"},
+			{s.Status != nil, "status", "only a stage or collect case has a work-tree status"},
+			{len(s.WorkDeleted) > 0, "work-deleted", "only a stage or collect case has a working copy"},
+			{len(s.ExpectRootAbsent) > 0, "expect-root-absent", "only a stage or collect case checks the root afterwards"},
+			{len(s.ExpectWorkAbsent) > 0, "expect-work-absent", "only a stage or collect case has a working copy"},
+		} {
+			if k.set {
+				v.addf(caseFile, "%s is set, but %s", k.name, k.what)
+			}
+		}
+		return
+	}
+	for i, line := range s.Setup {
+		switch {
+		case len(line) == 0:
+			v.addf(caseFile, "setup[%d] is empty", i)
+		case line[0] != commandStage && line[0] != commandCollect:
+			v.addf(caseFile, "setup[%d] does not start with stage or collect", i)
+		}
+	}
+	for _, list := range []struct {
+		key   string
+		paths []string
+	}{{"work-deleted", s.WorkDeleted}, {"expect-root-absent", s.ExpectRootAbsent}, {"expect-work-absent", s.ExpectWorkAbsent}} {
+		for i, p := range list.paths {
+			if !validRelPath(p) {
+				v.addf(caseFile, "%s[%d] is not a clean relative path with forward slashes", list.key, i)
+			}
+		}
+	}
+	if s.Status != nil {
+		for i, l := range *s.Status {
+			if !statusLine.MatchString(l) {
+				v.addf(caseFile, "status[%d] is not a git status --porcelain line", i)
+			}
+		}
+	}
 }
