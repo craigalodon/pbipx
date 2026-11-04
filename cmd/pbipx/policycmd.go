@@ -32,7 +32,7 @@ func isTerminalReader(r io.Reader) bool {
 func newPolicyCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "policy",
-		Short: "approve the repository's policy, or report whether it is approved",
+		Short: "approve the repository's policy, report whether it is approved, or unenroll",
 		Long: `Approve the repository's policy, or report whether it is approved (ADR-0006).
 
 The gate denies every call while .pbipx.toml has no approval on this machine,
@@ -47,7 +47,7 @@ approved.`,
 			return errUsage
 		},
 	}
-	cmd.AddCommand(newPolicyApproveCmd(), newPolicyStatusCmd())
+	cmd.AddCommand(newPolicyApproveCmd(), newPolicyStatusCmd(), newPolicyUnenrollCmd())
 	return cmd
 }
 
@@ -66,25 +66,25 @@ or PBIPX_NO_REVEAL is set.`,
 	}
 }
 
-// approveRefusal is the usage error that refuses an approval outside a
-// person's terminal, or nil.
-func approveRefusal(stdin io.Reader, stdout io.Writer) error {
-	for _, name := range noRevealEnv {
-		if _, set := os.LookupEnv(name); set {
-			return usageError{"policy approve is refused when " + name + " is set"}
+// personRefusal is the usage error that refuses the person-only step name
+// ("policy approve") outside a person's terminal, or nil.
+func personRefusal(name string, stdin io.Reader, stdout io.Writer) error {
+	for _, env := range noRevealEnv {
+		if _, set := os.LookupEnv(env); set {
+			return usageError{name + " is refused when " + env + " is set"}
 		}
 	}
 	if !stdinIsTerminal(stdin) {
-		return usageError{"policy approve is refused when standard input is not a terminal"}
+		return usageError{name + " is refused when standard input is not a terminal"}
 	}
 	if !stdoutIsTerminal(stdout) {
-		return usageError{"policy approve is refused when standard output is not a terminal"}
+		return usageError{name + " is refused when standard output is not a terminal"}
 	}
 	return nil
 }
 
 func runPolicyApprove(cmd *cobra.Command, _ []string) error {
-	if err := approveRefusal(cmd.InOrStdin(), cmd.OutOrStdout()); err != nil {
+	if err := personRefusal("policy approve", cmd.InOrStdin(), cmd.OutOrStdout()); err != nil {
 		return err
 	}
 	cwd, repo, err := openRepo(cmd, formatHuman)
