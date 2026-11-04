@@ -1,0 +1,7 @@
+description = "Running pbipx policy unenroll in PowerShell denies with agent-settings; this case plants no value"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []
+known       = "predecessor"

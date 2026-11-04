@@ -1,0 +1,7 @@
+description = "Running pbipx policy unenroll under winpty, which gives it a terminal, denies with agent-settings; this case plants no value"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []
+known       = "predecessor"

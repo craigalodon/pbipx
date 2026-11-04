@@ -1,0 +1,7 @@
+description = "A word after policy that the gate cannot tell could be approve or unenroll, so it denies with agent-settings; this case plants no value"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []
+known       = "predecessor"

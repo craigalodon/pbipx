@@ -1,0 +1,6 @@
+description = "pbipx policy status is on the table of subcommands an agent may run alone, so it allows; this case plants no value"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = []

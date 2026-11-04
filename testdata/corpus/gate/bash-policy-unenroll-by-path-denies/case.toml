@@ -1,0 +1,7 @@
+description = "Running pbipx policy unenroll by an absolute path to the tool, with .exe, denies with agent-settings; this case plants no value"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []
+known       = "predecessor"

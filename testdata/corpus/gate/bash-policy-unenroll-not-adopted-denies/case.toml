@@ -1,0 +1,8 @@
+description = "In a repository that has not adopted pbipx, running pbipx policy unenroll still denies with agent-settings, since it changes what controls the gate for every adopted repository; this case plants no value"
+command     = "gate"
+args        = []
+policy      = "tree"
+approved    = false
+exit        = 2
+sentinels   = []
+known       = "predecessor"

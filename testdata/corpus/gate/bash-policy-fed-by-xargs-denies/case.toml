@@ -1,0 +1,7 @@
+description = "Words xargs adds after policy could be approve or unenroll, so the command denies with agent-settings; this case plants no value"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []
+known       = "predecessor"

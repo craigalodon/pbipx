@@ -1,0 +1,7 @@
+description = "A word the gate cannot tell in the subcommand position is not the tool alone, so the leaking tree denies"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
+known       = "predecessor"
