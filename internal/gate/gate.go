@@ -164,10 +164,14 @@ func Decide(ev Event, opts Options) (d Decision) {
 		if recover() != nil {
 			d = deny(ReasonInternalError, "the gate failed; the call is denied")
 		}
+		if !d.Allow && opts.msys.notFound() {
+			d.Message += " " + msysNotFoundNote
+		}
 	}()
 	if opts.msys == nil {
 		opts.msys = newMSYSSession()
 		opts.msys.addRoot(ev.Cwd)
+		opts.msys.addRepoOf(ev.Cwd)
 	}
 	if opts.Adoption != nil {
 		return decideAdopted(ev, opts)

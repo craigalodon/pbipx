@@ -93,3 +93,27 @@ func TestCygpathPlacesANonASCIIDirectory(t *testing.T) {
 		{"read a leak", gate.Event{Tool: gate.Read, Path: base + "/" + leakVisual}, finding},
 	})
 }
+
+// TestProcSelfCwdIsUnknown checks the paths Git Bash's procfs leads into
+// the working directory by: measured on Git Bash, "cat /proc/self/cwd/x"
+// reads x in the working directory. They are unknown, whatever their case,
+// and cygpath is not asked about them.
+func TestProcSelfCwdIsUnknown(t *testing.T) {
+	root := newRepo(t, leakyFiles())
+	finding, gitContent, internal := gate.ReasonFinding, gate.ReasonGitContent, gate.ReasonInternalError
+	var cases []decideCase
+	for _, p := range []string{"/proc/self/cwd", "/proc/self/root", "/proc/12/cwd", "/PROC/Self/CWD"} {
+		cases = append(cases,
+			decideCase{"cat " + p, sh("cat " + p + "/README.md"), finding},
+			decideCase{"redirect from " + p, sh("wc -l < " + p + "/README.md"), finding},
+			decideCase{"cd " + p, sh("cd " + p + " && cat README.md"), finding},
+			decideCase{"git -C " + p, sh("git -C " + p + " log -p"), gitContent},
+			decideCase{"read " + p, gate.Event{Tool: gate.Read, Path: p + "/README.md"}, internal},
+			decideCase{"search " + p, gate.Event{Tool: gate.Search, Path: p}, internal},
+		)
+	}
+	cases = append(cases,
+		decideCase{"the standard descriptors are no file", sh("cat /proc/self/fd/0 /dev/null"), ""},
+	)
+	run(t, root, cases)
+}

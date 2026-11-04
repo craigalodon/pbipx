@@ -190,6 +190,9 @@ func TestFindCygpathWalksThreeLevels(t *testing.T) {
 func TestFindCygpathRefusesARepository(t *testing.T) {
 	base, _ := filepath.EvalSymlinks(t.TempDir())
 	repo := filepath.Join(base, "repo")
+	if err := os.MkdirAll(filepath.Join(repo, "sub", "dir"), 0o750); err != nil {
+		t.Fatal(err)
+	}
 	planted := stub(t, filepath.Join(repo, "tools"), "true")
 	good := stub(t, filepath.Join(base, "good"), "true")
 	t.Setenv("CLAUDE_CODE_GIT_BASH_PATH", "")
@@ -200,13 +203,20 @@ func TestFindCygpathRefusesARepository(t *testing.T) {
 	if got, ok := findCygpath(m); !ok || got != good {
 		t.Errorf("a cygpath in the working directory was not passed over: %q %v", got, ok)
 	}
-	// In any repository, whatever the call touches.
+	// A directory with a .git above it is not refused for that: a per-user
+	// install may sit in a home directory that is a repository.
 	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o750); err != nil {
 		t.Fatal(err)
 	}
 	m = &msysSession{}
+	if got, ok := findCygpath(m); !ok || got != planted {
+		t.Errorf("a cygpath under a repository nothing touches was refused: %q %v", got, ok)
+	}
+	// The repository that holds the working directory is one the call touches.
+	m = &msysSession{}
+	m.addRepoOf(filepath.Join(repo, "sub", "dir"))
 	if got, ok := findCygpath(m); !ok || got != good {
-		t.Errorf("a cygpath in a repository was not passed over: %q %v", got, ok)
+		t.Errorf("a cygpath in the working directory's repository was not passed over: %q %v", got, ok)
 	}
 	// Only a refused one: nothing found.
 	t.Setenv("PATH", filepath.Dir(planted))

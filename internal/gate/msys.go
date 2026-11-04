@@ -187,6 +187,35 @@ func newMSYSSession() *msysSession {
 	return &msysSession{mode: msys, placed: map[string]placedPath{}}
 }
 
+// msysNotFoundNote is added to a deny when a path could not be placed
+// because Git Bash's cygpath was not found.
+const msysNotFoundNote = "Git Bash's cygpath.exe was not found, so paths such as /tmp/x could not be placed; " +
+	"set CLAUDE_CODE_GIT_BASH_PATH to Git Bash's bash.exe."
+
+// notFound reports whether a path needed placing and cygpath was not found.
+func (m *msysSession) notFound() bool {
+	return m != nil && m.exeKnown && m.exe == ""
+}
+
+// addRepoOf records the root of the repository that holds dir: the
+// nearest directory above it, itself included, with a .git in it.
+func (m *msysSession) addRepoOf(dir string) {
+	if m == nil {
+		return
+	}
+	for d := dir; d != ""; {
+		if _, err := os.Lstat(filepath.Join(d, ".git")); err == nil {
+			m.addRoot(d)
+			return
+		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			return
+		}
+		d = parent
+	}
+}
+
 // addRoot records a directory the call touches.
 func (m *msysSession) addRoot(dir string) {
 	if m != nil && dir != "" {
@@ -263,7 +292,8 @@ func (m *msysSession) run(arg string) (string, bool) {
 
 // refuse reports whether the candidate cygpath is inside a repository the
 // call touches: a program there could be planted by the repository. That
-// is a directory of the call, or any directory with a .git above it.
+// is a directory of the call (its working directory, the repository that
+// holds it, each repository loaded for it).
 func (m *msysSession) refuse(exe string) bool {
 	cands := []string{exe}
 	if r, err := filepath.EvalSymlinks(exe); err == nil && r != exe {
@@ -280,16 +310,6 @@ func (m *msysSession) refuse(exe string) bool {
 					return true
 				}
 			}
-		}
-		for d := filepath.Dir(p); ; {
-			if _, err := os.Lstat(filepath.Join(d, ".git")); err == nil { //nolint:gosec // G703: a stat of a name beside a program the gate is about to run
-				return true
-			}
-			parent := filepath.Dir(d)
-			if parent == d {
-				break
-			}
-			d = parent
 		}
 	}
 	return false

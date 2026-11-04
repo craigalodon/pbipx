@@ -135,7 +135,8 @@ func TestMSYSMountedPaths(t *testing.T) {
 		{"cat the root of the table", sh(cat("/")), finding},
 		{"echo an unplaceable path", sh("echo /tmp/nowhere/x"), ""},
 		{"mkdir an unplaceable path", sh("mkdir -p /tmp/nowhere/x"), ""},
-		{"an unplaceable program", sh("/opt/nowhere README.md"), gitContent},
+		{"an unplaceable program is known by its name", sh("/opt/nowhere README.md"), ""},
+		{"an unplaceable wrapper is not", sh("/opt/env README.md"), gitContent},
 		{"ls the root of the table", sh("ls /"), ""},
 
 		// Devices and process files stay as written.
@@ -157,8 +158,16 @@ func TestMSYSMountedPaths(t *testing.T) {
 		{"/dev/sda", sh(cat("/dev/sda")), finding},
 		{"cd /proc/self/cwd", sh("cd /proc/self/cwd && cat README.md"), finding},
 		{"find /proc", sh("find /proc/self/cwd -name x -exec cat {} +"), finding},
+		{"redirected in from /proc/self/cwd", sh("wc -l < /proc/self/cwd/README.md"), finding},
+		{"redirected in from /proc/self/root", sh("sort < /proc/self/root/README.md"), finding},
+		{"git given /proc/self/cwd", sh("git log -p -- /proc/self/cwd/README.md"), gitContent},
+		{"git -C /proc/self/cwd", sh("git -C /proc/self/cwd log -p"), gitContent},
+		{"git -C /proc/12/cwd", sh("git -C /proc/12/CWD log -p"), gitContent},
 		{"echo /proc/self/cwd", sh("echo /proc/self/cwd"), ""},
 		{"read /proc/self/cwd", gate.Event{Tool: gate.Read, Path: "/proc/self/cwd/README.md"}, gate.ReasonInternalError},
+		{"search /proc/self/cwd", gate.Event{Tool: gate.Search, Path: "/proc/self/cwd"}, gate.ReasonInternalError},
+		{"write /proc/self/cwd", gate.Event{Tool: gate.Write, Path: "/proc/self/cwd/.claude/settings.json"}, gate.ReasonInternalError},
+		{"lsp /proc/self/root", gate.Event{Tool: gate.LSP, Paths: []string{"/PROC/self/root/x"}}, gate.ReasonInternalError},
 		{"read /dev/sda", gate.Event{Tool: gate.Read, Path: "/dev/sda"}, gate.ReasonInternalError},
 		{"read /dev/null", gate.Event{Tool: gate.Read, Path: "/dev/null"}, ""},
 
@@ -313,5 +322,107 @@ func TestMSYSRunBudgetInADecision(t *testing.T) {
 	})
 	if m.runs.Load() == 0 {
 		t.Error("cygpath never ran")
+	}
+}
+
+// TestMSYSPatternsAreNotPaths checks that a word in a program's pattern or
+// script slot is not placed, though it starts with a slash: the ordinary
+// commands that hold one allow, and a quoted word a reader takes as a file
+// is still a file.
+func TestMSYSPatternsAreNotPaths(t *testing.T) {
+	root := newRepo(t, leakyFiles())
+	m := useMounts(t, map[string]string{})
+	finding := gate.ReasonFinding
+	run(t, root, []decideCase{
+		{"sed address", sh(`sed '/^#.*/d' README.md`), ""},
+		{"sed address with a backslash", sh(`sed '/\.md$/d' README.md`), ""},
+		{"sed -n", sh(`sed -n '/a.*b/p' README.md`), ""},
+		{"sed -e", sh(`sed -e '/x*/d' -e '/y\z/d' README.md`), ""},
+		{"sed --expression=", sh(`sed --expression='/x*/d' README.md`), ""},
+		{"sed -i", sh(`sed -i '/x*/d' notes/clean.md`), ""},
+		{"awk", sh(`awk '/a.*b/' README.md`), ""},
+		{"awk with -F and -v", sh(`awk -F/ -v re='/a*/' '/a*/{print}' README.md`), ""},
+		{"grep", sh(`grep '/api/v[0-9]*' README.md`), ""},
+		{"grep after --", sh(`grep -- '/[a-z]+/' README.md`), ""},
+		{"grep -e", sh(`grep -e '/x*' README.md`), ""},
+		{"grep -rn", sh(`grep -rn '/health' notes`), ""},
+		{"grep --regexp=", sh(`grep --regexp='/x*' README.md`), ""},
+		{"rg", sh(`rg '/x*' README.md`), ""},
+		{"rg -e", sh(`rg -e '/x\y' README.md`), ""},
+		{"jq", sh(`jq '/x*' notes/clean.md`), ""},
+		{"find -name", sh(`find notes -name '/x*'`), ""},
+		{"find -path", sh(`find notes -path '/api/*' -o -iname '/y*' -print`), ""},
+
+		// A file slot stays a file.
+		{"cat", sh(`cat '/tm*/x'`), finding},
+		{"grep, the file", sh(`grep x '/tm*/x'`), finding},
+		{"grep -e, the file", sh(`grep -e '/y*' '/tm*/x'`), finding},
+		{"sed, the file", sh(`sed -n p '/tm*/x'`), finding},
+		{"sed, the file after a script", sh(`sed '/x/d' '/tm*/x'`), finding},
+		{"sed -e, the file", sh(`sed -e '/x/d' '/tm*/x'`), finding},
+		{"sed -f, the script file", sh(`sed -f '/tm*/x' README.md`), finding},
+		{"awk, the file", sh(`awk '/a/' '/tm*/x'`), finding},
+		{"awk -f, the program file", sh(`awk -f '/tm*/x' README.md`), finding},
+		{"rg, the file", sh(`rg x '/tm*/x'`), finding},
+		{"find, the directory", sh(`find '/tm*/x' -exec cat {} +`), finding},
+		{"jq, the file", sh(`jq . '/tm*/x'`), finding},
+		{"a backslash in a file", sh(`cat '/tmp/a\b'`), finding},
+	})
+	if n := m.runs.Load(); n != 0 {
+		t.Errorf("cygpath ran %d times", n)
+	}
+}
+
+// TestMSYSNoCygpath checks what is denied, and why, when cygpath is not
+// found: a file word is unknown, but a pattern and a program named in full
+// are not, and the deny says what to do.
+func TestMSYSNoCygpath(t *testing.T) {
+	leaky := newRepo(t, leakyFiles())
+	clean := newRepo(t, cleanFiles())
+	t.Cleanup(gate.SetMSYS(true, nil))
+	finding := gate.ReasonFinding
+	cases := []decideCase{
+		{"cat a mounted path", sh("cat /etc/hosts"), finding},
+		{"cp to a mounted path", sh("cp README.md /tmp/b"), finding},
+		{"cd to a mounted path", sh("cd /tmp && cat README.md"), finding},
+		{"grep a pattern", sh("grep -rn '/health' notes"), ""},
+		{"sed a script", sh("sed '/^#.*/d' README.md"), ""},
+		{"a program named in full", sh("/opt/tool README.md"), ""},
+		{"a program named in full, run on a file", sh("/opt/tool /etc/hosts"), finding},
+		{"a drive path", sh("cat /c/x"), ""},
+		{"a shell named in full stays unknown", sh("/usr/bin/bash README.md"), gate.ReasonGitContent},
+		{"a wrapper named in full stays unknown", sh("/usr/bin/env python x.py"), gate.ReasonGitContent},
+		{"read", gate.Event{Tool: gate.Read, Path: "/etc/hosts"}, gate.ReasonInternalError},
+	}
+	run(t, leaky, cases)
+	// In a clean repository only what is unknown by its kind is denied.
+	run(t, clean, []decideCase{
+		{"cat a mounted path", sh("cat /etc/hosts"), ""},
+		{"a program named in full", sh("/opt/tool README.md"), ""},
+		{"a wrapper named in full stays unknown", sh("/usr/bin/env python x.py"), gate.ReasonGitContent},
+	})
+	for _, tc := range []gate.Event{sh("cat /etc/hosts"), sh("/usr/bin/env python x.py"), {Tool: gate.Read, Path: "/etc/hosts"}} {
+		ev := tc
+		ev.Cwd = leaky
+		d := gate.Decide(ev, gate.Options{})
+		if d.Allow || !strings.Contains(d.Message, "CLAUDE_CODE_GIT_BASH_PATH") {
+			t.Errorf("the deny does not say cygpath was not found: %q", d.Message)
+		}
+	}
+	// A deny for another reason, with nothing to place, says nothing of it.
+	d := gate.Decide(gate.Event{Tool: gate.Shell, Command: "cat " + leakVisual, Cwd: leaky}, gate.Options{})
+	if d.Allow || strings.Contains(d.Message, "CLAUDE_CODE_GIT_BASH_PATH") {
+		t.Errorf("an unrelated deny blames cygpath: %q", d.Message)
+	}
+}
+
+// TestMSYSPlacementFailureDoesNotBlame checks that a run that fails with
+// cygpath found does not tell the person to look for it.
+func TestMSYSPlacementFailureDoesNotBlame(t *testing.T) {
+	leaky := newRepo(t, leakyFiles())
+	useMounts(t, map[string]string{})
+	d := gate.Decide(gate.Event{Tool: gate.Shell, Command: "cat /etc/hosts", Cwd: leaky}, gate.Options{})
+	if d.Allow || strings.Contains(d.Message, "CLAUDE_CODE_GIT_BASH_PATH") {
+		t.Errorf("allow %v message %q", d.Allow, d.Message)
 	}
 }

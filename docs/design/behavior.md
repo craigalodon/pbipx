@@ -2413,22 +2413,44 @@ behavior (2026-10-29).
     does not exist is placed all the same. The word's text is never
     changed, so a script in it (`sh -c '/usr/bin/cat /tmp/x'`) is read as
     written. Off Windows none of this applies and nothing runs.
-    - **Never placed, and nothing runs:** `/dev` and `/proc` and what is
-      below them (devices and process files, never a file in a
-      repository; `source /dev/stdin` is read as such), `/x` and `/x/...`
-      with one drive letter (today's reading), `C:/x`, `C:\x`,
-      `//server/share/x`, a relative word, and anything in a PowerShell
-      command. A word with a `..` segment is not taken for one of these
-      (`/c/../d/x`, `/dev/../tmp/x`); it is placed.
+    - **Never placed, and nothing runs:** the standard devices and
+      descriptors, `/dev/null`, `stdin`, `stdout`, `stderr`, `tty`,
+      `zero`, `urandom`, `random`, `/dev/fd/N`, `/proc/self/fd/N` and
+      `/proc/N/fd/N` (never a file in a repository; `source /dev/stdin`
+      is read as such), `/x` and `/x/...` with one drive letter (today's
+      reading), `C:/x`, `C:\x`, `//server/share/x`, a relative word, and
+      anything in a PowerShell command. A word with a `..` segment is
+      not taken for one of these (`/c/../d/x`); it is placed, unless the
+      `..` leads into `/dev` or `/proc`. The names `dev` and `proc` are
+      matched without regard to case, as Git Bash matches a mount.
+    - **Measured:** in Git Bash, `/proc/self/cwd` is the working
+      directory, and a read of `/proc/self/cwd/x` reads `x` there, though
+      the gate would read the word as a folder on a drive. So every other
+      word under `/dev` or `/proc` (`/proc/self/cwd`, `/proc/self/root`,
+      `/proc/N/cwd`, `/dev/sda`) is unknown, in a word, a redirection, a
+      `cd`, a git argument and a file tool's path, and `cygpath` is not
+      asked about it.
     - **Placed:** every other word that starts with one slash, so a
       `/cygdrive/x/...` word keeps its reading as a drive path and is
       placed too, which covers a custom cygdrive prefix. A glob is not
       given to `cygpath`: the directory before it is placed and the glob
       is matched below that. A `..` after a glob, a backslash and a
       control character in the word cannot be placed.
+    - **Not a path:** a word in a program's pattern or script slot is not
+      placed, though it starts with a slash: sed's and awk's script (and
+      their `-e` values), the pattern of `grep`, `rg` and the other
+      searches (and the value of `-e` and `--regexp`), `jq`'s filter, and
+      the value of `find`'s `-name` and `-path` tests. `sed '/^#.*/d' f`
+      and `grep '/api/v[0-9]*' f` are not held up by it. A word a reader
+      takes as a file is a file, quoted or not (`cat '/tm*/x'`).
     - **Unknown:** `/`, and any word that cannot be placed (no `cygpath`,
       a run that fails or prints anything but one absolute valid UTF-8
-      line, a limit reached). A reading command or a search given one
+      line, a limit reached). A command word written out in full
+      (`/opt/tool`) that cannot be placed is known by its last element,
+      as a path with an expansion before it is; one that names a shell,
+      an interpreter or a wrapper (`/usr/bin/env`) is not. When `cygpath`
+      is not found, the deny says so and names `CLAUDE_CODE_GIT_BASH_PATH`.
+      A reading command or a search given one
       touches every protected root, and in a call from outside every
       repository, every indexed work tree; `cd` to one makes the working
       directory unknown; git given one prints no content (`git-content`);
@@ -2437,8 +2459,9 @@ behavior (2026-10-29).
     - **Finding `cygpath`:** beside `CLAUDE_CODE_GIT_BASH_PATH`, then in
       the installation the `git` that runs is in (up to three levels above
       its directory, to `usr\bin\cygpath.exe`), then on `PATH`. A candidate
-      inside a directory of the call, or under any directory that holds a
-      `.git`, is passed over: a repository could plant it. It runs with an
+      inside the working directory, the repository that holds it or a
+      repository loaded for the call is passed over: a repository could
+      plant it. It runs with an
       argument vector and no shell, `MSYS=noglob`, `LC_ALL=C.UTF-8`, in its
       own directory, for at most 2 seconds a run, 32 runs and 10 seconds a
       decision, and the result of each word, a failure included, is kept for
@@ -2462,7 +2485,12 @@ behavior (2026-10-29).
       path as written would be (`git -C /tmp/x log -p` is denied while
       `/tmp/x` does not exist as a folder on the working drive).
       Every command word that starts with a slash (`/usr/bin/env`) is
-      placed, so one run is spent on it. (Decided 2026-11-04.)
+      placed, so one run is spent on it. A glob below a directory that
+      holds only a mount (`cat /usr/*/x`, where a mount lies below `/usr`)
+      is matched in the folder `cygpath` names for the directory, so it
+      does not see what the mount holds. `/tmp` is placed by the gate's own
+      environment (`TEMP`), which the hook and the Bash tool might not
+      share. (Decided 2026-11-04.)
 - **Known over-blocks of the shell rule, in full.** Each denies though
   the line may print nothing protected; each is the price of a rule
   above, and each has a plain form that is allowed:

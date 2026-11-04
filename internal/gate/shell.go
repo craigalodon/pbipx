@@ -267,6 +267,10 @@ func (w *walker) unknownProgram(c simple, v view) string {
 			continue
 		}
 		switch {
+		case !known && j == k && v.words[args[j]].placeFailed && literalPlaced(wd):
+			// A literal path that could not be placed (msys.go) to a program
+			// named by its last element: that program, whatever the
+			// directory.
 		case !known && j == k && w.literalProgram(wd):
 			// A path whose directory cannot be told, to a program named
 			// by its literal last element: that program.
@@ -277,6 +281,26 @@ func (w *walker) unknownProgram(c simple, v view) string {
 		}
 	}
 	return ""
+}
+
+// literalPlaced reports whether wd, a command word written out in full
+// (/usr/bin/tool), is known by the name of its last element: as for
+// literalProgram, not when that names a shell, an interpreter, a wrapper
+// or eval, source or ., whose arguments matter.
+func literalPlaced(wd word) bool {
+	var text strings.Builder
+	for _, p := range wd.parts {
+		if p.kind != litPart {
+			return false
+		}
+		text.WriteString(p.text)
+	}
+	t := text.String()
+	base := progName(t[strings.LastIndexByte(t, '/')+1:])
+	_, wrap := wrappers[base]
+	_, interp := interpreters[interpreterFamily(base)]
+	_, runner := runners[base]
+	return base != "" && !wrap && !interp && !runner && !shells[base] && !slices.Contains([]string{"eval", "source", "."}, base)
 }
 
 // literalProgram reports whether wd, a command word whose value cannot be
@@ -1154,6 +1178,11 @@ type xword struct {
 	// message is set for git's message text (gitMessageText), which is
 	// not placed as a path.
 	message bool
+	// noPlace is set for a word that is a program's pattern or script, not
+	// a path (patternSlots): it is not placed (msys.go). placeFailed is
+	// set when known is false only because a path in it could not be
+	// placed.
+	noPlace, placeFailed bool
 }
 
 // view is one simple command as the rules see it.
@@ -1852,7 +1881,6 @@ func (s *setup) viewOf(c simple, st cwdState, ph []string) view {
 	for i, wd := range c.words {
 		xw := s.expandWord(wd, v.cwd)
 		xw.message = msg.words[i]
-		s.placeCheck(&xw)
 		v.words = append(v.words, xw)
 		if !xw.redirect {
 			args = append(args, xw.text)
@@ -1861,9 +1889,26 @@ func (s *setup) viewOf(c simple, st cwdState, ph []string) view {
 		}
 	}
 	v.argv = stripKeywords(args)
-	v.argvKnown = known[len(known)-len(v.argv):]
 	v.argvShapes = shapes[len(shapes)-len(v.argv):]
 	v.name, v.rest, v.under = command(v.argv)
+	if s.msys != nil {
+		// Place the absolute Git Bash paths among the words; a pattern or
+		// a script is no path.
+		slots := patternSlots(v)
+		known = known[:0]
+		for wi := range v.words {
+			xw := &v.words[wi]
+			if slots[wi] {
+				xw.noPlace = true
+			} else {
+				s.placeCheck(xw)
+			}
+			if !xw.redirect {
+				known = append(known, xw.known)
+			}
+		}
+	}
+	v.argvKnown = known[len(known)-len(v.argv):]
 	v.restKnown = v.argvKnown[len(v.argvKnown)-len(v.rest):]
 	// Words a runner (xargs, parallel) substitutes input words for: those
 	// of the runners this command runs under, and of any it is nested in.
@@ -1885,7 +1930,7 @@ func (s *setup) placeCheck(xw *xword) {
 	for _, text := range []string{xw.text, xw.pattern} {
 		for _, c := range msysCands(text) {
 			if _, _, ok := s.msys.word(c); !ok {
-				xw.known = false
+				xw.known, xw.placeFailed = false, true
 				return
 			}
 		}
@@ -2525,7 +2570,8 @@ func (s *setup) spellWord(v view, xw xword, c *spellCache) (out []string, unknow
 			out = append(out, spellings(d, cand)...)
 		}
 		// An absolute Git Bash path is also the place Git Bash puts it.
-		if pl, needed, ok := s.msys.word(cand); !ok {
+		// (A pattern or a script is no path: noPlace.)
+		if pl, needed, ok := s.placeWord(xw, cand); !ok {
 			unknown = true
 		} else if needed {
 			for _, d := range dirs {
@@ -2535,7 +2581,7 @@ func (s *setup) spellWord(v view, xw xword, c *spellCache) (out []string, unknow
 	}
 	if xw.glob {
 		pats := []string{xw.pattern}
-		if pl, needed, ok := s.msys.word(xw.pattern); !ok {
+		if pl, needed, ok := s.placeWord(xw, xw.pattern); !ok {
 			unknown = true
 		} else if needed {
 			pats = append(pats, pl)
@@ -3460,4 +3506,143 @@ func namesWord(line, name string) bool {
 
 func wordByte(b byte) bool {
 	return b == '_' || b == '-' || b == '.' || '0' <= b && b <= '9' || 'a' <= b && b <= 'z' || 'A' <= b && b <= 'Z' || b >= 0x80
+}
+
+// placeWord is msys.word of p, a part of the word xw, unless xw is a
+// pattern or a script.
+func (s *setup) placeWord(xw xword, p string) (placed string, needed, ok bool) {
+	if xw.noPlace {
+		return "", false, true
+	}
+	return s.msys.word(p)
+}
+
+// patternSlots says which words of v are a program's pattern or script and
+// no path: sed's and awk's script (and their -e and -v values), the pattern
+// of grep, rg and the other searches (and the value of -e and --regexp), jq's
+// filter, and the value of find's name and path tests. A word starting with
+// a slash is placed as a path only outside these (msys.go); a word a reader
+// takes as a file is still a file. The slice is indexed like v.words.
+func patternSlots(v view) []bool {
+	slots := make([]bool, len(v.words))
+	var args []int // the index in v.words of each argument
+	for i, xw := range v.words {
+		if !xw.redirect {
+			args = append(args, i)
+		}
+	}
+	start := len(args) - len(v.rest)
+	if start < 0 {
+		return slots
+	}
+	mark := func(r int) {
+		if r >= 0 && r < len(v.rest) {
+			slots[args[start+r]] = true
+		}
+	}
+	if sr, ok := searchers[v.name]; ok {
+		for _, r := range parseSearch(sr, v.rest).patterns {
+			mark(r)
+		}
+		return slots
+	}
+	switch {
+	case v.name == "sed":
+		for _, r := range scriptArgs(v.rest, "l", "e", "f", []string{"expression"}, []string{"file"}) {
+			mark(r)
+		}
+	case awks[v.name]:
+		for _, r := range scriptArgs(v.rest, "vFW", "e", "f", []string{"source"}, []string{"file"}) {
+			mark(r)
+		}
+	case v.name == "jq" || v.name == "yq" || v.name == "gojq":
+		if f := jqFilter(v); f >= 0 {
+			slots[f] = true
+		}
+	case v.name == "find":
+		for i := 0; i+1 < len(v.rest); i++ {
+			if slices.Contains(findPatternTests, v.rest[i]) {
+				mark(i + 1)
+				i++
+			}
+		}
+	}
+	return slots
+}
+
+// findPatternTests are find's tests whose value is a pattern.
+var findPatternTests = []string{
+	"-name", "-iname", "-path", "-ipath", "-wholename", "-iwholename", "-regex", "-iregex", "-lname", "-ilname",
+}
+
+// scriptArgs are the indexes in rest of the script words of sed or awk: the
+// value of each script option (short ones in scripts, long ones in
+// longScripts), the value of each option in valued, and, when no script
+// option or script file option (files, longFiles) is given, the first word
+// that is no option. A script file's name is a file, not a script.
+func scriptArgs(rest []string, valued, scripts, files string, longScripts, longFiles []string) []int {
+	var out []int
+	given := false
+	for i := 0; i < len(rest); i++ {
+		a := rest[i]
+		switch {
+		case a == "--":
+			if !given && i+1 < len(rest) {
+				out = append(out, i+1)
+			}
+			return out
+		case strings.HasPrefix(a, "--"):
+			name, _, hasValue := strings.Cut(a[2:], "=")
+			switch {
+			case slices.Contains(longScripts, name):
+				given = true
+				if hasValue {
+					out = append(out, i)
+				} else if i+1 < len(rest) {
+					i++
+					out = append(out, i)
+				}
+			case slices.Contains(longFiles, name):
+				given = true
+				if !hasValue {
+					i++
+				}
+			}
+		case strings.HasPrefix(a, "-") && len(a) > 1:
+			for j := 1; j < len(a); j++ {
+				c := a[j]
+				switch {
+				case strings.IndexByte(scripts, c) >= 0:
+					given = true
+					if j+1 < len(a) {
+						out = append(out, i)
+					} else if i+1 < len(rest) {
+						i++
+						out = append(out, i)
+					}
+				case strings.IndexByte(files, c) >= 0:
+					given = true
+					if j+1 == len(a) {
+						i++
+					}
+				case strings.IndexByte(valued, c) >= 0:
+					if j+1 < len(a) {
+						out = append(out, i)
+					} else if i+1 < len(rest) {
+						i++
+						out = append(out, i)
+					}
+				default:
+					continue
+				}
+				break
+			}
+		default:
+			if !given {
+				out = append(out, i)
+				given = true
+			}
+		}
+	}
+	return out
 }
