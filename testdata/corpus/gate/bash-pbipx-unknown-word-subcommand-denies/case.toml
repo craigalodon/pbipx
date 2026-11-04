@@ -1,7 +1,7 @@
-description = "A word the gate cannot tell in the subcommand position is not the tool alone, so the leaking tree denies"
+description = "A word the gate cannot tell in the subcommand position could be a person-only subcommand such as init, so it denies with agent-settings and no tree is consulted; this case plants no value"
 command     = "gate"
 args        = []
 policy      = "default"
 exit        = 2
-sentinels   = ["Doe, Jane"]
+sentinels   = []
 known       = "predecessor"

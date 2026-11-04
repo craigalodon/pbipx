@@ -1,0 +1,7 @@
+description = "Running pbipx gate by hand denies with agent-settings; the hook is run by Claude Code, not by an agent; this case plants no value"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []
+known       = "predecessor"

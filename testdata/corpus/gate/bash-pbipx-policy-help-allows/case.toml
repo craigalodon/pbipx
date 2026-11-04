@@ -1,0 +1,6 @@
+description = "A help flag makes the tool print help and run nothing, so pbipx policy --help allows; this case plants no value"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = []

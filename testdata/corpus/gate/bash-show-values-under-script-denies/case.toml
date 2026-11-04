@@ -1,0 +1,7 @@
+description = "--show-values under script, which supplies the terminal the flag asks for, denies with agent-settings; this case plants no value"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []
+known       = "predecessor"

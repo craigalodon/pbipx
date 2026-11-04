@@ -1,0 +1,7 @@
+description = "Running pbipx init, with any flag, denies with agent-settings on a tree that holds nothing to find: setting pbipx up is a person's step and no tree is consulted; this case plants no value"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []
+known       = "predecessor"
