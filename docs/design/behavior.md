@@ -908,18 +908,17 @@ path, is denied with `event-error`: the call cannot be judged.
      redact on their own: `scan`, `scan-text`, `explain`, `baseline`
      (`record` writes a reviewable file and refuses under `CI`; `verify`
      reads), `version`, `help`, `--help`, `-h`, `--version`, and
-     `policy status`. In pbipx, any other word in the subcommand
-     position, including one the gate cannot tell (`pbipx $SUB`) and a
-     subcommand that does not exist yet, is not the tool alone: it falls
-     through to the ordinary rules, which count it as reaching every
-     protected root, so it denies while the tree holds a finding (as
-     `pwsh` does). `init` (writes the user's Claude Code settings and the
-     approval store) and `gate` (the hook itself) are left off, and so are
-     `stage`, `collect` and `perf`, planned subcommands: each joins the
-     table in the change that adds it, if an agent may run it. The
-     person-only subcommands, `policy approve` and `unenroll`, are never
-     the tool alone (below). The predecessor allows any subcommand but
-     `policy approve`. (Decided 2026-11-04.)
+     `policy status`; a help flag anywhere (`pbipx policy --help`, bare
+     `pbipx policy`) prints help and runs nothing, so it allows unless a
+     person-only step is named. In pbipx, any other word in the
+     subcommand position is not the tool alone: it falls through to the
+     ordinary rules, which count it as reaching every protected root, so
+     it denies while the tree holds a finding (as `pwsh` does). A word
+     there that the gate cannot tell (`pbipx $SUB`, a glob) could be a
+     person-only step and denies outright (below). `stage`, `collect` and
+     `perf`, planned subcommands, are off the table: each joins it, or the
+     person-only list, in the change that builds it. The predecessor
+     allows any subcommand but `policy approve`. (Decided 2026-11-04.)
   2. A git command that prints file content is **denied** outright (git
      history cannot be vetted), unless it provably prints nothing from a
      protected root. In pbipx, for the commands that have a name-only form,
@@ -1542,20 +1541,33 @@ path, is denied with `event-error`: the call cannot be judged.
     or managed Claude Code settings file (the files the Write rule below
     protects), or copies or writes into a user-level Claude Code settings
     directory; the message says which and does not name it;
-  - runs a person-only subcommand of the tool, `pbipx policy approve` or
-    `pbipx policy unenroll` (`policy`, then a word that begins with
-    `approve` or `unenroll`, by any path to the tool, through a pipe, or
-    under `script`, `expect`, `unbuffer` or `winpty`, which give it a
-    terminal; `parallel` too, whose input words are added): approval is a
-    person's step (ADR-0006), and so is removing a repository's adoption.
-    A word after `policy` that the gate cannot tell (`pbipx policy $SUB`),
-    or words a runner adds (`... | xargs pbipx policy`), could be either,
-    so it denies the same. So does an unknown word before an `approve` or
-    `unenroll` word (`pbipx $SUB approve`), which could be `policy`. The
-    PowerShell check reads the same words, in any case. The message says
-    approval is a person's step and never names `unenroll` or how to run
-    it; `unenroll` is a command a later change adds, and its word is
-    guarded before it exists (the deny comes before the capability).
+  - runs a person-only step of the tool, with no tree consulted: `pbipx
+    policy approve` or `pbipx policy unenroll` (`policy`, then a word that
+    begins with `approve` or `unenroll`), `pbipx init` and `pbipx gate`
+    with any flag (a help request alone excepted), or `--show-values`, by
+    any path to the tool (in any case where the file system folds case),
+    through a pipe, or under `script`, `expect`, `unbuffer` or `winpty`,
+    which give it a terminal and so defeat the flag's refusal without one;
+    `parallel` too, whose input words are added. Approval is a person's
+    step (ADR-0006), and so are removing a repository's adoption, setting
+    pbipx up and printing values. A word the gate cannot tell (a
+    variable, a substitution, a glob) in the subcommand position or after
+    `policy`, or words a runner adds (`... | xargs pbipx policy`, an
+    accepted over-block), could be one of them, so it denies the same; so
+    does an unknown word before an `approve` or `unenroll` word, which
+    could be `policy`. Under a terminal program, a word of the tool's that
+    cannot be told could be the flag. The PowerShell check reads the same
+    words in any case, splits the strings given to `Invoke-Expression`,
+    `pwsh -c`, `Start-Process` and the like into words, and counts
+    `policy` followed by a group, a hashtable or a variable, or a string
+    built from pieces that names the tool, as unreadable. The message
+    names neither `unenroll` nor how to run a step; `unenroll` is a
+    command a later change adds, and its word is guarded before it exists
+    (the deny comes before the capability).
+  - Limits: a terminal provider the gate cannot list (a `python` or `perl`
+    pty module, `socat`) is not seen, and relies on the tool's own refusal
+    without a terminal. `find -exec pbipx {} approve` is not exploitable:
+    the tool gets a file name first, not `policy`.
 
   In pbipx, naming a settings file in the repository, or a path in the
   approval store or a user-level or managed settings file, denies only when

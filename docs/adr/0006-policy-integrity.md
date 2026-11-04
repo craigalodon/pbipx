@@ -161,11 +161,12 @@ repositories that adopted pbipx, and stays closed in them.
   `pbipx policy approve`, are denied from every directory, adopted or not:
   each switches the gate off, or forges an approval, for every adopted
   repository on the machine. The run guarded is the whole class of the
-  tool's person-only subcommands, not the one name: `policy approve` and
+  tool's person-only steps, not the one name: `policy approve` and
   `policy unenroll` (a later change adds it, and its word is denied before
-  it exists), under `script`, `expect`, `unbuffer` or `winpty`, and for a
-  word after `policy` the gate cannot tell. What an agent may run of the
-  tool alone is an explicit table (behavior.md, Bash rule 1), so a new
+  it exists), `init`, `gate` and `--show-values`, under
+  `script`, `expect`, `unbuffer` or `winpty`, and for a word after
+  `policy` the gate cannot tell. What an agent may run of the tool alone
+  is an explicit table (behavior.md, Bash rule 1), so a new
   subcommand is closed to agents until it is added there.
 
 The cost: an index entry outlives the repository at its path. An entry
