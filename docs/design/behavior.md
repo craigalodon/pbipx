@@ -2403,6 +2403,66 @@ behavior (2026-10-29).
   Claude Code read it, and `%USERPROFILE%` otherwise. Paths git prints (the
   work tree's top, its git directory) are resolved the same way before they
   are compared. (Decided 2026-10-30.)
+  - **Git Bash mounts.** Git Bash resolves a path that starts with one
+    slash and is not a drive (`/tmp/x`, `/usr/x`, a mount in `fstab`)
+    through its mount table, so `\tmp\x` on the working drive is the wrong
+    place for it. On Windows only, such a word, the value of a
+    `--flag=value`, and a Read, Grep, Write, Edit or LSP path are also
+    placed by Git Bash's own `cygpath -w`, and judged as written and as
+    placed: placement adds a spelling and never removes one. A path that
+    does not exist is placed all the same. The word's text is never
+    changed, so a script in it (`sh -c '/usr/bin/cat /tmp/x'`) is read as
+    written. Off Windows none of this applies and nothing runs.
+    - **Never placed, and nothing runs:** `/dev` and `/proc` and what is
+      below them (devices and process files, never a file in a
+      repository; `source /dev/stdin` is read as such), `/x` and `/x/...`
+      with one drive letter (today's reading), `C:/x`, `C:\x`,
+      `//server/share/x`, a relative word, and anything in a PowerShell
+      command. A word with a `..` segment is not taken for one of these
+      (`/c/../d/x`, `/dev/../tmp/x`); it is placed.
+    - **Placed:** every other word that starts with one slash, so a
+      `/cygdrive/x/...` word keeps its reading as a drive path and is
+      placed too, which covers a custom cygdrive prefix. A glob is not
+      given to `cygpath`: the directory before it is placed and the glob
+      is matched below that. A `..` after a glob, a backslash and a
+      control character in the word cannot be placed.
+    - **Unknown:** `/`, and any word that cannot be placed (no `cygpath`,
+      a run that fails or prints anything but one absolute valid UTF-8
+      line, a limit reached). A reading command or a search given one
+      touches every protected root, and in a call from outside every
+      repository, every indexed work tree; `cd` to one makes the working
+      directory unknown; git given one prints no content (`git-content`);
+      a file tool path that cannot be placed is denied with
+      `internal-error`.
+    - **Finding `cygpath`:** beside `CLAUDE_CODE_GIT_BASH_PATH`, then in
+      the installation the `git` that runs is in (up to three levels above
+      its directory, to `usr\bin\cygpath.exe`), then on `PATH`. A candidate
+      inside a directory of the call, or under any directory that holds a
+      `.git`, is passed over: a repository could plant it. It runs with an
+      argument vector and no shell, `MSYS=noglob`, `LC_ALL=C.UTF-8`, in its
+      own directory, for at most 2 seconds a run, 32 runs and 10 seconds a
+      decision, and the result of each word, a failure included, is kept for
+      the decision. Nothing is cached on disk.
+    - **Measured, not assumed.** In a default Git for Windows there is no
+      `/cygdrive` drive mount: `cygpath -w /cygdrive/c/x` printed a folder
+      under the installation and listing `/cygdrive/c` failed. A read
+      through that form fails there and leaks nothing, so the gate's
+      reading of it as `C:\cygdrive\c\x` is wrong but harmless; only a
+      custom `cygdrive` prefix or mount makes it a drive, and `cygpath`
+      says which.
+    - **Limitations.** The mount table is not read, only asked about one
+      word at a time, so `/` is unknown and a directory word with a mount
+      below it that the gate cannot see (`ls /usr`, with a repository
+      mounted at `/usr/src`) is not told from one without. A mount that
+      `fstab` changes between the gate's run and the command's is not seen.
+      Git's own pathspec magic in front of a path (`:(top)/tmp/x`) and a
+      `REV:/tmp/x` word are not placed. `PATH`-style lists
+      (`PATH=/a:/b`) are not split. A `git -C` or pathspec word is judged
+      as written and as placed, so a placed path is still denied when the
+      path as written would be (`git -C /tmp/x log -p` is denied while
+      `/tmp/x` does not exist as a folder on the working drive).
+      Every command word that starts with a slash (`/usr/bin/env`) is
+      placed, so one run is spent on it. (Decided 2026-11-04.)
 - **Known over-blocks of the shell rule, in full.** Each denies though
   the line may print nothing protected; each is the price of a rule
   above, and each has a plain form that is allowed:
