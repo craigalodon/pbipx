@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/craigalodon/pbipx/internal/approval"
 )
 
 // linkedWorktrees are the other work trees of the clone whose work tree
@@ -38,9 +40,15 @@ func linkedWorktrees(root string) []string {
 	}
 	var out []string
 	add := func(wt string) {
-		if wt != "" && filepath.Clean(wt) != filepath.Clean(root) {
-			out = append(out, wt)
+		if wt == "" || sameWorkTree(wt, root) {
+			return
 		}
+		for _, have := range out {
+			if sameWorkTree(wt, have) {
+				return
+			}
+		}
+		out = append(out, wt)
 	}
 	add(mainWorktree(common))
 	entries, err := os.ReadDir(filepath.Join(common, "worktrees"))
@@ -102,4 +110,11 @@ func absFrom(dir, p string) string {
 		return filepath.Clean(p)
 	}
 	return filepath.Join(dir, p)
+}
+
+// sameWorkTree is whether a and b are one work tree, however spelled: git
+// prints long names and the case the directory was made with, while root
+// may arrive as a Windows short (8.3) name or in another case.
+func sameWorkTree(a, b string) bool {
+	return samePath(approval.ResolveExisting(a), approval.ResolveExisting(b), foldCase)
 }
