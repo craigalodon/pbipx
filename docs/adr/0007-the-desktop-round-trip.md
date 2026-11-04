@@ -39,10 +39,11 @@ This record decides the design. The behavior is specified in
 `stage` and `collect` are person-only: the gate denies an agent's call that
 runs either, as it denies `policy approve` (ADR-0006), and they are added to
 the gate's person-only list in the pull request that builds them. The
-maintainer has decided this. The commands themselves do not demand a
-terminal, as `policy approve` does: the corpus runs them with output piped,
-and the gate is the control, as for the rest of the threat model's "safety net
-against accidents".
+maintainer has decided this. In the first version the commands do not demand
+a terminal, as `policy approve` does: the corpus runs them with output piped,
+and the gate is the control. The maintainer wants a terminal check added once
+the commands exist and can be tested, with a way for the corpus runner to
+supply a terminal.
 
 ### `stage`
 
@@ -193,10 +194,6 @@ page from another. Rejected for all-or-nothing.
 **Scanning the working copy for the gate instead of denying it.** The data
 cache is opaque and a scan would pass it. Deny, then, as for `.pbi/` in a
 protected root.
-
-**A terminal check on `stage` and `collect`, as `policy approve` has.** It
-would make the corpus unrunnable and add nothing the gate's denial does not.
-Reconsider if the commands gain an effect the gate cannot see.
 
 **Bringing back everything Desktop wrote and filtering in a commit hook.**
 Puts the cache in the repository first. Rejected.

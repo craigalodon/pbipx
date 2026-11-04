@@ -32,7 +32,8 @@ pbipx collect <working-copy> [--strict] [--dry-run] [--done | --discard]
 ```
 
 Both are person-only: the gate denies an agent's call that runs either
-(ADR-0007). Neither reads a terminal; neither has `--show-values` in v1.
+(ADR-0007). Neither reads a terminal at first, which is to be added once they
+can be tested; neither has `--show-values` in v1.
 
 ### `stage`
 
