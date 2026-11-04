@@ -162,17 +162,58 @@ repositories that adopted pbipx, and stays closed in them.
   each switches the gate off, or forges an approval, for every adopted
   repository on the machine. The run guarded is the whole class of the
   tool's person-only steps, not the one name: `policy approve` and
-  `policy unenroll` (a later change adds it, and its word is denied before
-  it exists), `init`, `gate` and `--show-values`, under
-  `script`, `expect`, `unbuffer` or `winpty`, and for a word after
-  `policy` the gate cannot tell. What an agent may run of the tool alone
-  is an explicit table (behavior.md, Bash rule 1), so a new
-  subcommand is closed to agents until it is added there.
+  `policy unenroll` (third amendment, below), `init`, `gate` and
+  `--show-values`, under `script`, `expect`, `unbuffer` or `winpty`, and
+  for a word after `policy` the gate cannot tell. What an agent may run
+  of the tool alone is an explicit table (behavior.md, Bash rule 1), so a
+  new subcommand is closed to agents until it is added there.
 
 The cost: an index entry outlives the repository at its path. An entry
 whose directory is gone is skipped, but one whose directory is still there
 keeps the gate acting there until a person removes the record from the
-store. And a repository that has a committed `.pbipx.toml` is adopted on
-first clone, before anyone ran `init` or approved it, so the gate denies
+store (by hand, or with `pbipx policy unenroll`; third amendment below).
+And a repository that has a committed `.pbipx.toml` is adopted on first
+clone, before anyone ran `init` or approved it, so the gate denies
 there until a person approves the policy: the same prompt as before, now
 asked only where pbipx is in use.
+
+## Amendment (2026-11-04): adoption ends by a person's act
+
+The first and second amendments made adoption one-way: a record, or an
+index entry, outlived the repository, and a person who wanted a clone out
+of the gate's reach edited the store by hand. That is `pbipx policy
+unenroll` now. It removes the clone's adoption, for every one of its work
+trees, and is a person's step as approval is.
+
+- **Adoption ends only by a person's act at a terminal.** The command is
+  refused unless stdin and stdout are terminals and none of `CI`,
+  `PRE_COMMIT` and `PBIPX_NO_REVEAL` is set, asks for `unenroll` typed in
+  full, and is denied to an agent from every directory (the person-only
+  list). Nothing else removes an adoption except a person editing the store
+  by hand, which the gate also denies an agent.
+- **Every approval is forgotten.** The clone's record goes, with its
+  digests. Nothing is kept to restore.
+- **A policy file adopts again.** It refuses while the work tree has a
+  `.pbipx.toml`, since the file would adopt the repository again and the
+  gate would deny every call with `policy-unapproved`. And a policy file
+  that arrives later (a pull, another branch) adopts the repository again
+  with no approval, so the gate denies until a person approves. There is
+  no tombstone: a marker that outlives the removal would be one more thing
+  to forge, or to forget, and "a policy file means adopted" is the rule
+  that fails closed.
+- **The clone's record goes last.** The work trees are stripped from other
+  records' roots first, then the records keyed by a work tree, so an error
+  part way leaves the clone adopted, never half removed. A record left
+  with no root and no digest is deleted, since a version 3 record with
+  neither is invalid and an invalid record counts as adopted. One left
+  with digests and no roots is another clone's and is kept.
+- **The result is checked with the gate's own logic**, exported from the
+  gate, not copied: a policy file or an enclosing adopted repository can
+  still adopt the work tree, and then the command exits 3 and says which.
+- **A mismatched `PBIPX_CONFIG_DIR` cannot be detected.** If the person's
+  shell sets one that the gate's hook does not see, the command removes the
+  adoption from a store the gate does not read, and the gate goes on
+  acting. Printing the store directory before the prompt is the mitigation.
+- **A drift guard.** A test walks cobra's top-level and `policy` commands
+  and requires each to be on the gate's agent table or its person-only
+  list, so a new command is closed to agents until someone decides.

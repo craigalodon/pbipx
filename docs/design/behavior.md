@@ -499,7 +499,8 @@ digest, so the gate acts for the repository from then on, before its
 policy is approved. An indexed work tree that no longer exists is skipped;
 one that is now a different repository with no record and no policy is
 still adopted while it is indexed, so removing a work tree from the gate's
-reach is a person's edit of the store.
+reach is a person's act: `pbipx policy unenroll` for a whole clone (below),
+or a person editing the store by hand for a single index entry.
 
 The event is JSON on stdin. Every failure denies:
 
@@ -537,6 +538,56 @@ digest, and records the approval only when `approve` is typed in full;
 anything else exits 4. `pbipx policy status` prints `approved`,
 `unapproved`, `changed` or `missing` (no policy file), and exits 0 only
 when approved, 3 otherwise. Neither prints policy content.
+
+`pbipx policy unenroll` removes this clone's adoption, for every one of its
+work trees, and is a person's step as approval is: refused with a usage
+error (exit 4) unless stdin and stdout are terminals and none of `CI`,
+`PRE_COMMIT` and `PBIPX_NO_REVEAL` is set (set but empty counts). It does
+not load the policy, so a policy that is missing or broken does not block
+it. In order (ADR-0006, amendment of 2026-11-04):
+
+- A store inside the repository or the clone exits 3, as for `approve`.
+- A `.pbipx.toml` in this work tree exits 3 and removes nothing: the file
+  would adopt the repository again, and the gate would deny every call
+  with `policy-unapproved`. Remove or move it first.
+- With nothing to remove (no record of the clone, no legacy record of a
+  work tree, no other record naming one) and the work tree not adopted, it
+  says so and exits 0.
+- Otherwise it prints the store directory, the clone's work trees (as
+  `git worktree list` reports them, read without running git), the number
+  of approved digests, a warning for each linked work tree that still holds
+  a policy file (which adopts it again whatever is removed; a warning, not
+  a block), and that the gate stops protecting these files from agents and
+  every approval is forgotten. It asks for `unenroll` typed in full;
+  anything else exits 4 and removes nothing.
+- On confirmation it strips these work trees from the `roots` of every
+  other record, comparing across symlink, case and short-name spellings
+  (and by the file system's own identity where the directory exists). A
+  record left with no roots and no digests is deleted, since a version 3
+  record with neither is invalid and an invalid record counts as adopted. A
+  record left with digests and no roots is kept: it is another clone's, it
+  adopts that clone by its key and no work tree it no longer names. It then
+  removes the `version = 1` records keyed by these work trees, and last the
+  clone's own record, whatever it holds: a record of the clone that cannot
+  be read is removed too. Other unreadable records are left, since whose
+  they are cannot be told. A work tree that git can no longer open (`.git`
+  removed, still indexed) has its root stripped like any other. An error at
+  any step exits 3 with the clone's record still in place, so the
+  repository remains adopted.
+- It then asks the gate's own adoption check (the one `Decide` uses) about
+  this work tree. Not adopted: it prints `pbipx: this clone is no longer
+  set up for the gate on this machine. The hook stays registered for other
+  repositories. pbipx init or policy approve sets it up again.` and exits
+  0. Still adopted, by a policy file or by an enclosing adopted repository
+  (the gate judges a nested repository's paths against the one around it):
+  exit 3, naming the reason.
+
+There is no tombstone. A `.pbipx.toml` that arrives later (a pull, a
+checkout of another branch) adopts the repository again with no approval,
+and the gate denies with `policy-unapproved` until a person approves it.
+No output carries policy content. A `PBIPX_CONFIG_DIR` that differs from the
+one the gate runs with cannot be detected; the store directory shown is the
+check a person makes.
 
 The approval is kept outside the repository, in
 `${PBIPX_CONFIG_DIR:-<user config dir>/pbipx}/approved/<key>`. The key is
@@ -1561,9 +1612,9 @@ path, is denied with `event-error`: the call cannot be judged.
     `pwsh -c`, `Start-Process` and the like into words, and counts
     `policy` followed by a group, a hashtable or a variable, or a string
     built from pieces that names the tool, as unreadable. The message
-    names neither `unenroll` nor how to run a step; `unenroll` is a
-    command a later change adds, and its word is guarded before it exists
-    (the deny comes before the capability).
+    names neither `unenroll` nor how to run a step. The drift-guard test
+    (`cmd/pbipx`) requires every command and every `policy` subcommand
+    cobra registers to be on the agent table or the person-only list.
   - Limits: a terminal provider the gate cannot list (a `python` or `perl`
     pty module, `socat`) is not seen, and relies on the tool's own refusal
     without a terminal. `find -exec pbipx {} approve` is not exploitable:

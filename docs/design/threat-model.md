@@ -89,6 +89,13 @@ should set up:
    from any working directory. Once adopted, a repository stays adopted:
    deleting or breaking its policy denies every call there
    ([ADR-0006](../adr/0006-policy-integrity.md), amendment on adoption).
+   Adoption ends only by a person's act at a terminal: `pbipx policy
+   unenroll` (refused to a hook, CI or a shell without a terminal, and
+   denied to an agent), or a person editing the store by hand. It forgets
+   every approval of the clone, and a policy file that arrives later adopts
+   the repository again with no approval. It cannot tell that
+   `PBIPX_CONFIG_DIR` differs from the one the gate runs with, so it prints
+   the store directory for the person to check.
 4. **The gate binary outside the repository**, installed at a pinned
    version. When the gate runs code from the working tree, an agent edit to
    that code changes the gate on its next call. A binary on the user's `PATH`
