@@ -1,6 +1,8 @@
 package gate_test
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/craigalodon/pbipx/internal/gate"
@@ -30,6 +32,30 @@ func TestShellGitDashC(t *testing.T) {
 		{"-C src log -p of ../pbip", sh("git -C src log -p -- ../pbip"), git},
 		{"-C . -C src log -p of .", sh("git -C . -C src log -p -- ."), ""},
 		{"-C with an unknown directory", sh(`git -C "$D" log -p -- src`), git},
-		{"-C a directory that is no work tree", sh("git -C /tmp log -p -- src"), git},
+		// The repository's parent is no work tree, and holds the repository.
+		{"-C a directory above the repository", sh("git -C .. log -p -- src"), git},
 	})
+}
+
+// TestShellGitDashCApartFromTheRepository: git -C a directory outside every
+// repository, and not above this one, runs nowhere near the protected
+// roots. (The test once used /tmp for it, which holds the repository only
+// where the temporary directory is under /tmp: not on macOS.) Reached
+// through a symlink, as macOS reaches /var, the repository's parent is
+// still found above it.
+func TestShellGitDashCApartFromTheRepository(t *testing.T) {
+	root, _ := historyRepo(t)
+	alias := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(root, alias); err != nil {
+		t.Skip("no symlinks:", err)
+	}
+	apart := filepath.ToSlash(t.TempDir())
+	above := filepath.ToSlash(filepath.Dir(root))
+	sh := func(cmd string) gate.Event { return gate.Event{Tool: gate.Shell, Command: cmd} }
+	for _, from := range []string{root, alias} {
+		run(t, from, []decideCase{
+			{"-C a directory apart from the repository", sh("git -C '" + apart + "' log -p -- src"), ""},
+			{"-C the repository's parent, spelled absolutely", sh("git -C '" + above + "' log -p -- src"), gate.ReasonGitContent},
+		})
+	}
 }

@@ -33,7 +33,7 @@ archives:
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
       - README.md
-      # Picked up once a license is chosen; matching nothing is not an error.
+      # The license goes in every archive; matching nothing is not an error.
       - LICENSE*
 
 checksum:
