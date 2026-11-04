@@ -482,9 +482,10 @@ repositories a call is the gate's to judge
   (a Write into the approval store or to a user-level or managed Claude
   Code settings file, a Bash command naming one or writing into a
   user-level settings directory, a PowerShell command naming one or such a
-  directory, or one running `pbipx policy approve`) is
-  denied with `agent-settings`, since from any directory it would switch
-  the gate off, or forge an approval, for every adopted repository.
+  directory, or one running a person-only subcommand of the tool,
+  `pbipx policy approve` or `unenroll`) is denied with `agent-settings`,
+  since from any directory it would switch the gate off, or forge an
+  approval, for every adopted repository.
 - An adopted repository that git cannot open as a work tree (its `.git`
   removed, say, while its work tree stays indexed), or a working directory
   inside one that git cannot place (inside the git directory, or gone),
@@ -759,7 +760,7 @@ path, is denied with `event-error`: the call cannot be judged.
   - wrappers are skipped, with their options and operands, to the command
     they run: `env`, `command`, `exec`, `nohup`, `builtin`, `time`, `nice`,
     `sudo`, `doas`, `xargs`, `stdbuf`, `timeout`, `ionice`, `setsid`,
-    `caffeinate`, `unbuffer`, `chronic`, `taskset`, `flock`, `coproc`,
+    `caffeinate`, `unbuffer`, `winpty`, `chronic`, `taskset`, `flock`, `coproc`,
     `busybox`, `xvfb-run` and a few tracers and sandboxes. Their long
     options that take a value given apart (`timeout --signal KILL 5`) are
     read as such. The value of a wrapper's option the table says takes one
@@ -902,8 +903,23 @@ path, is denied with `event-error`: the call cannot be judged.
     host or reading a pipe, `su` or `runuser` with a command, and
     `machinectl shell` touch every protected root.
   1. The tool itself alone (one simple command, optionally after environment
-     assignments, with no `$(` or backtick) is allowed: it redacts on its own.
-     `policy approve` is never the tool alone (below).
+     assignments, with no `$(` or backtick) is allowed when its subcommand
+     is on an explicit table of what an agent may run, because those
+     redact on their own: `scan`, `scan-text`, `explain`, `baseline`
+     (`record` writes a reviewable file and refuses under `CI`; `verify`
+     reads), `version`, `help`, `--help`, `-h`, `--version`, and
+     `policy status`. In pbipx, any other word in the subcommand
+     position, including one the gate cannot tell (`pbipx $SUB`) and a
+     subcommand that does not exist yet, is not the tool alone: it falls
+     through to the ordinary rules, which count it as reaching every
+     protected root, so it denies while the tree holds a finding (as
+     `pwsh` does). `init` (writes the user's Claude Code settings and the
+     approval store) and `gate` (the hook itself) are left off, and so are
+     `stage`, `collect` and `perf`, planned subcommands: each joins the
+     table in the change that adds it, if an agent may run it. The
+     person-only subcommands, `policy approve` and `unenroll`, are never
+     the tool alone (below). The predecessor allows any subcommand but
+     `policy approve`. (Decided 2026-11-04.)
   2. A git command that prints file content is **denied** outright (git
      history cannot be vetted), unless it provably prints nothing from a
      protected root. In pbipx, for the commands that have a name-only form,
@@ -1526,9 +1542,20 @@ path, is denied with `event-error`: the call cannot be judged.
     or managed Claude Code settings file (the files the Write rule below
     protects), or copies or writes into a user-level Claude Code settings
     directory; the message says which and does not name it;
-  - runs `pbipx policy approve` (`policy`, then `approve`, by any path to
-    the tool, through a pipe, or under `script`, `expect` or `unbuffer`,
-    which give it a terminal): approval is a person's step (ADR-0006).
+  - runs a person-only subcommand of the tool, `pbipx policy approve` or
+    `pbipx policy unenroll` (`policy`, then a word that begins with
+    `approve` or `unenroll`, by any path to the tool, through a pipe, or
+    under `script`, `expect`, `unbuffer` or `winpty`, which give it a
+    terminal; `parallel` too, whose input words are added): approval is a
+    person's step (ADR-0006), and so is removing a repository's adoption.
+    A word after `policy` that the gate cannot tell (`pbipx policy $SUB`),
+    or words a runner adds (`... | xargs pbipx policy`), could be either,
+    so it denies the same. So does an unknown word before an `approve` or
+    `unenroll` word (`pbipx $SUB approve`), which could be `policy`. The
+    PowerShell check reads the same words, in any case. The message says
+    approval is a person's step and never names `unenroll` or how to run
+    it; `unenroll` is a command a later change adds, and its word is
+    guarded before it exists (the deny comes before the capability).
 
   In pbipx, naming a settings file in the repository, or a path in the
   approval store or a user-level or managed settings file, denies only when
