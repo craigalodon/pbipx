@@ -68,24 +68,21 @@ func msysClass(p string) msysKind {
 		return msysNever
 	}
 	segs := msysSegments(p)
-	if slices.Contains(segs, "..") {
-		// What the dots lead to decides whether it is a virtual file.
-		cs := msysSegments(path.Clean(strings.ReplaceAll(p, "\\", "/")))
-		if len(cs) > 0 && virtualRoot(cs[0]) && !virtualFile(cs) {
-			return msysNever
-		}
-	} else if len(segs) > 0 {
-		first := segs[0]
-		switch {
-		case virtualRoot(first):
-			// /dev and /proc are Git Bash's own: only the standard
-			// devices and descriptors are known to be no file in a
-			// repository. /proc/self/cwd and /proc/self/root lead into
-			// one, so the rest cannot be told.
-			if virtualFile(segs) {
-				return msysNone
-			}
-			return msysNever
+	// What the word leads to, dots applied, decides whether it is a
+	// virtual file: /./proc/self/cwd and /tmp/../proc/self/cwd are not
+	// told from /proc/self/cwd by their first segment.
+	cs := msysSegments(path.Clean(strings.ReplaceAll(p, "\\", "/")))
+	if len(cs) > 0 && (virtualRoot(cs[0]) && !virtualFile(cs) || globMayBeVirtual(cs[0])) {
+		// /dev and /proc are Git Bash's own: only the standard devices
+		// and descriptors are known to be no file in a repository.
+		// /proc/self/cwd and /proc/self/root lead into one, so the rest
+		// cannot be told, nor a glob that could be either.
+		return msysNever
+	}
+	if !slices.Contains(segs, "..") && len(segs) > 0 {
+		switch first := segs[0]; {
+		case virtualRoot(first) && virtualFile(segs):
+			return msysNone
 		case len(first) == 1 && isASCIILetter(first[0]):
 			// A drive: today's reading.
 			return msysNone
@@ -106,6 +103,21 @@ func msysSegments(p string) []string {
 // Git Bash matches a mount: without regard to case.
 func virtualRoot(seg string) bool {
 	return strings.EqualFold(seg, "dev") || strings.EqualFold(seg, "proc")
+}
+
+// globMayBeVirtual reports whether seg has a glob that could match dev or
+// proc, in any case; a pattern that cannot be read could.
+func globMayBeVirtual(seg string) bool {
+	if !strings.ContainsAny(seg, "*?[") {
+		return false
+	}
+	for _, name := range []string{"dev", "proc"} {
+		ok, err := path.Match(strings.ToLower(seg), name)
+		if ok || err != nil {
+			return true
+		}
+	}
+	return false
 }
 
 func allDigits(s string) bool {
@@ -346,10 +358,16 @@ func findCygpath(m *msysSession) (string, bool) {
 		}
 		return p, true
 	}
-	walk := func(dir string) (string, bool) {
+	// walk looks for usr\bin\cygpath.exe in dir and up to three levels above
+	// it. A directory found by git is taken only if it has the layout of Git
+	// for Windows, so a shim in a user's folder does not lead to a cygpath
+	// the folder holds; one the person named is taken as it is.
+	walk := func(dir string, needLayout bool) (string, bool) {
 		for range 4 {
-			if p, ok := try(filepath.Join(dir, "usr", "bin", cygpathName)); ok {
-				return p, true
+			if !needLayout || gitForWindows(dir) {
+				if p, ok := try(filepath.Join(dir, "usr", "bin", cygpathName)); ok {
+					return p, true
+				}
 			}
 			parent := filepath.Dir(dir)
 			if parent == dir {
@@ -364,23 +382,67 @@ func findCygpath(m *msysSession) (string, bool) {
 		if p, ok := try(filepath.Join(dir, cygpathName)); ok {
 			return p, true
 		}
-		if p, ok := walk(dir); ok {
+		if p, ok := walk(dir, false); ok {
 			return p, true
 		}
 	}
 	if g, err := exec.LookPath("git"); err == nil {
 		if g, err = filepath.Abs(g); err == nil {
-			if p, ok := walk(filepath.Dir(g)); ok {
+			if p, ok := walk(filepath.Dir(g), true); ok {
 				return p, true
 			}
 		}
 	}
 	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
-		if p, ok := try(filepath.Join(dir, cygpathName)); ok {
+		p, ok := try(filepath.Join(dir, cygpathName))
+		if ok && !onGitForWindowsPath(dir) && inHomeOrRepository(p) {
+			// Anyone who can write a file there could have planted it.
+			continue
+		}
+		if ok {
 			return p, true
 		}
 	}
 	return "", false
+}
+
+// gitForWindows reports whether dir has the layout of a Git for Windows
+// installation: a git.exe in cmd or in mingw64\bin.
+func gitForWindows(dir string) bool {
+	for _, rel := range [][]string{{"cmd", "git.exe"}, {"mingw64", "bin", "git.exe"}, {"mingw32", "bin", "git.exe"}} {
+		if info, err := os.Stat(filepath.Join(append([]string{dir}, rel...)...)); err == nil && info.Mode().IsRegular() { //nolint:gosec // G703: a stat of a name in a directory on PATH
+			return true
+		}
+	}
+	return false
+}
+
+// onGitForWindowsPath reports whether dir, a directory on PATH, is the
+// usr\bin of a Git for Windows installation.
+func onGitForWindowsPath(dir string) bool {
+	up := filepath.Dir(dir)
+	return strings.EqualFold(filepath.Base(dir), "bin") && strings.EqualFold(filepath.Base(up), "usr") &&
+		gitForWindows(filepath.Dir(up))
+}
+
+// inHomeOrRepository reports whether p is under the home directory or under
+// a directory that holds a .git.
+func inHomeOrRepository(p string) bool {
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		if rel, err := filepath.Rel(home, p); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return true
+		}
+	}
+	for d := filepath.Dir(p); ; {
+		if _, err := os.Lstat(filepath.Join(d, ".git")); err == nil {
+			return true
+		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			return false
+		}
+		d = parent
+	}
 }
 
 // cygpathWaitDelay is how long a child that holds the output pipe after

@@ -290,7 +290,8 @@ func (w *walker) unknownProgram(c simple, v view) string {
 func literalPlaced(wd word) bool {
 	var text strings.Builder
 	for _, p := range wd.parts {
-		if p.kind != litPart {
+		if p.kind != litPart || !p.quoted && hasGlob(p.text) {
+			// A glob, in the directory or the name, can stand for a shell.
 			return false
 		}
 		text.WriteString(p.text)
@@ -3548,15 +3549,15 @@ func patternSlots(v view) []bool {
 	}
 	switch {
 	case v.name == "sed":
-		for _, r := range scriptArgs(v.rest, "l", "e", "f", []string{"expression"}, []string{"file"}) {
+		for _, r := range scriptArgs(v.rest, sedOptions) {
 			mark(r)
 		}
 	case awks[v.name]:
-		for _, r := range scriptArgs(v.rest, "vFW", "e", "f", []string{"source"}, []string{"file"}) {
+		for _, r := range scriptArgs(v.rest, awkOptions) {
 			mark(r)
 		}
 	case v.name == "jq" || v.name == "yq" || v.name == "gojq":
-		if f := jqFilter(v); f >= 0 {
+		if f := jqFilter(v); f >= 0 && jqOptionsKnown(v, args[start:], f) {
 			slots[f] = true
 		}
 	case v.name == "find":
@@ -3570,19 +3571,91 @@ func patternSlots(v view) []bool {
 	return slots
 }
 
+// jqFlags are the options of jq that take no value.
+var jqFlags = []string{
+	"-n", "-r", "-j", "-a", "-s", "-c", "-e", "-S", "-C", "-M", "-R", "-h", "-V", "--null-input", "--raw-output",
+	"--join-output", "--ascii-output", "--slurp", "--compact-output", "--exit-status", "--sort-keys",
+	"--color-output", "--monochrome-output", "--raw-input", "--tab", "--stream", "--unbuffered", "--args",
+	"--jsonargs", "--seq", "--raw-output0", "--help", "--version",
+}
+
+// jqOptionsKnown reports whether every option of v before its filter, the
+// word at index filter in v.words, is one jq's tables classify: an option
+// that cannot be told might take the filter's place as its value.
+func jqOptionsKnown(v view, args []int, filter int) bool {
+	for r, wi := range args {
+		if wi == filter {
+			return true
+		}
+		a := v.rest[r]
+		if a == "--" {
+			return true
+		}
+		if !strings.HasPrefix(a, "-") || a == "-" {
+			continue
+		}
+		name, _, _ := strings.Cut(a, "=")
+		if _, ok := jqOptionValues[name]; !ok && !slices.Contains(jqFlags, name) {
+			return false
+		}
+	}
+	return false
+}
+
 // findPatternTests are find's tests whose value is a pattern.
 var findPatternTests = []string{
 	"-name", "-iname", "-path", "-ipath", "-wholename", "-iwholename", "-regex", "-iregex", "-lname", "-ilname",
 }
 
+// scriptTool describes the options of sed or awk, so that the words after
+// them can be told: a script, a file or neither. An option not listed
+// cannot be classified, and nothing after it is taken for a script.
+type scriptTool struct {
+	// valued, scripts and files are the short options that take a value: a
+	// value that is no path, a script, and a file (a script file, or one a
+	// program reads as source, whose parse errors print its lines); flags
+	// are those that take none.
+	valued, scripts, files, flags string
+	// longValued, longScripts, longFiles and longFlags are the same for the
+	// long options, which may also take their value after an =.
+	longValued, longScripts, longFiles, longFlags []string
+}
+
+var sedOptions = scriptTool{
+	valued: "l", scripts: "e", files: "f", flags: "nEerszub",
+	longValued: []string{"line-length"}, longScripts: []string{"expression"}, longFiles: []string{"file"},
+	longFlags: []string{
+		"posix", "debug", "sandbox", "quiet", "silent", "regexp-extended", "null-data", "separate", "unbuffered",
+		"binary", "follow-symlinks", "in-place", "help", "version",
+	},
+}
+
+var awkOptions = scriptTool{
+	valued: "vF", scripts: "e", files: "fEiW", flags: "bcCghnNOPrsStV",
+	longValued: []string{"assign", "field-separator"}, longScripts: []string{"source"},
+	longFiles: []string{"file", "exec", "include"},
+	longFlags: []string{
+		"version", "help", "posix", "traditional", "lint", "re-interval", "characters-as-bytes", "use-lc-numeric",
+		"optimize", "no-optimize", "bignum", "sandbox", "csv", "non-decimal-data",
+	},
+}
+
 // scriptArgs are the indexes in rest of the script words of sed or awk: the
-// value of each script option (short ones in scripts, long ones in
-// longScripts), the value of each option in valued, and, when no script
-// option or script file option (files, longFiles) is given, the first word
-// that is no option. A script file's name is a file, not a script.
-func scriptArgs(rest []string, valued, scripts, files string, longScripts, longFiles []string) []int {
+// value of each script option, the value of each option that takes one that
+// is no file, and, when no script option, script file or option that cannot
+// be classified is given, the first word that is no option. A file's name is
+// a file, not a script.
+func scriptArgs(rest []string, t scriptTool) []int {
 	var out []int
 	given := false
+	value := func(i *int, attached bool) {
+		if attached {
+			out = append(out, *i)
+		} else if *i+1 < len(rest) {
+			*i++
+			out = append(out, *i)
+		}
+	}
 	for i := 0; i < len(rest); i++ {
 		a := rest[i]
 		switch {
@@ -3594,48 +3667,46 @@ func scriptArgs(rest []string, valued, scripts, files string, longScripts, longF
 		case strings.HasPrefix(a, "--"):
 			name, _, hasValue := strings.Cut(a[2:], "=")
 			switch {
-			case slices.Contains(longScripts, name):
+			case slices.Contains(t.longScripts, name):
 				given = true
-				if hasValue {
-					out = append(out, i)
-				} else if i+1 < len(rest) {
-					i++
-					out = append(out, i)
-				}
-			case slices.Contains(longFiles, name):
+				value(&i, hasValue)
+			case slices.Contains(t.longValued, name):
+				value(&i, hasValue)
+			case slices.Contains(t.longFiles, name):
 				given = true
 				if !hasValue {
 					i++
 				}
+			case slices.Contains(t.longFlags, name):
+			default:
+				given = true
 			}
 		case strings.HasPrefix(a, "-") && len(a) > 1:
+		cluster:
 			for j := 1; j < len(a); j++ {
 				c := a[j]
 				switch {
-				case strings.IndexByte(scripts, c) >= 0:
+				case strings.IndexByte(t.scripts, c) >= 0:
 					given = true
-					if j+1 < len(a) {
-						out = append(out, i)
-					} else if i+1 < len(rest) {
-						i++
-						out = append(out, i)
-					}
-				case strings.IndexByte(files, c) >= 0:
+					value(&i, j+1 < len(a))
+					break cluster
+				case strings.IndexByte(t.valued, c) >= 0:
+					value(&i, j+1 < len(a))
+					break cluster
+				case strings.IndexByte(t.files, c) >= 0:
 					given = true
 					if j+1 == len(a) {
 						i++
 					}
-				case strings.IndexByte(valued, c) >= 0:
-					if j+1 < len(a) {
-						out = append(out, i)
-					} else if i+1 < len(rest) {
-						i++
-						out = append(out, i)
-					}
+					break cluster
+				case strings.IndexByte(t.flags, c) >= 0:
+				case c == 'i' && t.flags == sedOptions.flags:
+					// sed -i[SUFFIX]
+					break cluster
 				default:
-					continue
+					given = true
+					break cluster
 				}
-				break
 			}
 		default:
 			if !given {

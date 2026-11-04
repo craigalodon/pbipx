@@ -155,6 +155,19 @@ func TestMSYSMountedPaths(t *testing.T) {
 		{"/proc/12/cwd", sh(cat("/proc/12/cwd/README.md")), finding},
 		{"/proc with ..", sh(cat("/tmp/repo/../../proc/self/cwd/README.md")), finding},
 		{"a drive path with .. into /proc", sh(cat("/c/../proc/self/cwd/README.md")), finding},
+		{"/./proc/self/cwd", sh(cat("/./proc/self/cwd/README.md")), finding},
+		{"/.//proc/self/cwd", sh(cat("/.//proc/self/cwd/README.md")), finding},
+		{"/./PROC/self/CWD", sh(cat("/./PROC/self/CWD/README.md")), finding},
+		{"a glob for proc", sh(cat("/./pro?/self/cwd/README.md")), finding},
+		{"a glob for proc after ..", sh(cat("/tmp/../pro?/self/cwd/README.md")), finding},
+		{"a bracket glob for proc", sh(cat("/[p]roc/self/cwd/README.md")), finding},
+		{"a star glob for proc", sh(cat("/p*/self/cwd/README.md")), finding},
+		{"a glob for dev", sh(cat("/de?/sda")), finding},
+		{"cd to a glob for proc", sh("cd /./pro?/self/cwd && cat README.md"), finding},
+		{"redirect from a dotted proc", sh("wc -l < /./proc/self/cwd/README.md"), finding},
+		{"git -C a dotted proc", sh("git -C /./proc/self/cwd log -p"), gitContent},
+		{"read a dotted proc", gate.Event{Tool: gate.Read, Path: "/./proc/self/cwd/README.md"}, gate.ReasonInternalError},
+		{"read a glob for proc", gate.Event{Tool: gate.Read, Path: "/./pro?/self/cwd/README.md"}, gate.ReasonInternalError},
 		{"/dev/sda", sh(cat("/dev/sda")), finding},
 		{"cd /proc/self/cwd", sh("cd /proc/self/cwd && cat README.md"), finding},
 		{"find /proc", sh("find /proc/self/cwd -name x -exec cat {} +"), finding},
@@ -424,5 +437,58 @@ func TestMSYSPlacementFailureDoesNotBlame(t *testing.T) {
 	d := gate.Decide(gate.Event{Tool: gate.Shell, Command: "cat /etc/hosts", Cwd: leaky}, gate.Options{})
 	if d.Allow || strings.Contains(d.Message, "CLAUDE_CODE_GIT_BASH_PATH") {
 		t.Errorf("allow %v message %q", d.Allow, d.Message)
+	}
+}
+
+// TestMSYSUnplacedProgramsWithGlobs checks that a command word written out
+// in full is known by its last element only when it has no glob anywhere:
+// a glob can stand for a shell.
+func TestMSYSUnplacedProgramsWithGlobs(t *testing.T) {
+	root := newRepo(t, leakyFiles())
+	useMounts(t, map[string]string{})
+	gitContent := gate.ReasonGitContent
+	var cases []decideCase
+	for _, w := range []string{"/xx/ba?h", "/xx/ba[s]h", "/xx/b*", "/xx/*sh", "/xx/s?", "/x*/bash", "/xx/*/bash", "/?x/sh", "/xx/ba\\sh"} {
+		cases = append(cases, decideCase{w, sh(w + " -c 'git log -p'"), gitContent})
+	}
+	cases = append(cases,
+		decideCase{"a literal program is known by its name", sh("/xx/tool -c 'git log -p'"), gitContent},
+	)
+	run(t, root, cases[:len(cases)-1])
+	run(t, root, []decideCase{
+		{"a literal program, run on nothing", sh("/xx/tool README.md"), ""},
+		{"a quoted glob character is literal", sh("'/xx/b*' README.md"), ""},
+	})
+}
+
+// TestMSYSScriptOptions checks that an option that names a file, or one the
+// gate cannot classify, never leaves a word after it taken for a pattern.
+func TestMSYSScriptOptions(t *testing.T) {
+	root := newRepo(t, leakyFiles())
+	m := useMounts(t, map[string]string{})
+	finding := gate.ReasonFinding
+	run(t, root, []decideCase{
+		{"gawk -E", sh(`gawk -E '/tm*/x' README.md`), finding},
+		{"gawk --exec", sh(`gawk --exec '/tm*/x' README.md`), finding},
+		{"gawk --exec=", sh(`gawk --exec='/tm*/x' README.md`), finding},
+		{"gawk -i", sh(`gawk -i '/tm*/x' '{print}' README.md`), finding},
+		{"gawk --include", sh(`gawk --include '/tm*/x' '{print}' README.md`), finding},
+		{"mawk -W exec", sh(`mawk -W exec '/tm*/x' README.md`), finding},
+		{"awk -W with a value", sh(`awk -W version '/tm*/x' README.md`), finding},
+		{"awk, an option it does not know", sh(`awk --frobnicate '/tm*/x' README.md`), finding},
+		{"awk, a letter it does not know", sh(`awk -Q '/tm*/x' README.md`), finding},
+		{"sed, an option it does not know", sh(`sed --frobnicate '/tm*/x' README.md`), finding},
+		{"sed, a letter it does not know", sh(`sed -Q '/tm*/x' README.md`), finding},
+		{"yq, an option with a value it does not know", sh(`yq -p yaml '/tm*/x' README.md`), finding},
+		// And the common ones still allow.
+		{"awk -F and -v", sh(`awk -F/ -v re='/a*/' '/a*/{print}' README.md`), ""},
+		{"sed -n -E", sh(`sed -n -E '/a*/p' README.md`), ""},
+		{"sed -i", sh(`sed -i '/a*/d' notes/clean.md`), ""},
+		{"sed --posix", sh(`sed --posix '/a*/d' README.md`), ""},
+		{"jq -r", sh(`jq -r '/a*' notes/clean.md`), ""},
+		{"jq --arg", sh(`jq --arg a b '/a*' notes/clean.md`), ""},
+	})
+	if n := m.runs.Load(); n != 0 {
+		t.Errorf("cygpath ran %d times", n)
 	}
 }

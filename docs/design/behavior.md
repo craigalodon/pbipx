@@ -2422,7 +2422,10 @@ behavior (2026-10-29).
       anything in a PowerShell command. A word with a `..` segment is
       not taken for one of these (`/c/../d/x`); it is placed, unless the
       `..` leads into `/dev` or `/proc`. The names `dev` and `proc` are
-      matched without regard to case, as Git Bash matches a mount.
+      matched without regard to case, as Git Bash matches a mount, after
+      the dots are applied (`/./proc/self/cwd`, `/tmp/../proc/self/cwd`),
+      and a glob in the first segment that could match either
+      (`/pro?/self/cwd`, `/p*/...`) is unknown.
     - **Measured:** in Git Bash, `/proc/self/cwd` is the working
       directory, and a read of `/proc/self/cwd/x` reads `x` there, though
       the gate would read the word as a folder on a drive. So every other
@@ -2438,7 +2441,10 @@ behavior (2026-10-29).
       control character in the word cannot be placed.
     - **Not a path:** a word in a program's pattern or script slot is not
       placed, though it starts with a slash: sed's and awk's script (and
-      their `-e` values), the pattern of `grep`, `rg` and the other
+      their `-e` values; an option the gate cannot classify, or one that names
+      a file a program reads as source (`gawk -E`, `--exec`, `-i`,
+      `--include`, `mawk -W exec`), leaves nothing after it a script), the
+      pattern of `grep`, `rg` and the other
       searches (and the value of `-e` and `--regexp`), `jq`'s filter, and
       the value of `find`'s `-name` and `-path` tests. `sed '/^#.*/d' f`
       and `grep '/api/v[0-9]*' f` are not held up by it. A word a reader
@@ -2448,7 +2454,8 @@ behavior (2026-10-29).
       line, a limit reached). A command word written out in full
       (`/opt/tool`) that cannot be placed is known by its last element,
       as a path with an expansion before it is; one that names a shell,
-      an interpreter or a wrapper (`/usr/bin/env`) is not. When `cygpath`
+      an interpreter or a wrapper (`/usr/bin/env`) is not, nor one with a
+      glob anywhere in it (`/x/ba?h`, which could be a shell). When `cygpath`
       is not found, the deny says so and names `CLAUDE_CODE_GIT_BASH_PATH`.
       A reading command or a search given one
       touches every protected root, and in a call from outside every
@@ -2458,7 +2465,12 @@ behavior (2026-10-29).
       `internal-error`.
     - **Finding `cygpath`:** beside `CLAUDE_CODE_GIT_BASH_PATH`, then in
       the installation the `git` that runs is in (up to three levels above
-      its directory, to `usr\bin\cygpath.exe`), then on `PATH`. A candidate
+      its directory, to `usr\bin\cygpath.exe`), then on `PATH`. The `git` is
+      walked up from only in a Git for Windows
+      layout (a `git.exe` in `cmd` or `mingw64\bin` beside `usr\bin`), so a
+      shim in a user's folder leads nowhere; a candidate on `PATH` under the
+      home directory or a directory that holds a `.git` is passed over
+      unless it is in such a layout (a per-user installation is). A candidate
       inside the working directory, the repository that holds it or a
       repository loaded for the call is passed over: a repository could
       plant it. It runs with an
@@ -2490,7 +2502,11 @@ behavior (2026-10-29).
       is matched in the folder `cygpath` names for the directory, so it
       does not see what the mount holds. `/tmp` is placed by the gate's own
       environment (`TEMP`), which the hook and the Bash tool might not
-      share. (Decided 2026-11-04.)
+      share. A double slash (`//proc/self/cwd`) is a UNC path to Windows
+      and is not placed, and a backslash spelling (`'\proc\self\cwd\x'`)
+      is read as the backslash it is; what Git Bash makes of either is not
+      measured, and a test logs what the gate decides for them. (Decided
+      2026-11-04.)
 - **Known over-blocks of the shell rule, in full.** Each denies though
   the line may print nothing protected; each is the price of a rule
   above, and each has a plain form that is allowed:

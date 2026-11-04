@@ -117,3 +117,19 @@ func TestProcSelfCwdIsUnknown(t *testing.T) {
 	)
 	run(t, root, cases)
 }
+
+// TestProcSelfCwdOtherSpellings logs what the gate decides for spellings of
+// /proc/self/cwd that only a real Git Bash can say the meaning of: a double
+// slash (UNC-like to Windows) and backslashes. They are observations, not
+// assertions; the maintainer reads them against the shell's own behavior.
+func TestProcSelfCwdOtherSpellings(t *testing.T) {
+	root := newRepo(t, leakyFiles())
+	for _, w := range []string{`//proc/self/cwd/README.md`, `'\proc\self\cwd\README.md'`, `'/proc\self\cwd\README.md'`, `/proc//self/cwd/README.md`} {
+		ev := sh("cat " + w)
+		ev.Cwd = root
+		d := gate.Decide(ev, gate.Options{})
+		t.Logf("cat %s: allow=%v reason=%q", w, d.Allow, d.Reason)
+		rd := gate.Decide(gate.Event{Tool: gate.Read, Path: strings.Trim(w, "'"), Cwd: root}, gate.Options{})
+		t.Logf("read %s: allow=%v reason=%q", w, rd.Allow, rd.Reason)
+	}
+}
