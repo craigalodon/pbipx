@@ -82,6 +82,7 @@ finding          = "a block finding in the file, or in the protected tree the ca
 unvettable       = "the file, or one in the protected tree, cannot be vetted"
 scan-error       = "the file, or one in the protected tree, could not be scanned"
 local-state      = "a read of Power BI Desktop local state"
+perf-export      = "a Performance Analyzer export, recognized by its shape: query text and titles that no scanner vets"
 agent-settings   = "a write to, or a shell command naming, a Claude Code settings file in the repository"
 git-content      = "a git command that would print content from a protected root"
 policy-error     = "the policy failed to load"

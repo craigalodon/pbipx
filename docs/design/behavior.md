@@ -340,6 +340,84 @@ instead.
 Model, SQL, YAML and prose files are always strict: a parse error is an
 error.
 
+**Divergence (Performance Analyzer exports).** A Power BI Performance
+Analyzer export is a JSON file of query text and visual titles, which can
+hold values, and no scanner vets it. Classification alone fails it twice:
+outside every root and scan scope it is ignored, so an agent can read it;
+under a root it is in the report scanner's glob, which judges quoted
+literals one at a time and may call a query string clean. So the gate
+recognizes an export **by its shape** and denies a Read of it with
+`perf-export`, whatever the class (principle 8: the deny comes before the
+capability; `pbipx perf` is the summary that prints counts and durations
+only, [perf.md](perf.md)). (Decided 2026-11-04.) The rule:
+
+- It applies to a Read (and an Edit, which shows the file) of a regular
+  file inside an adopted repository, whatever its name or class. A file
+  outside the repository is not the gate's to judge, as before; a file the
+  existing rules already deny keeps its reason. The name is not looked at,
+  since a rename must not defeat it; the cost is bounded instead. The check
+  opens the file, reads at most its first 64 KiB, and stops at the first
+  byte that is not `{` (after a byte order mark and white space), so a file
+  that is not a JSON object costs one small read.
+- The shape is one JSON object with a top-level `version`, then, after it, an
+  `events` list whose first element is an object with a `name` and a
+  `metrics` or a `parentId`. Common keys (`id`, `start`, `end`) do not
+  count, since calendars and logs have them. A file whose first line is a
+  whole object with more after it (lines of values) is not one object. The
+  field names are from memory of the export's general shape and are **to be
+  confirmed against a real export, schema only**; the check is in one place
+  (`internal/gate/perfexport.go`). A UTF-8 or UTF-16 byte order mark is
+  accepted.
+- It must not over-block ordinary JSON (principle 6). Anything it cannot
+  tell falls back to the existing rules, which allow outside the roots: a
+  file that cannot be opened, is empty, is truncated or unparseable in the
+  head, has its events before its version, an empty or non-object event
+  list, a first event without a name and a distinctive key, or a shape not
+  decided in the first 64 KiB. So `package.json`, `tsconfig.json`, a lock
+  file, a log, and a calendar's `events` list (a `name`, `id`, `start` and
+  `end` per event) stay readable. The cost of the fall-back is that an export
+  that puts its `events` key past 64 KiB of other keys, or before its
+  `version`, is not caught.
+- **Budget.** A command that names files is checked within a budget per
+  decision: at most 512 files opened and 16 MiB read (each file counts at
+  most its 64 KiB head). Past it the gate cannot say the rest are not exports,
+  so it denies with `scan-error` and a fixed message that names the limits,
+  not a path: `cat many/*.json` over thousands of files is refused, and
+  naming fewer files is the way through.
+- **Bash and PowerShell.** Agents on Linux and macOS read through Bash, so
+  the same shape check, and the same deny, apply to a file a reading or
+  searching command is given (`cat`, `head`, `jq`, `sed`, `grep` and the
+  rest of the readers table, and any program taken to read its operands),
+  and to the target of an input redirection (`wc -c < trace.json`): once the
+  gate can place the word, against the working directory the line leaves it
+  in, as it places any word, a regular file inside the repository is
+  checked. A word it cannot place keeps today's rules. A path is checked once
+  per decision. In PowerShell, each word that looks like a path and names a
+  regular file in the repository is checked.
+- **Tree scans.** The scan that a Grep, a recursive search or a shell command
+  runs over the protected roots applies the check to each file the scanner
+  reads, on the bytes it read, so an export under a root denies with
+  `perf-export` where it would have been judged as a clean report file. It is
+  not another pass. So an export under a protected root makes **every
+  command that scans the tree deny**, naming the export: any PowerShell
+  command, `grep -r x .` from the repository's top, a Grep over a root. That
+  is intended: the export is where the scan would read it, and it is removed
+  from the roots (or summarized with `pbipx perf`) to clear them.
+- **Not covered.** A recursive search whose paths hold no protected root
+  (`grep -r x analysis`, a Grep of a directory outside the roots) is not a
+  tree scan and reads files nothing here names, so it stays as today: an
+  export it reads is not caught. Nor is a command that finds its file at run
+  time (`find . -name '*.json' -exec cat {} +`, `xargs`, a glob the gate
+  cannot expand), a copy outside the repository, a reader of a
+  here-document, git printing an export from the index or history
+  (`git show :analysis/trace.json`, for a file outside the roots; under a
+  root the git rules already deny), and an interpreter that opens the file
+  itself (`python -c`, `node -e`). Each is a limitation of the gate's reading
+  of a shell line,
+  not of this rule. A future `pbipx perf <file>` alone is allowed by the
+  tool-alone rule before this check; the change that builds it must keep a
+  pipeline of it from tripping the check on its own argument.
+
 **Divergence (lenient JSON).** The predecessor skips an unparseable report
 JSON file silently unless `--strict` is given (the gate always is). Principle
 10 says a parse failure is never a clean file. pbipx always reports it as an
@@ -660,8 +738,10 @@ path, is denied with `event-error`: the call cannot be judged.
   symlinks before `..`): allowed if it is empty, outside the repository, a
   directory, outside the protected roots and not in scan scope, or
   allowlisted. Denied if it is local state or unvettable, whether or not it
-  exists. Allowed if it does not exist. Otherwise the file is scanned, strict,
-  with the baseline: denied on a block or an error, allowed on warnings.
+  exists. Allowed if it does not exist. Denied with `perf-export` if the
+  file, anywhere in the repository, has the shape of a Performance
+  Analyzer export (above). Otherwise the file is scanned, strict, with the
+  baseline: denied on a block or an error, allowed on warnings.
 - **Grep** of `path` (default: the working directory; in pbipx a leading
   `~` expanded): if the path is a
   protected root, inside one, or contains one, every file on disk under the
@@ -980,7 +1060,10 @@ path, is denied with `event-error`: the call cannot be judged.
      there that the gate cannot tell (`pbipx $SUB`, a glob) could be a
      person-only step and denies outright (below). `stage`, `collect` and
      `perf`, planned subcommands, are off the table: each joins it, or the
-     person-only list, in the change that builds it. The predecessor
+     person-only list, in the change that builds it. `perf` is decided
+     now: an agent may run it, since it prints counts and durations only
+     ([perf.md](perf.md)), so its change adds it to the table in one line;
+     `stage` and `collect` stay undecided. The predecessor
      allows any subcommand but `policy approve`. (Decided 2026-11-04.)
   2. A git command that prints file content is **denied** outright (git
      history cannot be vetted), unless it provably prints nothing from a
@@ -1895,7 +1978,8 @@ the Bash tool with the paths written out."; and for `agent-settings`,
 "Show the person the exact change, for them to make at a terminal."
 
 Gate reason classes: `finding`, `unvettable`, `scan-error`,
-`local-state`, `agent-settings` (pbipx only), `git-content`, `policy-error`,
+`local-state`, `perf-export` (pbipx only), `agent-settings` (pbipx only),
+`git-content`, `policy-error`,
 `policy-unapproved` (pbipx only), `event-error`, `not-a-repository`,
 `internal-error`.
 

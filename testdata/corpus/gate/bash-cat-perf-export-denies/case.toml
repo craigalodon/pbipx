@@ -1,0 +1,7 @@
+description = "cat of an export outside the roots denies by its shape, as a Read does"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
+known       = "predecessor"

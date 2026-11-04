@@ -1,0 +1,15 @@
+{
+  "version": "1.2.0",
+  "events": [
+    {
+      "name": "Execute DAX Query",
+      "id": "00000000-0000-0000-0000-000000000001",
+      "parentId": "00000000-0000-0000-0000-000000000000",
+      "start": "2100-01-01T00:00:00.000Z",
+      "end": "2100-01-01T00:00:00.250Z",
+      "metrics": {
+        "QueryText": "EVALUATE FILTER(student, student[full_name] = \"Doe, Jane\")"
+      }
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+{"name":"example-web","version":"1.0.0","scripts":{"test":"echo ok"},"dependencies":{"left":"^1.0.0"}}

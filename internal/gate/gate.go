@@ -101,6 +101,7 @@ const (
 	ReasonUnvettable       = "unvettable"
 	ReasonScanError        = "scan-error"
 	ReasonLocalState       = "local-state"
+	ReasonPerfExport       = "perf-export"
 	ReasonAgentSettings    = "agent-settings"
 	ReasonGitContent       = "git-content"
 	ReasonPolicyError      = "policy-error"
@@ -112,7 +113,7 @@ const (
 
 // Reasons lists every reason class.
 var Reasons = []string{
-	ReasonFinding, ReasonUnvettable, ReasonScanError, ReasonLocalState, ReasonAgentSettings, ReasonGitContent,
+	ReasonFinding, ReasonUnvettable, ReasonScanError, ReasonLocalState, ReasonPerfExport, ReasonAgentSettings, ReasonGitContent,
 	ReasonPolicyError, ReasonPolicyUnapproved, ReasonEventError, ReasonNotARepository, ReasonInternalError,
 }
 
@@ -130,6 +131,9 @@ type setup struct {
 	baseline *baseline.Baseline
 	cwd      string
 	now      time.Time
+	// perf is what this decision has spent on Performance Analyzer shape
+	// checks of files a command names (perfexport.go).
+	perf perfBudget
 	// fold is whether paths are compared without regard to case
 	// (foldCase); home is the gate's own home directory, "" when unknown.
 	fold bool
