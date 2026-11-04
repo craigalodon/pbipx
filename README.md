@@ -134,4 +134,4 @@ The rules everything else follows. The reasoning is in
 
 ## License
 
-Not yet chosen. Until a license file is added, no license is granted.
+Licensed under the Apache License, Version 2.0 (Apache-2.0). See [LICENSE](LICENSE).
