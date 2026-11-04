@@ -65,6 +65,12 @@ func (s *setup) read(p string) Decision {
 			}
 		}
 	}
+	// A Performance Analyzer export is denied by its shape wherever it is in
+	// the repository, in scan scope or not (perfexport.go).
+	if rels := s.rels(p); len(rels) > 0 && statErr == nil && info.Mode().IsRegular() && perfExport(a) {
+		return deny(ReasonPerfExport, "%s is a Power BI Performance Analyzer export, which holds query text and visual titles that cannot be vetted. %s",
+			displayPath(rels[0]), hintPerf)
+	}
 	if len(scanned) == 0 {
 		return allow()
 	}
