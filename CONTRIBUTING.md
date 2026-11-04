@@ -51,8 +51,30 @@ ${PBIPX_PRIVATE_TERMS:-$HOME/.config/pbipx/private-terms.txt}
 
 With the pre-commit hooks installed, every commit's staged paths,
 content and message are checked against it. The check fails closed: if the
-list is missing or empty, the commit is refused. It reports which file matched
-and never the term. The list itself must never be committed.
+list is missing or empty, the commit is refused, and a file the check cannot
+read counts as a failure, never as clean. It reports which file matched and
+never the term. The list itself must never be committed.
+
+`scripts/check-private-terms.sh` has three more modes, for the maintainer
+before going public (phase 7 in the roadmap). None of them prints a term or
+text that holds one.
+
+- `--tracked` checks every tracked file in the working tree.
+- `--history` checks everything reachable from any ref: every blob, path,
+  commit and tag message, author, committer and tagger identity, and ref name.
+  Run it in a clone made with `git clone --mirror`, so that `refs/pull/*` is
+  included. It reports the kind and object id, and a path when the path holds
+  no term. It makes one pass over the objects. grep cannot see inside
+  compressed content (zip, xlsx, pbix), so a term inside an archive is not
+  found.
+- `--github [owner/repo]` reads, with `gh` and `jq`, the text that is not in
+  git: pull request and issue titles and bodies, comments, reviews and release
+  notes. It reports the kind and number. An API error, such as a token that
+  lacks a permission, is a failure. Discussions, wikis and edit history are
+  not read.
+
+`go test ./scripts` tests all of this against temporary repositories with a
+synthetic term list.
 
 ## Commits
 

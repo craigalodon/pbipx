@@ -130,7 +130,10 @@ only real changes.
 
 - [ ] Institutional approval to publish
 - [ ] License chosen and added
-- [ ] The full history checked against the private-terms list
+- [ ] The full history checked against the private-terms list: run
+  `scripts/check-private-terms.sh --history` in a `git clone --mirror` clone
+  (this covers `refs/pull/*`), and `--github` for pull request, issue and
+  release text
 - [ ] A synthetic sample PBIP repository to demonstrate with
 - [ ] Docs written for analysts, not maintainers
 - [ ] Repository made public; issue tracker and `SECURITY.md` contact live
