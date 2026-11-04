@@ -641,3 +641,295 @@ func TestStoreUnderAFile(t *testing.T) {
 		}
 	}
 }
+
+// recordFor writes content as the record keyed by dir, which must exist, and
+// returns the record's path.
+func recordFor(t *testing.T, s *Store, dir, content string) string {
+	t.Helper()
+	key, err := Key(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeRecord(t, s, key, content)
+	return filepath.Join(s.Dir, approvedDir, key)
+}
+
+func exists(path string) bool {
+	_, err := os.Lstat(path)
+	return err == nil
+}
+
+func record3(digests []string, roots ...string) string {
+	var b strings.Builder
+	b.WriteString("version = 3\n")
+	if len(digests) > 0 {
+		b.WriteString("digests = ['" + strings.Join(digests, "', '") + "']\n")
+	}
+	if len(roots) > 0 {
+		b.WriteString("roots = ['" + strings.Join(roots, "', '") + "']\n")
+	}
+	return b.String()
+}
+
+func mustAdopted(t *testing.T, s *Store, r Repository, want bool) {
+	t.Helper()
+	got, err := s.Adopted(r)
+	if err != nil || got != want {
+		t.Errorf("Adopted = %v, %v; want %v", got, err, want)
+	}
+}
+
+func TestUnenrollRemovesTheCloneRecord(t *testing.T) {
+	v1 := "version = 1\ndigest = '" + Digest(nil) + "'\napproved = 2100-01-01T00:00:00Z\n"
+	v2 := "version = 2\ndigests = ['" + Digest(nil) + "']\napproved = 2100-01-01T00:00:00Z\n"
+	tests := []struct {
+		name    string
+		content string
+		legacy  bool // keyed by the work tree, as a version 1 record is
+	}{
+		{"v3", record3([]string{Digest(nil)}, "/some/root"), false},
+		{"v2", v2, false},
+		{"v1", v1, true},
+		{"bad", "not a record = = =\n", false},
+		{"bad, keyed by the work tree", "not a record = = =\n", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r, _, s := setup(t)
+			dir := r.GitDir
+			if tt.legacy {
+				dir = r.Root
+			}
+			path := recordFor(t, s, dir, tt.content)
+			if got, _ := s.Adopted(r); !got {
+				t.Fatal("the clone is not adopted to begin with")
+			}
+			if err := s.Unenroll(r, nil); err != nil {
+				t.Fatal(err)
+			}
+			if exists(path) {
+				t.Error("the record is still there")
+			}
+			mustAdopted(t, s, r, false)
+			if roots, any, err := s.Roots(); err != nil || len(roots) != 0 || any {
+				t.Errorf("Roots = %v, %v, %v; want none", roots, any, err)
+			}
+		})
+	}
+}
+
+func TestUnenrollRemovesBothRecordsOfTheClone(t *testing.T) {
+	r, policyPath, s := setup(t)
+	approve(t, s, r, policyPath)
+	legacy := recordFor(t, s, r.Root, "version = 1\ndigest = '"+Digest(nil)+"'\napproved = 2100-01-01T00:00:00Z\n")
+	shared := recordFor(t, s, r.GitDir, record3([]string{Digest(nil)}, r.Root))
+	if err := s.Unenroll(r, nil); err != nil {
+		t.Fatal(err)
+	}
+	if exists(legacy) || exists(shared) {
+		t.Error("a record of the clone is still there")
+	}
+	mustAdopted(t, s, r, false)
+}
+
+func TestUnenrollRemovesALegacyRecordOfAnotherWorkTree(t *testing.T) {
+	r, policyPath, s := setup(t)
+	approve(t, s, r, policyPath)
+	other := t.TempDir()
+	unrelated := t.TempDir()
+	v1 := "version = 1\ndigest = '" + Digest(nil) + "'\napproved = 2100-01-01T00:00:00Z\n"
+	legacy := recordFor(t, s, other, v1)
+	keep := recordFor(t, s, unrelated, v1)
+	if err := s.Unenroll(r, []string{other}); err != nil {
+		t.Fatal(err)
+	}
+	if exists(legacy) {
+		t.Error("the legacy record of the clone's other work tree is still there")
+	}
+	if !exists(keep) {
+		t.Error("the legacy record of an unrelated work tree was removed")
+	}
+}
+
+func TestUnenrollKeepsTheDigestsOfAnotherRecordsRoot(t *testing.T) {
+	r, policyPath, s := setup(t)
+	approve(t, s, r, policyPath)
+	elsewhere := filepath.Join(t.TempDir(), "elsewhere")
+	d := Digest([]byte("x"))
+	// Another clone's record that names this work tree among its own.
+	other := recordFor(t, s, t.TempDir(), record3([]string{d}, r.Root, elsewhere))
+	if err := s.Unenroll(r, nil); err != nil {
+		t.Fatal(err)
+	}
+	rec, found, err := readRecord(other)
+	if err != nil || !found {
+		t.Fatalf("the other record: %v, %v", found, err)
+	}
+	if !slices.Equal(rec.Roots, []string{elsewhere}) || !slices.Equal(rec.Digests, []string{d}) {
+		t.Errorf("roots %v, digests %v; want only this work tree dropped", rec.Roots, rec.Digests)
+	}
+	roots, _, err := s.Roots()
+	if err != nil || slices.Contains(roots, r.Root) {
+		t.Errorf("Roots = %v, %v; the work tree is still indexed", roots, err)
+	}
+}
+
+func TestUnenrollDeletesARecordStrippedToNothing(t *testing.T) {
+	r, policyPath, s := setup(t)
+	approve(t, s, r, policyPath)
+	other := recordFor(t, s, t.TempDir(), record3(nil, r.Root))
+	if err := s.Unenroll(r, nil); err != nil {
+		t.Fatal(err)
+	}
+	// A version 3 record with no digest and no root is invalid, and an
+	// invalid record counts as adopted: it must be gone, not left empty.
+	if exists(other) {
+		t.Error("a record with neither roots nor digests was left behind")
+	}
+	if _, _, err := s.Roots(); err != nil {
+		t.Errorf("Roots: %v", err)
+	}
+}
+
+// TestUnenrollKeepsADigestsOnlyRecord: a record left with digests and no
+// roots is valid, and adopts only its own clone by its key, not a work tree
+// it no longer names.
+func TestUnenrollKeepsADigestsOnlyRecord(t *testing.T) {
+	r, policyPath, s := setup(t)
+	approve(t, s, r, policyPath)
+	d := Digest([]byte("x"))
+	other := recordFor(t, s, t.TempDir(), record3([]string{d}, r.Root))
+	if err := s.Unenroll(r, nil); err != nil {
+		t.Fatal(err)
+	}
+	rec, found, err := readRecord(other)
+	if err != nil || !found || len(rec.Roots) != 0 || !slices.Equal(rec.Digests, []string{d}) {
+		t.Fatalf("the other record: %+v, %v, %v", rec, found, err)
+	}
+	mustAdopted(t, s, r, false)
+	if roots, _, _ := s.Roots(); slices.Contains(roots, r.Root) {
+		t.Error("the work tree is still indexed")
+	}
+}
+
+func TestUnenrollLeavesAnotherCloneAndAnUnreadableForeignRecord(t *testing.T) {
+	r, policyPath, s := setup(t)
+	approve(t, s, r, policyPath)
+	o := newRepository(t)
+	if err := s.Adopt(o); err != nil {
+		t.Fatal(err)
+	}
+	foreign := recordFor(t, s, t.TempDir(), "garbage = = =\n")
+	if err := s.Unenroll(r, nil); err != nil {
+		t.Fatal(err)
+	}
+	mustAdopted(t, s, o, true)
+	if !exists(foreign) {
+		t.Error("an unreadable record that is not this clone's was removed")
+	}
+}
+
+func TestUnenrollTreatsSpellingsOfARootAlike(t *testing.T) {
+	r, policyPath, s := setup(t)
+	approve(t, s, r, policyPath)
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(r.Root, link); err != nil {
+		t.Skip("no symlinks:", err)
+	}
+	d := Digest([]byte("x"))
+	viaLink := recordFor(t, s, t.TempDir(), record3(nil, link))
+	upper := recordFor(t, s, t.TempDir(), record3([]string{d}, strings.ToUpper(r.Root), "/elsewhere"))
+	old := foldCase
+	foldCase = true
+	t.Cleanup(func() { foldCase = old })
+	if err := s.Unenroll(r, nil); err != nil {
+		t.Fatal(err)
+	}
+	if exists(viaLink) {
+		t.Error("a root spelled through a symlink was kept")
+	}
+	rec, _, err := readRecord(upper)
+	if err != nil || slices.Contains(rec.Roots, strings.ToUpper(r.Root)) {
+		t.Errorf("a root spelled in another case was kept: %v, %v", rec.Roots, err)
+	}
+}
+
+func TestUnenrollDoesNotFoldCaseWhereCaseCounts(t *testing.T) {
+	r, policyPath, s := setup(t)
+	approve(t, s, r, policyPath)
+	d := Digest([]byte("x"))
+	root := filepath.Join(filepath.Dir(r.Root), strings.ToUpper(filepath.Base(r.Root)))
+	if root == r.Root {
+		t.Skip("no letters to change")
+	}
+	other := recordFor(t, s, t.TempDir(), record3([]string{d}, root))
+	old := foldCase
+	foldCase = false
+	t.Cleanup(func() { foldCase = old })
+	if err := s.Unenroll(r, nil); err != nil {
+		t.Fatal(err)
+	}
+	if rec, _, _ := readRecord(other); !slices.Contains(rec.Roots, root) {
+		t.Error("a different directory was stripped")
+	}
+}
+
+func TestUnenrollStripsAMissingWorkTree(t *testing.T) {
+	r, policyPath, s := setup(t)
+	approve(t, s, r, policyPath)
+	gone := filepath.Join(t.TempDir(), "gone")
+	other := recordFor(t, s, t.TempDir(), record3(nil, gone))
+	if err := s.Unenroll(r, []string{gone}); err != nil {
+		t.Fatal(err)
+	}
+	if exists(other) {
+		t.Error("a root whose directory is gone was kept")
+	}
+}
+
+func TestUnenrollErrorLeavesTheCloneAdopted(t *testing.T) {
+	r, policyPath, s := setup(t)
+	approve(t, s, r, policyPath)
+	// A directory where a record belongs cannot be read as one.
+	bad := filepath.Join(s.Dir, approvedDir, strings.Repeat("a", 64))
+	if err := os.Mkdir(bad, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Unenroll(r, nil); err == nil {
+		t.Fatal("no error")
+	}
+	mustAdopted(t, s, r, true)
+}
+
+func TestUnenrollNothingToRemove(t *testing.T) {
+	r, _, s := setup(t)
+	for _, store := range []*Store{s, {Dir: filepath.Join(t.TempDir(), "never made")}} {
+		if held, err := store.Holds(r, nil); err != nil || held {
+			t.Errorf("Holds = %v, %v; want false", held, err)
+		}
+		if err := store.Unenroll(r, nil); err != nil {
+			t.Errorf("Unenroll: %v", err)
+		}
+	}
+	if err := s.Adopt(r); err != nil {
+		t.Fatal(err)
+	}
+	if held, err := s.Holds(r, nil); err != nil || !held {
+		t.Errorf("Holds = %v, %v; want true", held, err)
+	}
+}
+
+func TestUnenrollStoreUnderAFile(t *testing.T) {
+	r, _, _ := setup(t)
+	file := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := &Store{Dir: filepath.Join(file, "pbipx")}
+	if err := s.Unenroll(r, nil); !errors.Is(err, ErrStoreNotDir) {
+		t.Errorf("Unenroll error = %v, want ErrStoreNotDir", err)
+	}
+	if _, err := s.Holds(r, nil); !errors.Is(err, ErrStoreNotDir) {
+		t.Errorf("Holds error = %v, want ErrStoreNotDir", err)
+	}
+}

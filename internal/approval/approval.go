@@ -658,3 +658,159 @@ func (s *Store) Check(r Repository, digest string) (Status, error) {
 	}
 	return Approved, nil
 }
+
+// foldCase is whether paths are compared without regard to case, as on
+// Windows and macOS, whose file systems are usually case-insensitive. A
+// test sets it.
+var foldCase = runtime.GOOS == "windows" || runtime.GOOS == "darwin"
+
+// sameTree reports whether a and b name the same work tree under any
+// spelling: as given, with the symlinks of their deepest existing
+// ancestors resolved, or, where both exist, as the file system sees them
+// (the same directory under another case, or a Windows short name).
+func sameTree(a, b string) bool {
+	a, b = filepath.Clean(a), filepath.Clean(b)
+	eq := func(x, y string) bool {
+		if foldCase {
+			return strings.EqualFold(x, y)
+		}
+		return x == y
+	}
+	if eq(a, b) || eq(ResolveExisting(a), ResolveExisting(b)) {
+		return true
+	}
+	ia, errA := os.Stat(a)
+	ib, errB := os.Stat(b)
+	return errA == nil && errB == nil && os.SameFile(ia, ib)
+}
+
+// unenrollStep is one change to the store: remove path, or, when keep is
+// set, rewrite it as keep.
+type unenrollStep struct {
+	path string
+	keep *record
+}
+
+// unenrollSteps are the changes that remove r's clone's adoption, in the
+// order they must be made (ADR-0006, amended 2026-11-04): the work trees
+// stripped from other records, then the records keyed by a work tree, then
+// the clone's own record last, so a failure part way leaves the clone
+// adopted, never half removed. trees are the work trees of the clone;
+// r.Root is always one.
+//
+// A record that names one of the trees in its roots and is not the
+// clone's is stripped of it. It is deleted when that leaves it with no
+// root and no digest, since a version 3 record with neither is invalid and
+// an invalid record counts as adopted. One left with digests and no roots
+// is valid and is kept: it adopts the clone it is keyed by, which is not
+// this one, and no work tree it no longer names. A record that does not
+// parse is removed only when it is keyed by the clone or one of its work
+// trees; whose it is cannot be told otherwise.
+func (s *Store) unenrollSteps(r Repository, trees []string) ([]unenrollStep, error) {
+	var all []string
+	for _, t := range append(slices.Clone(trees), r.Root) {
+		if c, ok := cleanRoot(t); ok {
+			all = append(all, c)
+		}
+	}
+	all = dedupe(all)
+	legacy, shared, err := s.paths(r)
+	if err != nil {
+		return nil, err
+	}
+	dir := filepath.Join(s.Dir, approvedDir)
+	if notDirAt(dir) {
+		return nil, ErrStoreNotDir
+	}
+	legacyKeys := map[string]bool{}
+	for _, t := range append(all, r.Root) {
+		if p, err := s.recordPath(t); err == nil && p != shared {
+			legacyKeys[p] = true
+		}
+	}
+	if legacy != "" {
+		legacyKeys[legacy] = true
+	}
+	entries, err := readDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var strips, legacies, own []unenrollStep
+	for _, e := range entries {
+		if !recordName.MatchString(e.Name()) {
+			continue
+		}
+		p := filepath.Join(dir, e.Name())
+		rec, found, err := readRecord(p)
+		switch {
+		case p == shared:
+			if errors.Is(err, ErrBadRecord) || found {
+				own = append(own, unenrollStep{path: p})
+			} else if err != nil {
+				return nil, err
+			}
+		case legacyKeys[p] && (errors.Is(err, ErrBadRecord) || found && rec.Version == legacyVersion):
+			legacies = append(legacies, unenrollStep{path: p})
+		case errors.Is(err, ErrBadRecord) || !found && err == nil:
+			// Not this clone's, or not there: not ours to remove.
+		case err != nil:
+			return nil, err
+		default:
+			var kept []string
+			for _, root := range rec.Roots {
+				if !slices.ContainsFunc(all, func(t string) bool { return sameTree(root, t) }) {
+					kept = append(kept, root)
+				}
+			}
+			switch {
+			case len(kept) == len(rec.Roots):
+			case len(kept) == 0 && len(rec.Digests) == 0:
+				strips = append(strips, unenrollStep{path: p})
+			default:
+				rec.Roots = kept
+				strips = append(strips, unenrollStep{path: p, keep: &rec})
+			}
+		}
+	}
+	return append(append(strips, legacies...), own...), nil
+}
+
+// Holds reports whether Unenroll would change the store: a record of r's
+// clone or of one of trees, or another record that names one of them.
+func (s *Store) Holds(r Repository, trees []string) (bool, error) {
+	steps, err := s.unenrollSteps(r, trees)
+	return len(steps) > 0, err
+}
+
+// Unenroll removes the adoption of r's clone, for every one of its work
+// trees (trees, and r.Root): the work trees are stripped from the roots of
+// other records, a record left with no root and no digest is deleted,
+// version 1 records keyed by a work tree are removed, and r's own record
+// is removed last, so an error leaves the clone adopted. A record of the
+// clone that does not parse is removed too. A rewritten record is written
+// as Approve writes one. It forgets every approval of the clone.
+func (s *Store) Unenroll(r Repository, trees []string) error {
+	steps, err := s.unenrollSteps(r, trees)
+	if err != nil {
+		return err
+	}
+	for _, st := range steps {
+		if st.keep != nil {
+			data, err := toml.Marshal(*st.keep)
+			if err != nil {
+				return err
+			}
+			if err := writeAtomic(st.path, data); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := os.Remove(st.path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
+}
