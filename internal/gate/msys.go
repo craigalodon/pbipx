@@ -137,6 +137,13 @@ func newMSYSSession() *msysSession {
 	return &msysSession{mode: msys, placed: map[string]placedPath{}}
 }
 
+// addRoot records a directory the call touches.
+func (m *msysSession) addRoot(dir string) {
+	if m != nil && dir != "" {
+		m.roots = append(m.roots, dir)
+	}
+}
+
 // word places p, a word or a part of one, for the rules. needed is false
 // when p is read as written; ok is false when it needs placing and cannot
 // be (the word is then unknown). placed is a Windows path; for a word

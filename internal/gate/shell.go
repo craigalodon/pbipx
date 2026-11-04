@@ -1457,17 +1457,26 @@ func (w *walker) reachesIn(st cwdState, p, why string) {
 		w.probeIn(st, p)
 		return
 	}
-	if !st.known() {
-		if !fullPath(p) || w.s.touchesIn("/", p) {
-			w.setReach(why+", from a working directory the gate cannot tell", hintLister)
-		}
+	paths := []string{p}
+	if pl, needed, ok := w.s.msys.word(p); !ok {
+		w.setReach(why+", at a path the gate cannot place", hintLister)
 		return
+	} else if needed {
+		paths = append(paths, pl)
 	}
-	for _, d := range st.dirs {
-		for _, a := range spellings(d, p) {
-			if w.s.touchesAbs(a) {
-				w.setReach(why+", in a directory that "+w.s.whereAbs(a), hintLister)
-				return
+	for _, p := range paths {
+		if !st.known() {
+			if !fullPath(p) || w.s.touchesIn("/", p) {
+				w.setReach(why+", from a working directory the gate cannot tell", hintLister)
+			}
+			continue
+		}
+		for _, d := range st.dirs {
+			for _, a := range spellings(d, p) {
+				if w.s.touchesAbs(a) {
+					w.setReach(why+", in a directory that "+w.s.whereAbs(a), hintLister)
+					return
+				}
 			}
 		}
 	}
@@ -1843,6 +1852,7 @@ func (s *setup) viewOf(c simple, st cwdState, ph []string) view {
 	for i, wd := range c.words {
 		xw := s.expandWord(wd, v.cwd)
 		xw.message = msg.words[i]
+		s.placeCheck(&xw)
 		v.words = append(v.words, xw)
 		if !xw.redirect {
 			args = append(args, xw.text)
@@ -1861,6 +1871,37 @@ func (s *setup) viewOf(c simple, st cwdState, ph []string) view {
 		markFed(&v, known, len(args)-len(v.argv), phs)
 	}
 	return v
+}
+
+// placeCheck places the absolute Git Bash paths in xw (msys.go) and makes
+// the word unknown when one cannot be placed: a reader given it then
+// touches every protected root, a cd to it leaves the working directory
+// unknown, and git given it prints no content. The word's text is never
+// changed, so a script in it is still read as written.
+func (s *setup) placeCheck(xw *xword) {
+	if s.msys == nil || !xw.known || xw.message {
+		return
+	}
+	for _, text := range []string{xw.text, xw.pattern} {
+		for _, c := range msysCands(text) {
+			if _, _, ok := s.msys.word(c); !ok {
+				xw.known = false
+				return
+			}
+		}
+	}
+}
+
+// spellingsAt are the spellings of the path p against dir, and as placed
+// when p is an absolute Git Bash path (msys.go). A path that cannot be
+// placed has the first only: where it is a word, placeCheck has made it
+// unknown.
+func (s *setup) spellingsAt(dir, p string) []string {
+	out := spellings(dir, p)
+	if pl, needed, ok := s.msys.word(p); needed && ok {
+		out = append(out, spellings(dir, pl)...)
+	}
+	return out
 }
 
 // fedScript reads the script a shell reads from a here-document or a
@@ -2273,17 +2314,29 @@ func (s *setup) chdir(v view, st *cwdState) {
 		unknown()
 		return
 	}
-	bases := st.dirs
-	if fullPath(target) {
-		bases = []string{string(filepath.Separator)}
+	// An absolute Git Bash path (/tmp/x) is a directory as written and the
+	// one Git Bash puts it in; one that cannot be placed leaves the
+	// working directory unknown.
+	targets := []string{target}
+	if pl, needed, ok := s.msys.word(target); !ok {
+		unknown()
+		return
+	} else if needed {
+		targets = append(targets, pl)
 	}
 	var dirs []string
-	for _, d := range bases {
-		// cd is logical by default: ".." is applied to the path as
-		// written. The physical directory is judged as well.
-		for _, nd := range []string{abs(d, target), resolvePath(rawJoin(d, target))} {
-			if !slices.Contains(dirs, nd) {
-				dirs = append(dirs, nd)
+	for _, tg := range targets {
+		bases := st.dirs
+		if fullPath(tg) {
+			bases = []string{string(filepath.Separator)}
+		}
+		for _, d := range bases {
+			// cd is logical by default: ".." is applied to the path as
+			// written. The physical directory is judged as well.
+			for _, nd := range []string{abs(d, tg), resolvePath(rawJoin(d, tg))} {
+				if !slices.Contains(dirs, nd) {
+					dirs = append(dirs, nd)
+				}
 			}
 		}
 	}
@@ -2471,25 +2524,42 @@ func (s *setup) spellWord(v view, xw xword, c *spellCache) (out []string, unknow
 		for _, d := range dirs {
 			out = append(out, spellings(d, cand)...)
 		}
+		// An absolute Git Bash path is also the place Git Bash puts it.
+		if pl, needed, ok := s.msys.word(cand); !ok {
+			unknown = true
+		} else if needed {
+			for _, d := range dirs {
+				out = append(out, spellings(d, pl)...)
+			}
+		}
 	}
 	if xw.glob {
+		pats := []string{xw.pattern}
+		if pl, needed, ok := s.msys.word(xw.pattern); !ok {
+			unknown = true
+		} else if needed {
+			pats = append(pats, pl)
+		}
+	globs:
 		for _, d := range dirs {
-			if !v.cwd.known() && !fullPath(xw.pattern) {
-				break
-			}
-			pat := rawJoin(d, xw.pattern)
-			matches, over := globMatches(pat, c)
-			if over && s.repo == nil {
-				// A probe (adopt.go): the glob could stand for anything.
-				unknown = true
-				break
-			}
-			if over {
-				out = append(out, s.repo.Root)
-				break
-			}
-			for _, m := range matches {
-				out = append(out, spellings(d, m)...)
+			for _, pattern := range pats {
+				if !v.cwd.known() && !fullPath(pattern) {
+					continue
+				}
+				pat := rawJoin(d, pattern)
+				matches, over := globMatches(pat, c)
+				if over && s.repo == nil {
+					// A probe (adopt.go): the glob could stand for anything.
+					unknown = true
+					break globs
+				}
+				if over {
+					out = append(out, s.repo.Root)
+					break globs
+				}
+				for _, m := range matches {
+					out = append(out, spellings(d, m)...)
+				}
 			}
 		}
 	}
@@ -3058,6 +3128,80 @@ func unknownArgs(v view) []string {
 // directory: a subcommand that prints content is then unprovable
 // (gitContent).
 func (s *setup) gitRule(v view) *gitDenial {
+	// An absolute Git Bash path in its words (/tmp/x) is a path as written
+	// and the one Git Bash hands git: the line is judged as each.
+	if placed, ok := s.placedView(v); ok {
+		if g := s.gitRuleAs(placed); g != nil {
+			return g
+		}
+	}
+	return s.gitRuleAs(v)
+}
+
+// placedView is v, a git command, with each absolute Git Bash path in its
+// words (or the value of a --flag=value) replaced by the Windows path
+// cygpath says it is (msys.go), for the rules that read git's arguments.
+// ok is false when no word changes. The words of the line itself are never
+// changed, only this copy.
+func (s *setup) placedView(v view) (view, bool) {
+	if s.msys == nil || v.name != "git" {
+		return v, false
+	}
+	var nonRedirect []int
+	for wi, w := range v.words {
+		if !w.redirect {
+			nonRedirect = append(nonRedirect, wi)
+		}
+	}
+	first := len(nonRedirect) - len(v.argv)
+	if first < 0 {
+		return v, false
+	}
+	swap := func(t string) (string, bool) {
+		if strings.HasPrefix(t, "/") {
+			if pl, needed, ok := s.msys.word(t); needed && ok {
+				return pl, true
+			}
+			return t, false
+		}
+		if head, val, ok := strings.Cut(t, "="); ok && strings.HasPrefix(val, "/") {
+			if pl, needed, ok := s.msys.word(val); needed && ok {
+				return head + "=" + pl, true
+			}
+		}
+		return t, false
+	}
+	argv, words := slices.Clone(v.argv), slices.Clone(v.words)
+	changed := false
+	for p := len(v.argv) - len(v.rest); p < len(v.argv); p++ {
+		text := v.argv[p]
+		wi := nonRedirect[first+p]
+		if words[wi].message || !words[wi].known {
+			continue
+		}
+		nt, ok := swap(text)
+		if !ok {
+			continue
+		}
+		changed = true
+		argv[p], words[wi].text = nt, nt
+		if np, ok := swap(words[wi].pattern); ok && words[wi].glob {
+			words[wi].pattern = np
+		} else {
+			words[wi].pattern = escapeGlob(nt)
+		}
+	}
+	if !changed {
+		return v, false
+	}
+	v.argv, v.words = argv, words
+	v.name, v.rest, v.under = command(v.argv)
+	v.restKnown = v.argvKnown[len(v.argvKnown)-len(v.rest):]
+	return v, true
+}
+
+// gitRuleAs is gitRule for v as it stands.
+func (s *setup) gitRuleAs(v view) *gitDenial {
 	v = s.expandShellGlobs(v)
 	unknown := unknownArgs(v)
 	if v.name == "git" && feedOf(v.argv, v.argvKnown).runner != "" {
@@ -3244,7 +3388,7 @@ func (w *walker) reaches() trigger {
 		touched := func(ps []string) string {
 			for _, p := range ps {
 				for _, d := range v.cwd.dirs {
-					for _, a := range spellings(d, p) {
+					for _, a := range s.spellingsAt(d, p) {
 						if s.touchesAbs(a) {
 							return s.whereAbs(a)
 						}
