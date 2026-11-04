@@ -566,8 +566,15 @@ func TestPolicyUnenrollLinkedWorkTrees(t *testing.T) {
 		t.Fatal(err)
 	}
 	o := runIn(t, unenrollWord+"\n", "policy", "unenroll")
-	if o.code != finding.ExitClean {
+	// The record is gone, but the linked work tree is adopted again by its
+	// own policy file: not "no longer set up", and exit 3.
+	if o.code != finding.ExitOperational || strings.Contains(o.stdout, "no longer set up") {
 		t.Fatalf("exit %d, stdout %q, stderr %q", o.code, o.stdout, o.stderr)
+	}
+	for _, want := range []string{linked, policy.FileName, "record"} {
+		if !strings.Contains(o.stderr, want) {
+			t.Errorf("stderr lacks %q: %q", want, o.stderr)
+		}
 	}
 	for _, want := range []string{root, linked, "work trees   2"} {
 		if !strings.Contains(o.stdout, want) {
@@ -749,5 +756,84 @@ func TestSubcommandsAreInTheGatesTables(t *testing.T) {
 		if !sub[name] {
 			t.Errorf("the gate's tables name policy %q, which is not a command", name)
 		}
+	}
+}
+
+func TestPolicyUnenrollNeverPrintsControlCharacters(t *testing.T) {
+	const esc = "\x1b[2K\r"
+	root := newApprovalRepo(t)
+	if o := runIn(t, approveWord+"\n", "policy", "approve"); o.code != finding.ExitClean {
+		t.Fatalf("approve: exit %d", o.code)
+	}
+	if err := corpus.AddWorktree(root, ".claude/worktrees/a"+esc+"b"); err != nil {
+		t.Skip("this file system cannot hold the name:", err)
+	}
+	if err := os.Remove(filepath.Join(root, policy.FileName)); err != nil {
+		t.Fatal(err)
+	}
+	store := filepath.Join(t.TempDir(), "store"+esc)
+	t.Setenv(approval.EnvConfigDir, store)
+	// The record is in the original store; adopt in this one.
+	s, err := approval.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := gate.Identify(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Adopt(id); err != nil {
+		t.Fatal(err)
+	}
+	for _, input := range []string{"no\n", unenrollWord + "\n"} {
+		o := runIn(t, input, "policy", "unenroll")
+		all := o.stdout + o.stderr
+		if strings.ContainsAny(all, "\x1b\r") {
+			t.Errorf("the output holds a control character: %q", all)
+		}
+		if !strings.Contains(o.stdout, "{?}") {
+			t.Errorf("no path shown as withheld: %q", o.stdout)
+		}
+	}
+}
+
+func TestShownPath(t *testing.T) {
+	for in, want := range map[string]string{
+		"/a/b":           "/a/b",
+		"/a/b\x1b[2Kc/d": "/a/{?}/d",
+		"/a/\xffb/c":     "/a/{?}/c",
+		"/a/\u0085b":     "/a/{?}",
+		"C:\\x\\y":       "C:\\x\\y",
+	} {
+		if got := shownPath(in); got != want {
+			t.Errorf("shownPath(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestPromptsNeedTheNewline: the word counts only when the line ends, so a
+// word followed by end of input does not confirm, and spaces around it do
+// not either.
+func TestPromptsNeedTheNewline(t *testing.T) {
+	for _, input := range []string{"%s", " %s\n", "%s \n", "\t%s\n", "%s\x00\n"} {
+		t.Run("unenroll "+input, func(t *testing.T) {
+			root := enrolledRepo(t)
+			o := runIn(t, strings.ReplaceAll(input, "%s", unenrollWord), "policy", "unenroll")
+			if o.code != finding.ExitUsage || !storeAdopted(t, root) {
+				t.Errorf("exit %d, adopted %v", o.code, storeAdopted(t, root))
+			}
+		})
+		t.Run("approve "+input, func(t *testing.T) {
+			root := newApprovalRepo(t)
+			o := runIn(t, strings.ReplaceAll(input, "%s", approveWord), "policy", "approve")
+			if o.code != finding.ExitUsage || storeStatus(t, root) != approval.Unapproved {
+				t.Errorf("exit %d, status %v", o.code, storeStatus(t, root))
+			}
+		})
+	}
+	// A carriage return before the newline is fine.
+	root := enrolledRepo(t)
+	if o := runIn(t, unenrollWord+"\r\n", "policy", "unenroll"); o.code != finding.ExitClean || storeAdopted(t, root) {
+		t.Errorf("CRLF: exit %d", o.code)
 	}
 }

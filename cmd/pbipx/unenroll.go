@@ -1,11 +1,9 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -81,21 +79,20 @@ func runPolicyUnenroll(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		count = "0 (a record cannot be read)"
 	}
-	fmt.Fprintf(out, "store        %s\nwork trees   %d\n", store.Dir, len(trees))
+	fmt.Fprintf(out, "store        %s\nwork trees   %d\n", shownPath(store.Dir), len(trees))
 	for _, t := range trees {
-		fmt.Fprintf(out, "  %s\n", t)
+		fmt.Fprintf(out, "  %s\n", shownPath(t))
 	}
 	fmt.Fprintf(out, "digests  %s\n\n", count)
 	for _, t := range trees[1:] {
 		if _, err := os.Lstat(filepath.Join(t, policy.FileName)); err == nil {
-			fmt.Fprintf(out, "warning: the linked work tree %s has a %s, which adopts it again whatever is removed here\n", t, policy.FileName)
+			fmt.Fprintf(out, "warning: the linked work tree %s has a %s, which adopts it again whatever is removed here\n", shownPath(t), policy.FileName)
 		}
 	}
 	fmt.Fprint(out, "After this the gate stops protecting these files from agents in these work trees, "+
 		"and every approval recorded for this clone is forgotten.\n\n")
 	fmt.Fprintf(out, "Type %q to remove this clone's setup for the gate on this machine: ", unenrollWord)
-	line, _ := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
-	if strings.TrimSpace(line) != unenrollWord {
+	if !confirmed(cmd.InOrStdin(), unenrollWord) {
 		fmt.Fprintln(out)
 		return usageError{"the adoption was not removed"}
 	}
@@ -103,12 +100,22 @@ func runPolicyUnenroll(cmd *cobra.Command, _ []string) error {
 	if err := store.Unenroll(id, trees); err != nil {
 		return operational(cmd, "the adoption cannot be removed from the approval store; the repository may still be adopted")
 	}
-	by, err = adoption.AdoptedBy(repo.Root)
-	if err != nil {
-		return operational(cmd, "the approval store cannot be read; the repository may still be adopted")
-	}
-	if by != nil {
-		return operational(cmd, "this work tree is still adopted: "+stillAdopted(by))
+	// Every work tree of the clone is asked, not this one alone: the record
+	// is gone, but a linked work tree on another branch can hold a policy
+	// file, and the gate acts there again.
+	for i, t := range trees {
+		by, err := adoption.AdoptedBy(t)
+		if err != nil {
+			return operational(cmd, "the approval store cannot be read; the repository may still be adopted")
+		}
+		switch {
+		case by == nil:
+		case i == 0:
+			return operational(cmd, "this work tree is still adopted: "+stillAdopted(by))
+		default:
+			return operational(cmd, "the clone's record is gone, but the linked work tree "+shownPath(t)+
+				" is adopted again, and the gate acts there: "+stillAdopted(by))
+		}
 	}
 	fmt.Fprintln(out, "pbipx: this clone is no longer set up for the gate on this machine. "+
 		"The hook stays registered for other repositories. pbipx init or policy approve sets it up again.")
@@ -125,7 +132,7 @@ func stillAdopted(by *gate.AdoptedBy) string {
 	case gate.ByRecord:
 		return "its clone still has a record in the approval store"
 	case gate.ByEnclosing:
-		return "it lies inside the adopted repository at " + by.Root + ", which the gate judges its files against"
+		return "it lies inside the adopted repository at " + shownPath(by.Root) + ", which the gate judges its files against"
 	}
 	return "it lies in an adopted work tree that git cannot open"
 }

@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 
@@ -15,6 +17,7 @@ import (
 	"github.com/craigalodon/pbipx/internal/finding"
 	"github.com/craigalodon/pbipx/internal/gate"
 	"github.com/craigalodon/pbipx/internal/policy"
+	"github.com/craigalodon/pbipx/internal/shape"
 )
 
 // approveWord is what a person types, in full, to approve a policy.
@@ -110,8 +113,7 @@ func runPolicyApprove(cmd *cobra.Command, _ []string) error {
 	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "policy  %s\ndigest  %s\nstatus  %s\n\n", policy.FileName, digest, status)
 	fmt.Fprintf(out, "Type %q to approve this policy for the gate in every work tree of this clone on this machine: ", approveWord)
-	line, _ := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
-	if strings.TrimSpace(line) != approveWord {
+	if !confirmed(cmd.InOrStdin(), approveWord) {
 		fmt.Fprintln(out)
 		return usageError{"the policy was not approved"}
 	}
@@ -120,6 +122,44 @@ func runPolicyApprove(cmd *cobra.Command, _ []string) error {
 	}
 	fmt.Fprintf(out, "pbipx: %s approved\n", policy.FileName)
 	return nil
+}
+
+// confirmed reads one line from in and reports whether it is exactly word.
+// The line must end in a newline (a word followed by end of input does not
+// count), and only that newline and a carriage return before it are
+// removed: spaces around the word do not confirm.
+func confirmed(in io.Reader, word string) bool {
+	line, err := bufio.NewReader(in).ReadString('\n')
+	if err != nil {
+		return false
+	}
+	line = strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
+	return line == word
+}
+
+// shownPath is a path as a terminal screen prints it: a segment that holds
+// a control character or is not valid UTF-8 is {?}, and one with a
+// personal-data shape too (shape.DisplayName), so a path from the file
+// system or the environment cannot move the cursor or overwrite the line a
+// person is reading.
+func shownPath(p string) string {
+	segs := strings.FieldsFunc(p, func(r rune) bool { return r == '/' || r == filepath.Separator })
+	if len(segs) == 0 {
+		return p
+	}
+	out := p
+	for _, seg := range segs {
+		var shown string
+		if !utf8.ValidString(seg) || strings.ContainsFunc(seg, unicode.IsControl) {
+			shown = shape.HiddenName
+		} else {
+			shown = shape.DisplayName(seg)
+		}
+		if shown != seg {
+			out = strings.Replace(out, seg, shown, 1)
+		}
+	}
+	return out
 }
 
 // openStore is the approval store for the repository at root, and what its
