@@ -2588,9 +2588,9 @@ behavior (2026-10-29).
       environment (`TEMP`), which the hook and the Bash tool might not
       share. A double slash (`//proc/self/cwd`) is a UNC path to Windows
       and is not placed, and a backslash spelling (`'\proc\self\cwd\x'`)
-      is read as the backslash it is; what Git Bash makes of either is not
-      measured, and a test logs what the gate decides for them. (Decided
-      2026-11-04.)
+      is read as the backslash it is. Measured in Git Bash, neither reaches
+      the working directory: each is "no such file or directory". A test
+      logs what the gate decides for them. (Decided 2026-11-04.)
 - **Known over-blocks of the shell rule, in full.** Each denies though
   the line may print nothing protected; each is the price of a rule
   above, and each has a plain form that is allowed:
