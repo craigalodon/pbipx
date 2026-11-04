@@ -68,20 +68,15 @@ type finder struct {
 	cwdErr    error
 }
 
-// decideAdopted decides ev under opts.Adoption: against each adopted
-// repository it touches (targets), any deny winning, and then the files
-// outside every repository that control the gate (controls). A call that
-// touches no adopted repository and no such file is allowed.
-func decideAdopted(ev Event, opts Options) Decision {
-	if ev.Cwd == "" || !filepath.IsAbs(ev.Cwd) {
-		return deny(ReasonEventError, "the event has no absolute working directory")
-	}
-	f := &finder{ev: ev, store: opts.Adoption.store(), home: userHome(), fold: foldCase,
+// newFinder is the finder for ev over store (nil: none), with the store's
+// index read. An index that cannot be read is an error.
+func newFinder(ev Event, store *approval.Store) (*finder, error) {
+	f := &finder{ev: ev, store: store, home: userHome(), fold: foldCase,
 		gitAt: map[string]bool{}, adopted: map[string]bool{}}
 	if f.store != nil {
 		roots, records, err := f.store.Roots()
 		if err != nil {
-			return deny(ReasonInternalError, "the index of repositories set up for pbipx cannot be read; the call is denied")
+			return nil, err
 		}
 		f.records = records
 		for _, r := range roots {
@@ -94,6 +89,21 @@ func decideAdopted(ev Event, opts Options) Decision {
 		}
 		slices.Sort(f.index)
 		f.index = slices.Compact(f.index)
+	}
+	return f, nil
+}
+
+// decideAdopted decides ev under opts.Adoption: against each adopted
+// repository it touches (targets), any deny winning, and then the files
+// outside every repository that control the gate (controls). A call that
+// touches no adopted repository and no such file is allowed.
+func decideAdopted(ev Event, opts Options) Decision {
+	if ev.Cwd == "" || !filepath.IsAbs(ev.Cwd) {
+		return deny(ReasonEventError, "the event has no absolute working directory")
+	}
+	f, err := newFinder(ev, opts.Adoption.store())
+	if err != nil {
+		return deny(ReasonInternalError, "the index of repositories set up for pbipx cannot be read; the call is denied")
 	}
 	targets, failed := f.targets()
 	if failed != nil {
@@ -273,25 +283,90 @@ func (f *finder) isAdopted(root string) bool {
 	return r
 }
 
-func (f *finder) adoptedNow(root string) bool {
+func (f *finder) adoptedNow(root string) bool { return f.adoptedWhy(root) != "" }
+
+// adoptedWhy is why the work tree at root is adopted (an AdoptedBy kind),
+// or "" when it is not.
+func (f *finder) adoptedWhy(root string) string {
 	if _, err := os.Lstat(filepath.Join(root, policy.FileName)); err == nil {
-		return true
+		return ByPolicyFile
 	}
 	for _, a := range []string{root, resolve(root)} {
 		if slices.ContainsFunc(f.index, func(r string) bool { return samePath(r, a, f.fold) }) {
-			return true
+			return ByIndex
 		}
 	}
 	if !f.records {
-		return false
+		return ""
 	}
 	id, err := Identify(root)
 	if err != nil {
 		// git cannot name the clone, so no record can be found for it.
-		return false
+		return ""
 	}
 	ok, err := f.store.Adopted(id)
-	return ok || err != nil
+	if ok || err != nil {
+		return ByRecord
+	}
+	return ""
+}
+
+// Why a work tree is adopted (AdoptedBy.Kind).
+const (
+	// ByPolicyFile: the work tree has a .pbipx.toml.
+	ByPolicyFile = "policy-file"
+	// ByIndex: the work tree is in the store's index of adopted work trees.
+	ByIndex = "index"
+	// ByRecord: the work tree's clone has a record in the store, one that
+	// cannot be read included.
+	ByRecord = "record"
+	// ByEnclosing: the work tree lies inside another adopted work tree,
+	// which the gate judges its paths against.
+	ByEnclosing = "enclosing"
+	// ByUnplaceable: git cannot open an adopted work tree the work tree
+	// lies in, and the gate denies there.
+	ByUnplaceable = "unplaceable"
+)
+
+// AdoptedBy says why the gate acts for a call made in a work tree.
+type AdoptedBy struct {
+	// Kind is one of the By constants.
+	Kind string
+	// Root is the adopted work tree that holds the call: the work tree
+	// itself or, for ByEnclosing, the one around it. Empty for
+	// ByUnplaceable.
+	Root string
+}
+
+// AdoptedBy is nil when the gate does not act for a call made in the work
+// tree at root: it is not adopted, and no adopted work tree holds it.
+// It is the adoption the gate decides by, so a caller that removes an
+// adoption can ask whether it is gone. An index that cannot be read is an
+// error.
+func (a *Adoption) AdoptedBy(root string) (*AdoptedBy, error) {
+	f, err := newFinder(Event{Tool: Read, Cwd: root, Path: root}, a.store())
+	if err != nil {
+		return nil, err
+	}
+	targets, failed := f.targets()
+	if failed != nil {
+		return &AdoptedBy{Kind: ByUnplaceable}, nil
+	}
+	if len(targets) == 0 {
+		return nil, nil
+	}
+	repo := targets[0]
+	if samePath(resolve(repo.Root), resolve(root), f.fold) {
+		return &AdoptedBy{Kind: f.adoptedWhy(repo.Root), Root: repo.Root}, nil
+	}
+	return &AdoptedBy{Kind: ByEnclosing, Root: repo.Root}, nil
+}
+
+// WorkTrees are the work trees of the clone that the work tree at root
+// belongs to, as git worktree list reports them, root first, read without
+// running git (linkedWorktrees).
+func WorkTrees(root string) []string {
+	return append([]string{root}, linkedWorktrees(root)...)
 }
 
 // spots are the paths ev touches, and whether it touches something that
