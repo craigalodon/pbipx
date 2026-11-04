@@ -1,0 +1,6 @@
+description = "collect with no folder is a usage error; no value is planted"
+command = "collect"
+args = []
+policy = "default"
+exit = 4
+sentinels = []

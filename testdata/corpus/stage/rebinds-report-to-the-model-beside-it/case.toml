@@ -1,0 +1,8 @@
+description = "a report bound to a service model is staged next to its local model, rebound by path; no value is planted"
+command = "stage"
+args = ["pbip/Example.Report", "--to", "{work}/copy"]
+policy = "default"
+exit = 0
+sentinels = []
+status = []
+expect-work-absent = ["copy/.git"]

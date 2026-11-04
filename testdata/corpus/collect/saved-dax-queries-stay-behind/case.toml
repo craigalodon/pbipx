@@ -1,0 +1,9 @@
+description = "a DAX query saved beside the model is not brought back and never reaches output"
+command = "collect"
+args = ["{work}/copy"]
+policy = "default"
+exit = 0
+sentinels = ["Doe, Jane"]
+setup = [["stage", "pbip/Example.Report", "--to", "{work}/copy"]]
+expect-root-absent = ["pbip/Example.SemanticModel/DAXQueries"]
+status = []

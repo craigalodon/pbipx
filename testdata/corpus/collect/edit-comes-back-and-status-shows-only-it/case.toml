@@ -1,0 +1,8 @@
+description = "a saved edit comes back byte for byte, with no final newline, and git status shows only it; no value is planted"
+command = "collect"
+args = ["{work}/copy"]
+policy = "default"
+exit = 0
+sentinels = []
+setup = [["stage", "pbip/Example.Report", "--to", "{work}/copy"]]
+status = [" M pbip/Example.Report/definition/pages/0000/visuals/0001/visual.json"]

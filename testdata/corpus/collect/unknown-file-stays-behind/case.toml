@@ -1,0 +1,9 @@
+description = "a file in a folder Desktop saves to, of a kind pbipx does not know, is not brought back or printed"
+command = "collect"
+args = ["{work}/copy"]
+policy = "default"
+exit = 0
+sentinels = ["Roe, Richard"]
+setup = [["stage", "pbip/Example.Report", "--to", "{work}/copy"]]
+expect-root-absent = ["pbip/Example.Report/definition/notes.txt"]
+status = []

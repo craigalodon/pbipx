@@ -1,0 +1,8 @@
+description = "a model that already has a working copy is not staged again; no value is planted"
+command = "stage"
+args = ["pbip/Example.Report", "--to", "{work}/second"]
+policy = "default"
+exit = 3
+sentinels = []
+setup = [["stage", "pbip/Example.Report", "--to", "{work}/first"]]
+expect-work-absent = ["second"]
