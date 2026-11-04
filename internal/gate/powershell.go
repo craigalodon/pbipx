@@ -315,7 +315,7 @@ func (s *setup) powershell(line string) Decision {
 			displayPath(local))
 	}
 	if export != "" {
-		return denyPerf("the PowerShell command names", export)
+		return s.perfDeny("the PowerShell command names", export)
 	}
 	return s.tree(trigger{"the gate cannot read a PowerShell command, so it takes it to touch every protected root",
 		hintPowerShell})

@@ -131,6 +131,9 @@ type setup struct {
 	baseline *baseline.Baseline
 	cwd      string
 	now      time.Time
+	// perf is what this decision has spent on Performance Analyzer shape
+	// checks of files a command names (perfexport.go).
+	perf perfBudget
 	// fold is whether paths are compared without regard to case
 	// (foldCase); home is the gate's own home directory, "" when unknown.
 	fold bool

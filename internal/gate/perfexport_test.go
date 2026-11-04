@@ -1,6 +1,7 @@
 package gate_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -57,9 +58,9 @@ func TestReadPerfExport(t *testing.T) {
 	files["analysis/TRACE.JSON"] = perfExport
 	files["analysis/bom.json"] = "\xef\xbb\xbf" + perfExport
 	files["analysis/crlf.json"] = strings.ReplaceAll(perfExport, "\n", "\r\n")
-	files["analysis/events-first.json"] = `{"events":[{"name":"Query","start":1}],"version":"1"}`
-	files["analysis/no-version.json"] = `{"events":[{"name":"Query","metrics":{}}]}`
-	files["analysis/empty.json"] = `{"version":"1.2.0","events":[]}`
+	files["analysis/parent.json"] = `{"version":2,"events":[{"name":"Query","parentId":"x"}]}`
+	files["analysis/metrics.json"] = `{"version":"1","events":[{"name":"Query","metrics":{}}]}`
+	files["analysis/one-line.json"] = `{"version":"1","events":[{"name":"Query","metrics":{}}]}` + "\n"
 	files["analysis/utf16.json"] = utf16LE(perfExport)
 	root := newRepo(t, files)
 	run(t, root, []decideCase{
@@ -69,9 +70,9 @@ func TestReadPerfExport(t *testing.T) {
 		{"upper-case name", readEv("analysis/TRACE.JSON"), gate.ReasonPerfExport},
 		{"with a byte order mark", readEv("analysis/bom.json"), gate.ReasonPerfExport},
 		{"with CRLF", readEv("analysis/crlf.json"), gate.ReasonPerfExport},
-		{"events before version", readEv("analysis/events-first.json"), gate.ReasonPerfExport},
-		{"no version", readEv("analysis/no-version.json"), gate.ReasonPerfExport},
-		{"no events, with a version", readEv("analysis/empty.json"), gate.ReasonPerfExport},
+		{"parentId and a numeric version", readEv("analysis/parent.json"), gate.ReasonPerfExport},
+		{"metrics only", readEv("analysis/metrics.json"), gate.ReasonPerfExport},
+		{"one line and a newline", readEv("analysis/one-line.json"), gate.ReasonPerfExport},
 		{"UTF-16", readEv("analysis/utf16.json"), gate.ReasonPerfExport},
 		{"absolute", readEv(filepath.Join(root, filepath.FromSlash(exportOutside))), gate.ReasonPerfExport},
 		{"edit shows the file", gate.Event{Tool: gate.Edit, Path: exportOutside}, gate.ReasonPerfExport},
@@ -81,11 +82,18 @@ func TestReadPerfExport(t *testing.T) {
 
 // Principle 6: ordinary JSON is not an export, and reading it stays allowed.
 func TestReadOrdinaryJSONStaysAllowed(t *testing.T) {
-	big := `{"name":"x","pad":"` + strings.Repeat("a", 2<<20) + `","events":[{"name":"Query","start":1}]}`
+	big := `{"version":"1","pad":"` + strings.Repeat("a", 100<<10) + `","events":[{"name":"Query","metrics":{}}]}`
 	files := cleanFiles()
 	files["package.json"] = `{"name":"example","version":"1.0.0","scripts":{"test":"echo ok"},"dependencies":{"left":"^1.0.0"}}`
 	files["tsconfig.json"] = `{"compilerOptions":{"target":"es2022","strict":true},"include":["src"]}`
-	files["analysis/calendar.json"] = `{"version":"1","events":[{"title":"Standup","date":"2100-01-01"}]}`
+	files["analysis/calendar.json"] = `{"version":"1","events":[{"name":"Standup","id":"a1","start":"2100-01-01T09:00:00Z","end":"2100-01-01T09:15:00Z"}]}`
+	files["analysis/name-start.json"] = `{"events":[{"name":"Standup","start":"2100-01-01"}]}`
+	files["analysis/name-start-version.json"] = `{"version":"1","events":[{"name":"Standup","start":"2100-01-01"}]}`
+	files["analysis/name-id.json"] = `{"version":1,"events":[{"name":"boot","id":3,"level":"info"}]}`
+	files["analysis/ndjson.json"] = `{"version":"1","events":[{"name":"Query","metrics":{}}]}` + "\n" + `{"version":"1","events":[{"name":"Query","metrics":{}}]}` + "\n"
+	files["analysis/events-before-version.json"] = `{"events":[{"name":"Query","metrics":{}}],"version":"1"}`
+	files["analysis/no-version.json"] = `{"events":[{"name":"Query","metrics":{}}]}`
+	files["analysis/empty-events.json"] = `{"version":"1.2.0","events":[]}`
 	files["analysis/events-of-strings.json"] = `{"version":"1","events":["a","b"]}`
 	files["analysis/events-object.json"] = `{"version":"1","events":{"name":"Query","start":1}}`
 	files["analysis/events-nested.json"] = `{"data":{"events":[{"name":"Query","start":1}]}}`
@@ -101,7 +109,14 @@ func TestReadOrdinaryJSONStaysAllowed(t *testing.T) {
 	run(t, root, []decideCase{
 		{"package.json", readEv("package.json"), ""},
 		{"tsconfig.json", readEv("tsconfig.json"), ""},
-		{"a calendar with an events list", readEv("analysis/calendar.json"), ""},
+		{"a calendar with named, timed events", readEv("analysis/calendar.json"), ""},
+		{"name and start", readEv("analysis/name-start.json"), ""},
+		{"name and start, with a version", readEv("analysis/name-start-version.json"), ""},
+		{"name and id, with a version", readEv("analysis/name-id.json"), ""},
+		{"lines of values", readEv("analysis/ndjson.json"), ""},
+		{"events before the version", readEv("analysis/events-before-version.json"), ""},
+		{"no version", readEv("analysis/no-version.json"), ""},
+		{"no events, with a version", readEv("analysis/empty-events.json"), ""},
 		{"events of strings", readEv("analysis/events-of-strings.json"), ""},
 		{"events an object", readEv("analysis/events-object.json"), ""},
 		{"events nested", readEv("analysis/events-nested.json"), ""},
@@ -143,4 +158,22 @@ func TestPerfExportMessageHoldsNoQueryText(t *testing.T) {
 	if !strings.Contains(d.Message, exportOutside) {
 		t.Errorf("message does not name the file: %s", d.Message)
 	}
+}
+
+// Principle 6, and the budget: a command naming many files cannot cost
+// unbounded time, and fails closed past the budget with scan-error.
+func TestPerfExportBudget(t *testing.T) {
+	files := cleanFiles()
+	for i := 0; i < 600; i++ {
+		files[fmt.Sprintf("many/f%03d.json", i)] = `{"a":1}`
+	}
+	for i := 0; i < 100; i++ {
+		files[fmt.Sprintf("few/f%03d.json", i)] = `{"a":1}`
+	}
+	root := newRepo(t, files)
+	run(t, root, []decideCase{
+		bash("100 files", "cat few/*.json", ""),
+		bash("600 files", "cat many/*.json", gate.ReasonScanError),
+		bash("600 files by name", "cat many/f0*.json many/f1*.json many/f2*.json many/f3*.json many/f4*.json many/f5*.json", gate.ReasonScanError),
+	})
 }

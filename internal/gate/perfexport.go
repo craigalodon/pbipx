@@ -26,28 +26,42 @@ import (
 
 // The shape of an export, in one place. The field names are from memory of
 // the export's general shape: THEY NEED CONFIRMING AGAINST A REAL EXPORT
-// (schema only: names, never values). Until then the check is deliberately
-// broad about what it calls an export, within one object holding a list of
-// named, timed events.
+// (schema only: names, never values). Common keys (`id`, `start`, `end`)
+// are not enough, since calendars and logs have them: the shape is a
+// top-level version, before an event list whose first event has a name and
+// a key that is distinctive of Performance Analyzer.
 const (
 	// perfEventsKey is the top-level key of the event list.
 	perfEventsKey = "events"
-	// perfVersionKey is the top-level key of the format version.
+	// perfVersionKey is the top-level key of the format version. It must
+	// come before the event list.
 	perfVersionKey = "version"
 	// perfEventNameKey is the key every event carries.
 	perfEventNameKey = "name"
 )
 
-// perfEventKeys are the keys that make a named object an event: its timing,
-// its metrics and its place in the tree of events. An event needs the name
-// and one of these.
-var perfEventKeys = []string{"start", "end", "metrics", "id", "parentId"}
+// perfEventKeys are the keys that, with the name, make an object an event of
+// an export: its metrics and its parent in the tree of events.
+var perfEventKeys = []string{"metrics", "parentId"}
 
-// perfHeadLimit is how much of a file the check reads. A real export puts the
-// version and the first event at the start; a file whose shape is not
-// decided in this much falls back to the existing rules, so a large lock file
-// costs one bounded read and is not denied.
-const perfHeadLimit = 1 << 20
+// The cost of the check is bounded (principle 7: a hook that runs too long
+// lets the call proceed). perfHeadLimit is how much of a file is read: a real
+// export puts the version and the first event at the start, and a file whose
+// shape is not decided in this much falls back to the existing rules.
+// A command naming files is checked within a budget: past perfMaxFiles files
+// opened, or perfMaxBytes bytes read, in one decision, the gate stops and
+// denies with scan-error, since it can no longer say the rest are not exports.
+const (
+	perfHeadLimit = 64 << 10
+	perfMaxFiles  = 512
+	perfMaxBytes  = 16 << 20
+)
+
+// perfBudget is what one decision has spent on shape checks.
+type perfBudget struct {
+	files, bytes int
+	over         bool
+}
 
 // perfExport reports whether the file at path (an absolute path to a regular
 // file) is a Performance Analyzer export. A file that cannot be opened or
@@ -66,9 +80,10 @@ func perfExport(path string) bool {
 }
 
 // perfExportShape reports whether head, the start of a file, begins a
-// Performance Analyzer export: one JSON object with an event list of named,
-// timed objects, or an empty one beside a version. It never returns an error
-// or any of head: a parse that cannot tell is false.
+// Performance Analyzer export: one JSON object with a version, then an event
+// list whose first element has a name and a distinctive key (perfEventKeys).
+// It never returns an error or any of head: a parse that cannot tell is
+// false.
 func perfExportShape(head []byte) bool {
 	head = head[:min(len(head), perfHeadLimit)]
 	head = decodeHead(head)
@@ -76,11 +91,16 @@ func perfExportShape(head []byte) bool {
 	if len(head) == 0 || head[0] != '{' {
 		return false // cheap exit for every file that is not an object
 	}
+	// A first line that is a whole object, with more after it, is lines of
+	// values (NDJSON), not one export.
+	if i := bytes.IndexByte(head, '\n'); i >= 0 && len(bytes.TrimSpace(head[i+1:])) > 0 && json.Valid(head[:i]) {
+		return false
+	}
 	dec := json.NewDecoder(bytes.NewReader(head))
 	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
 		return false
 	}
-	version, emptyEvents := false, false
+	version := false
 	for dec.More() {
 		tok, err := dec.Token()
 		key, ok := tok.(string)
@@ -91,68 +111,45 @@ func perfExportShape(head []byte) bool {
 		case perfVersionKey:
 			version = true
 		case perfEventsKey:
-			switch perfEvents(dec) {
-			case perfYes:
-				return true
-			case perfEmpty:
-				emptyEvents = true
-			default:
-				return false
-			}
-			continue
+			return version && perfEvents(dec)
 		}
 		var skip json.RawMessage
 		if dec.Decode(&skip) != nil {
 			return false
 		}
 	}
-	return emptyEvents && version
+	return false
 }
 
-// What perfEvents found in the event list.
-type perfVerdict int
-
-const (
-	perfNo    perfVerdict = iota // not a list of events, or cannot be told
-	perfEmpty                    // an empty list
-	perfYes                      // a list whose first element is an event
-)
-
-// perfEvents reads the value of the events key: the decoder is just past the
-// key.
-func perfEvents(dec *json.Decoder) perfVerdict {
-	if tok, err := dec.Token(); err != nil || tok != json.Delim('[') {
-		return perfNo
-	}
-	if !dec.More() {
-		if _, err := dec.Token(); err != nil { // the closing bracket
-			return perfNo
-		}
-		return perfEmpty
+// perfEvents reads the value of the events key, the decoder just past the
+// key, and reports whether its first element is an event.
+func perfEvents(dec *json.Decoder) bool {
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('[') || !dec.More() {
+		return false
 	}
 	// Read the first element's keys as they come, so a large value in it
-	// does not matter once its name and one more key are seen.
+	// does not matter once its name and a distinctive key are seen.
 	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
-		return perfNo
+		return false
 	}
-	named, timed := false, false
+	named, distinct := false, false
 	for dec.More() {
 		tok, err := dec.Token()
 		key, ok := tok.(string)
 		if err != nil || !ok {
-			return perfNo
+			return false
 		}
 		named = named || key == perfEventNameKey
-		timed = timed || slices.Contains(perfEventKeys, key)
-		if named && timed {
-			return perfYes
+		distinct = distinct || slices.Contains(perfEventKeys, key)
+		if named && distinct {
+			return true
 		}
 		var skip json.RawMessage
 		if dec.Decode(&skip) != nil {
-			return perfNo
+			return false
 		}
 	}
-	return perfNo
+	return false
 }
 
 // decodeHead drops a UTF-8 byte order mark and turns UTF-16 (marked by its
@@ -185,12 +182,38 @@ const hintPerf = "Ask a person to summarize it with `pbipx perf` at a terminal, 
 // perfFile reports whether the absolute path a is a regular file inside the
 // repository that is an export. A path outside the repository, a missing one
 // and a file that is not regular are not.
+//
+// Each file opened is charged to the decision's budget. Past it the answer
+// is true with s.perf.over set: the caller denies with scan-error, not as an
+// export.
 func (s *setup) perfFile(a string) bool {
 	if _, ok := s.rel(a); !ok {
 		return false
 	}
 	info, err := os.Stat(a)
-	return err == nil && info.Mode().IsRegular() && perfExport(a)
+	if err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	b := &s.perf
+	if b.over {
+		return true
+	}
+	b.files++
+	b.bytes += int(min(info.Size(), perfHeadLimit))
+	if b.files > perfMaxFiles || b.bytes > perfMaxBytes {
+		b.over = true
+		return true
+	}
+	return perfExport(a)
+}
+
+// perfDeny is the deny for the file perfFile answered true for.
+func (s *setup) perfDeny(what, rel string) Decision {
+	if s.perf.over {
+		return deny(ReasonScanError, "%s more files than the gate checks for a Performance Analyzer export in one call "+
+			"(%d files or %d MiB), so they were not vetted. Name fewer files.", what, perfMaxFiles, perfMaxBytes>>20)
+	}
+	return denyPerf(what, rel)
 }
 
 // denyPerf is the deny for the export at rel, reached by what (a command, or
@@ -228,7 +251,7 @@ func (w *walker) perfExports() *Decision {
 			for _, a := range abss {
 				if w.cache.memo("perf", a, s.perfFile) {
 					rel, _ := s.rel(a)
-					d := denyPerf("the command reads", rel)
+					d := s.perfDeny("the command reads", rel)
 					return &d
 				}
 			}
