@@ -429,9 +429,8 @@ func (f *finder) controls() Decision {
 			if what, ok := f.probe.s.reachesControl(v, ctl); ok {
 				return deny(ReasonAgentSettings, "the command names a path %s; %s", what, controlWhy)
 			}
-			if selfApproval(v) {
-				return deny(ReasonAgentSettings, "the command runs 'pbipx policy approve'; "+
-					"approving the policy is a person's step at a terminal, and an agent may not approve the policy that binds it")
+			if msg, ok := personStep(v); ok {
+				return deny(ReasonAgentSettings, "%s", msg)
 			}
 		}
 	case PowerShell:
@@ -439,7 +438,7 @@ func (f *finder) controls() Decision {
 		if !ok {
 			return deny(ReasonInternalError, "the PowerShell command holds more than %d words, too many to judge", maxPSWords)
 		}
-		if d, ok := psControl(f.ev.Cwd, f.home, words, ctl); ok {
+		if d, ok := psControl(f.ev.Cwd, f.home, f.ev.Command, words, ctl); ok {
 			return d
 		}
 	}

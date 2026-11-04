@@ -65,9 +65,8 @@ func (s *setup) shell(line string) Decision {
 			return deny(ReasonAgentSettings, "the command names a Claude Code settings file "+
 				"(.claude/settings.json or .claude/settings.local.json) or writes into a .claude directory; %s", agentSettingsWhy)
 		}
-		if selfApproval(v) {
-			return deny(ReasonAgentSettings, "the command runs 'pbipx policy approve'; "+
-				"approving the policy is a person's step at a terminal, and an agent may not approve the policy that binds it")
+		if msg, ok := personStep(v); ok {
+			return deny(ReasonAgentSettings, "%s", msg)
 		}
 	}
 	// 1. The tool alone redacts on its own.

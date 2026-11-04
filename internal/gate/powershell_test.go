@@ -80,6 +80,23 @@ func TestPowerShell(t *testing.T) {
 			{"policy then a variable", ps("pbipx policy $sub"), gate.ReasonAgentSettings},
 			{"policy then a subexpression", ps("pbipx policy $(Get-Sub)"), gate.ReasonAgentSettings},
 			{"policy status", ps("pbipx policy status"), ""},
+			{"in Invoke-Expression", ps(`Invoke-Expression "pbipx policy approve"`), gate.ReasonAgentSettings},
+			{"in iex", ps(`iex 'pbipx policy unenroll'`), gate.ReasonAgentSettings},
+			{"in pwsh -c", ps(`pwsh -c "pbipx policy unenroll"`), gate.ReasonAgentSettings},
+			{"in powershell -Command", ps(`powershell -Command 'pbipx policy approve'`), gate.ReasonAgentSettings},
+			{"in Start-Process", ps(`Start-Process pbipx -ArgumentList 'policy','unenroll'`), gate.ReasonAgentSettings},
+			{"policy then a group", ps("pbipx policy (Get-Sub)"), gate.ReasonAgentSettings},
+			{"policy then a hashtable", ps("pbipx policy @sub"), gate.ReasonAgentSettings},
+			{"policy then a block", ps("pbipx policy {x}"), gate.ReasonAgentSettings},
+			{"built expression", ps(`Invoke-Expression ("pbipx " + "policy " + "approve")`), gate.ReasonAgentSettings},
+			{"init", ps("pbipx init"), gate.ReasonAgentSettings},
+			{"gate by path", ps(`& C:\tools\pbipx.exe gate`), gate.ReasonAgentSettings},
+			{"a subcommand it cannot tell", ps("pbipx $sub"), gate.ReasonAgentSettings},
+			{"show-values", ps("pbipx scan --show-values"), gate.ReasonAgentSettings},
+			{"show-values under winpty", ps("winpty pbipx scan --show-values"), gate.ReasonAgentSettings},
+			{"init help", ps("pbipx init --help"), ""},
+			{"scan", ps("pbipx scan --all"), ""},
+			{"a string naming init", ps("Write-Output 'pbipx init'"), ""},
 		})
 	})
 }
