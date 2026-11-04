@@ -486,6 +486,12 @@ repositories a call is the gate's to judge
   `pbipx policy approve` or `unenroll`) is denied with `agent-settings`,
   since from any directory it would switch the gate off, or forge an
   approval, for every adopted repository.
+  A word naming `PBIPX_CONFIG_DIR` or `CLAUDE_CONFIG_DIR` (`$VAR`,
+  `${VAR}`, or `$env:VAR` in PowerShell) is judged as the directory it
+  stands for, since the agent's shell expands it: the gate's own value where
+  set, and otherwise the directory the variable defaults to (the store, or
+  `~/.claude`). So `rm -rf $PBIPX_CONFIG_DIR/approved` denies like the
+  literal path, and a plain read of it stays allowed.
 - An adopted repository that git cannot open as a work tree (its `.git`
   removed, say, while its work tree stays indexed), or a working directory
   inside one that git cannot place (inside the git directory, or gone),

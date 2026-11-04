@@ -249,7 +249,7 @@ func psControl(cwd, home, line string, words []string, ctl controls) (Decision, 
 			continue
 		}
 		seen[w] = true
-		for _, v := range psVariants(w, home) {
+		for _, v := range psVariants(expandPSControlVars(w), home) {
 			sp := spellings(cwd, v)
 			what, ok := ctl.target(sp)
 			if !ok {

@@ -3,7 +3,9 @@ package gate
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"strings"
 
 	"github.com/craigalodon/pbipx/internal/approval"
 	"github.com/craigalodon/pbipx/internal/scan"
@@ -134,4 +136,48 @@ func expandAll(dirs []string) []string {
 		out = append(out, filepath.Clean(d), approval.ResolveExisting(d))
 	}
 	return out
+}
+
+// claudeConfigDirEnv names Claude Code's configuration directory.
+const claudeConfigDirEnv = "CLAUDE_CONFIG_DIR"
+
+// controlVar is the value of PBIPX_CONFIG_DIR or CLAUDE_CONFIG_DIR as a
+// command's shell would expand it, for the gate's judgment of a path: the
+// gate's own environment's value where it is set and usable, and otherwise
+// the directory that variable would default to, the store or the user's
+// Claude Code settings directory. An agent's shell expands these, so a word
+// that names one refers to what controls the gate whether or not the gate's
+// environment sets it. ok is false when no directory can be found.
+func controlVar(name string) (string, bool) {
+	switch name {
+	case approval.EnvConfigDir:
+		if d, err := approval.ConfigDir(); err == nil {
+			return d, true
+		}
+		if base, err := os.UserConfigDir(); err == nil && base != "" {
+			return filepath.Join(base, "pbipx"), true
+		}
+	case claudeConfigDirEnv:
+		if dirs := claudesetup.UserSettingsDirs(); len(dirs) > 0 {
+			return dirs[0], true
+		}
+	}
+	return "", false
+}
+
+// psControlVar matches a PowerShell reference to PBIPX_CONFIG_DIR or
+// CLAUDE_CONFIG_DIR in the environment drive, in any case, braced or not.
+var psControlVar = regexp.MustCompile(`(?i)\$(?:\{env:(PBIPX_CONFIG_DIR|CLAUDE_CONFIG_DIR)\}|env:(PBIPX_CONFIG_DIR|CLAUDE_CONFIG_DIR))`)
+
+// expandPSControlVars is w with each such reference replaced by its
+// directory (controlVar).
+func expandPSControlVars(w string) string {
+	return psControlVar.ReplaceAllStringFunc(w, func(m string) string {
+		sub := psControlVar.FindStringSubmatch(m)
+		name := strings.ToUpper(sub[1] + sub[2])
+		if v, ok := controlVar(name); ok {
+			return v
+		}
+		return m
+	})
 }

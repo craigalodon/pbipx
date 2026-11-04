@@ -1,0 +1,7 @@
+description = "rm -rf of the approval store named through $PBIPX_CONFIG_DIR denies with agent-settings: the shell expands the variable, so a word naming it refers to the store; this case plants no value"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []
+known       = "predecessor"

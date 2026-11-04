@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/craigalodon/pbipx/internal/approval"
 	"github.com/craigalodon/pbipx/internal/policy"
 	"github.com/craigalodon/pbipx/internal/scan"
 )
@@ -2299,8 +2300,9 @@ func dotRelative(p string) bool {
 }
 
 // expandWord expands w as far as the gate can, for a command run from st:
-// HOME (the gate's own), PWD and OLDPWD (as the line leaves them) and a
-// leading ~. Any other expansion leaves it unknown.
+// HOME (the gate's own), PWD and OLDPWD (as the line leaves them), a
+// leading ~, and the two variables that name what controls the gate
+// (controlVar). Any other expansion leaves it unknown.
 func (s *setup) expandWord(w word, st cwdState) xword {
 	xw := xword{known: true, redirect: w.redirect, input: w.input, here: w.here, rw: w.rw}
 	var text, pattern strings.Builder
@@ -2325,6 +2327,8 @@ func (s *setup) expandWord(w word, st cwdState) xword {
 			}
 		case "OLDPWD":
 			return st.oldpwd, st.oldpwd != ""
+		case approval.EnvConfigDir, claudeConfigDirEnv:
+			return controlVar(name)
 		}
 		return "", false
 	}
