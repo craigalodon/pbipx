@@ -144,6 +144,23 @@ func TestMSYSMountedPaths(t *testing.T) {
 		{"source /dev/stdin", sh("source /dev/stdin <<'EOF'\ngit log -p\nEOF"), gitContent},
 		{"a .. out of /dev", sh(cat("/dev/../mnt/data/B.Report/definition/pages/0000/visuals/0001/visual.json")), finding},
 		{"/proc/self/fd/0", sh(cat("/proc/self/fd/0")), ""},
+		{"/dev/fd/3", sh(cat("/dev/fd/3")), ""},
+		{"/proc/12/fd/3", sh(cat("/proc/12/fd/3")), ""},
+		{"/DEV/NULL", sh(cat("/DEV/NULL")), ""},
+		// The rest of them can lead into the repository.
+		{"/proc/self/cwd", sh(cat("/proc/self/cwd/README.md")), finding},
+		{"/proc/self/root", sh(cat("/proc/self/root/tmp/repo/README.md")), finding},
+		{"/PROC/self/cwd", sh(cat("/PROC/self/cwd/README.md")), finding},
+		{"/proc/12/cwd", sh(cat("/proc/12/cwd/README.md")), finding},
+		{"/proc with ..", sh(cat("/tmp/repo/../../proc/self/cwd/README.md")), finding},
+		{"a drive path with .. into /proc", sh(cat("/c/../proc/self/cwd/README.md")), finding},
+		{"/dev/sda", sh(cat("/dev/sda")), finding},
+		{"cd /proc/self/cwd", sh("cd /proc/self/cwd && cat README.md"), finding},
+		{"find /proc", sh("find /proc/self/cwd -name x -exec cat {} +"), finding},
+		{"echo /proc/self/cwd", sh("echo /proc/self/cwd"), ""},
+		{"read /proc/self/cwd", gate.Event{Tool: gate.Read, Path: "/proc/self/cwd/README.md"}, gate.ReasonInternalError},
+		{"read /dev/sda", gate.Event{Tool: gate.Read, Path: "/dev/sda"}, gate.ReasonInternalError},
+		{"read /dev/null", gate.Event{Tool: gate.Read, Path: "/dev/null"}, ""},
 
 		// The file tools.
 		{"read a leak", gate.Event{Tool: gate.Read, Path: report}, finding},
@@ -240,14 +257,14 @@ func TestMSYSNeverRunsForTheCommonForms(t *testing.T) {
 		{"/dev/null", sh("cat /dev/null"), ""},
 		{"2>/dev/null", sh("cat README.md 2>/dev/null"), ""},
 		{"/dev/stdin", sh("cat /dev/stdin"), ""},
-		{"/proc", sh("cat /proc/self/status"), ""},
+		{"/proc", sh("cat /proc/self/fd/0"), ""},
 		{"Windows path", sh("cat C:/x"), ""},
 		{"Windows path, quoted", sh(`cat "C:\x"`), ""},
 		{"UNC path", sh("cat //server/share/x"), ""},
 		{"relative", sh("cat notes/clean.md"), ""},
 		{"read a drive path", gate.Event{Tool: gate.Read, Path: "/c/x"}, ""},
 		{"read a Windows path", gate.Event{Tool: gate.Read, Path: "C:/x"}, ""},
-		{"search a device", gate.Event{Tool: gate.Search, Path: "/dev"}, ""},
+		{"search a device", gate.Event{Tool: gate.Search, Path: "/dev/null"}, ""},
 	})
 	if n := m.runs.Load(); n != 0 {
 		t.Errorf("cygpath ran %d times for forms that never need it", n)

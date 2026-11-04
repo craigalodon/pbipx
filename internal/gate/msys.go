@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -66,14 +67,25 @@ func msysClass(p string) msysKind {
 	if p == "/" {
 		return msysNever
 	}
-	segs := strings.FieldsFunc(p, func(r rune) bool { return r == '/' || r == '\\' })
-	dots := slices.Contains(segs, "..")
-	if len(segs) > 0 && !dots {
+	segs := msysSegments(p)
+	if slices.Contains(segs, "..") {
+		// What the dots lead to decides whether it is a virtual file.
+		cs := msysSegments(path.Clean(strings.ReplaceAll(p, "\\", "/")))
+		if len(cs) > 0 && virtualRoot(cs[0]) && !virtualFile(cs) {
+			return msysNever
+		}
+	} else if len(segs) > 0 {
 		first := segs[0]
 		switch {
-		case first == "dev" || first == "proc":
-			// Devices and process files, never a file in a repository.
-			return msysNone
+		case virtualRoot(first):
+			// /dev and /proc are Git Bash's own: only the standard
+			// devices and descriptors are known to be no file in a
+			// repository. /proc/self/cwd and /proc/self/root lead into
+			// one, so the rest cannot be told.
+			if virtualFile(segs) {
+				return msysNone
+			}
+			return msysNever
 		case len(first) == 1 && isASCIILetter(first[0]):
 			// A drive: today's reading.
 			return msysNone
@@ -83,6 +95,44 @@ func msysClass(p string) msysKind {
 		return msysNever
 	}
 	return msysPlace
+}
+
+// msysSegments are the segments of p, split at either separator.
+func msysSegments(p string) []string {
+	return strings.FieldsFunc(p, func(r rune) bool { return r == '/' || r == '\\' })
+}
+
+// virtualRoot reports whether the first segment names /dev or /proc, as
+// Git Bash matches a mount: without regard to case.
+func virtualRoot(seg string) bool {
+	return strings.EqualFold(seg, "dev") || strings.EqualFold(seg, "proc")
+}
+
+func allDigits(s string) bool {
+	return s != "" && strings.Trim(s, "0123456789") == ""
+}
+
+// virtualFile reports whether the segments are one of the few files under
+// /dev and /proc that are no file in a repository: the standard devices and
+// descriptors (/dev/null, /dev/fd/N, /proc/self/fd/N, /proc/N/fd/N).
+func virtualFile(segs []string) bool {
+	switch {
+	case strings.EqualFold(segs[0], "dev"):
+		if len(segs) == 3 {
+			return strings.EqualFold(segs[1], "fd") && allDigits(segs[2])
+		}
+		if len(segs) != 2 {
+			return false
+		}
+		for _, n := range []string{"null", "stdin", "stdout", "stderr", "tty", "zero", "urandom", "random"} {
+			if strings.EqualFold(segs[1], n) {
+				return true
+			}
+		}
+	case len(segs) == 4:
+		return (strings.EqualFold(segs[1], "self") || allDigits(segs[1])) && strings.EqualFold(segs[2], "fd") && allDigits(segs[3])
+	}
+	return false
 }
 
 // msysSplit splits p at its first glob character: dir is the path before
