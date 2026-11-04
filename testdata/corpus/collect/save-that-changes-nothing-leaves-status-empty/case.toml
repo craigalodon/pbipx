@@ -1,0 +1,8 @@
+description = "a save that rewrites a file with the same bytes changes nothing in the repository; no value is planted"
+command = "collect"
+args = ["{work}/copy"]
+policy = "default"
+exit = 0
+sentinels = []
+setup = [["stage", "pbip/Example.Report", "--to", "{work}/copy"]]
+status = []

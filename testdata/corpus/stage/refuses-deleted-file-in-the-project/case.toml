@@ -1,0 +1,8 @@
+description = "a tracked file deleted from the report folder makes the tree dirty and is refused; no value is planted"
+command = "stage"
+args = ["pbip/Example.Report", "--to", "{work}/copy"]
+policy = "default"
+exit = 3
+sentinels = []
+deleted = ["pbip/Example.Report/definition/pages/0000/visuals/0002/visual.json"]
+expect-work-absent = ["copy"]

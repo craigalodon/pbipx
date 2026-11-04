@@ -11,9 +11,10 @@ minimum_pre_commit_version: "4.0.0"
 
 # PBIR fixtures keep Power BI Desktop's serialization, with no final newline
 # and no reformatting (CONTRIBUTING.md), so no fixer may touch the corpus
-# trees, or the trees of the corpus package's own test cases. The
+# trees (tree/, after/tree/, expected/root/ and expected/work/), or those of
+# the corpus package's own test cases. The
 # private-terms hook is not subject to this.
-exclude: ^(testdata/corpus|internal/corpus/testdata/corpus)/.*/tree/
+exclude: ^(testdata/corpus|internal/corpus/testdata/corpus)/.*/(tree|expected/root|expected/work)/
 
 repos:
   - repo: local

@@ -1,0 +1,8 @@
+description = "a saved visual that does not parse is an error finding and refuses the whole collect; no value is planted"
+command = "collect"
+args = ["{work}/copy"]
+policy = "default"
+exit = 3
+sentinels = []
+setup = [["stage", "pbip/Example.Report", "--to", "{work}/copy"]]
+status = []

@@ -1,0 +1,9 @@
+description = "Desktop local state and the data cache beside the model are not brought back and never reach output"
+command = "collect"
+args = ["{work}/copy"]
+policy = "default"
+exit = 0
+sentinels = ["Doe, Jane"]
+setup = [["stage", "pbip/Example.Report", "--to", "{work}/copy"]]
+expect-root-absent = ["pbip/Example.Report/.pbi", "pbip/Example.SemanticModel/.pbi"]
+status = []

@@ -21,12 +21,15 @@ testdata/corpus/
     case.toml                    what to run, and what must never appear
     tree/...                     the repository the command runs in
     stdin                        optional: standard input (the gate's hook event)
+    after/tree/...               optional: baseline, stage and collect cases
+    expected/root/...            optional, stage/collect: files the root holds
+    expected/work/...            optional, stage/collect: the working copy's
     expected.json                the normalized result
 ```
 
 `<area>` groups cases: `pbir`, `tmdl`, `sql`, `yaml`, `text`, `baseline`,
-`policy`, `gate`, `explain`. A case directory is named in kebab case for what
-it shows (`slicer-on-block-column-blocks`).
+`policy`, `gate`, `explain`, `stage`, `collect`. A case directory is named in
+kebab case for what it shows (`slicer-on-block-column-blocks`).
 
 ## Running a case
 
@@ -66,6 +69,7 @@ runner does all three.
 ```toml
 description = "slicer selection on a direct-identifier column blocks"
 command     = "scan"                 # scan | scan-text | gate | explain | baseline
+                                     #   | stage | collect
 args        = ["--all"]
 policy      = "default"              # policies/default.toml, or "tree" for tree/.pbipx.toml
 exit        = 1
@@ -84,6 +88,13 @@ worktrees  = []                      # linked work trees added at the commit
 env        = { CI = "true" }         # environment for the command
 known      = "predecessor"           # see "Known differences"
 approved   = false                   # gate only: run with no policy approval
+
+# Optional, stage and collect only ("Stage and collect cases").
+setup              = [["stage", "pbip/Example.Report", "--to", "{work}/copy"]]
+work-deleted       = ["copy/Example.Report/definition/pages/0000/visuals/0002/visual.json"]
+status             = [" M pbip/Example.Report/definition/report.json"]
+expect-root-absent = ["pbip/Example.Report/.pbi"]
+expect-work-absent = ["copy/.git"]
 ```
 
 Every key except the optional ones is required, and an unknown key is an
@@ -154,6 +165,33 @@ Code reads stderr, not stdout, from a hook that exits 2.
 
 For `explain`, the result is the structure as JSON, in the schema of
 [explain.md](explain.md).
+
+For `stage` and `collect`, the result is exactly one of `{"ok": true}` and
+`{"refusal": "<class>"}`, a class from the vocabulary's `refusals`. The
+refusal `findings` (collect refused to bring anything back) also carries
+`findings`, in the shape above, with `path` the repository-relative path the
+file would have had:
+
+```json
+{
+  "refusal": "findings",
+  "findings": [
+    {
+      "path": "pbip/Example.Report/definition/pages/0000/visuals/0001/visual.json",
+      "context": "slicer-selection",
+      "column": "student.full_name",
+      "tier": "block",
+      "reasons": ["block-column", "person-name-shape"]
+    }
+  ]
+}
+```
+
+A failure before any of that, such as `not-a-repository`, is
+`{"failure": "<class>"}` as for a scan. Their exit codes are in
+[stage-collect.md](stage-collect.md): 0 for `ok`, 3 for any refusal but
+`findings`, and for `findings` as a scan's (1 for a block finding, 2 for
+warnings under `--strict`, 3 for an error finding).
 
 A value never appears in `expected.json`. The tool never prints one, so a
 normalized result has nowhere to put it.
@@ -306,6 +344,47 @@ operational refusal); refusal of a block or an unknown fingerprint exits 4.
 An expiry is metadata, not a planted value. A case that needs an expired
 entry uses a past year; the years 2100 to 2199 are for values.
 
+## Stage and collect cases
+
+`stage` and `collect` ([stage-collect.md](stage-collect.md)) copy a project
+outside the repository, so a case needs a place outside the root for the
+working copy, a way to build one, a way to play Desktop's save, and checks on
+the files left behind. These areas exist only in pbipx: the predecessor has
+no such commands, and is retiring ([ADR-0007](../adr/0007-the-desktop-round-trip.md),
+amending ADR-0003).
+
+- **`{work}`** in `args`, in `setup` and in `env` values is the **working-copy
+  base**: an existing, empty directory outside the root, in no git repository,
+  with no symbolic link in its path. A case names the working copy inside it
+  (`--to {work}/copy`). `{work}` is valid only in a stage or collect case.
+- **`setup`** is a list of command lines, each an array starting with `stage`
+  or `collect`, run in the root after step 3 with the case's environment. Each
+  must exit 0. A collect case uses it to stage first.
+- **`after/tree/`**, in a stage or collect case, is laid over `{work}` after
+  `setup`, replacing files: Desktop's save, or whatever the case needs to
+  already exist there (a leftover file, a symbolic link). It is not applied
+  to the root. **`work-deleted`** then removes paths, relative to `{work}`: a
+  deletion in Desktop.
+- **`status`**, when present, is the root's `git status --porcelain
+  --untracked-files=all` lines after the command, as a set. `status = []`
+  asserts a clean root. When absent, the status is not checked.
+- **`expected/root/`** and **`expected/work/`**: every file under them must
+  exist at the same path in the root, or in `{work}`, with the same bytes,
+  checked after the command. Extra files are allowed. **`expect-root-absent`**
+  and **`expect-work-absent`** list paths that must not exist.
+
+A mismatch names the path and the rule, never the bytes. Fixtures keep
+Desktop's serialization: no final newline in report JSON and LF, in
+`after/tree/` and `expected/` as in `tree/`. A fixture holds only what its
+case needs. `expected/root/` never holds a sentinel (the working copy may: a
+refused collect leaves it intact).
+
+Not representable as fixtures, so tested in Go when the commands exist: a file
+name with a colon (a Windows alternate data stream appears under WSL as
+`name:Zone.Identifier`, and such a name cannot be checked out on Windows), CRLF
+input (`.gitattributes` normalizes fixtures to LF), and a repository whose
+project changed after the stage (`source-changed`).
+
 ## pbipx's runner
 
 pbipx's runner is in [internal/corpus](../../internal/corpus).
@@ -341,6 +420,13 @@ How it does each step, where this format leaves the choice open:
   `column` left out for a null column.
 - A sentinel counts as present in output as written, with each apostrophe
   doubled, or as the body of a JSON string that encodes either.
+- The working-copy base is a fresh directory next to the case's configuration
+  directory, with symbolic links in its path resolved. `setup` commands run
+  with the same environment as the command. The commands `stage` and
+  `collect` get `--format json` appended like a scan, and print `{"ok": true}`
+  or `{"refusal": "<class>", ...}`; the runner compares `ok`, `refusal` and,
+  for `findings`, the findings as a multiset. The areas `stage` and `collect`
+  are not in `enabledAreas` until the commands exist.
 - Every command a case runs, the baseline setup scan included, gets
   `PBIPX_CONFIG_DIR` set to a fresh temporary directory of the case's own,
   outside the root, so no case reads or writes the user's approvals. A case
@@ -373,4 +459,15 @@ The validator adds rules this format implies:
   a block finding, with no error finding, exits 1; an allow exits 0 and a
   deny 2.
 - Each finding's path names a path in `tree/` or `after/tree/`, or
-  `.pbipx.toml`, or is `-` in a `scan-text` case with a `stdin`.
+  `.pbipx.toml`, or is `-` in a `scan-text` case with a `stdin`. A `collect`
+  finding's path is where the file would land in the repository, and is not
+  checked against the trees.
+- `{work}`, `setup`, `work-deleted`, `status` and the `expect-*` keys are set
+  only in a stage or collect case. A `setup` line starts with `stage` or
+  `collect`. `work-deleted` and the `expect-*` paths are clean relative
+  paths, and a `status` line is a `git status --porcelain` line.
+- A stage or collect result is `ok` (exit 0) or a refusal. A refusal other
+  than `findings` exits 3; `findings` needs `findings` and exits as a scan's
+  findings do. `expected/` holds only `root/` and `work/`, and report JSON in
+  them follows the same rules as in `tree/`. A collect case that expects an
+  error finding may hold report JSON that does not parse.

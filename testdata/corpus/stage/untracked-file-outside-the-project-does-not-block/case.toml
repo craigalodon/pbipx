@@ -1,0 +1,8 @@
+description = "an untracked file outside the report and model folders does not make the tree dirty; no value is planted"
+command = "stage"
+args = ["pbip/Example.Report", "--to", "{work}/copy"]
+policy = "default"
+exit = 0
+sentinels = []
+untracked = ["notes/scratch.md"]
+expect-work-absent = ["copy/notes"]
