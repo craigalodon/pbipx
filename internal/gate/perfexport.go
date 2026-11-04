@@ -7,6 +7,8 @@ import (
 	"os"
 	"slices"
 	"unicode/utf16"
+
+	"github.com/craigalodon/pbipx/internal/scan"
 )
 
 // A Power BI Performance Analyzer export holds the text of the queries a
@@ -68,6 +70,7 @@ func perfExport(path string) bool {
 // timed objects, or an empty one beside a version. It never returns an error
 // or any of head: a parse that cannot tell is false.
 func perfExportShape(head []byte) bool {
+	head = head[:min(len(head), perfHeadLimit)]
 	head = decodeHead(head)
 	head = bytes.TrimLeft(head, " \t\r\n")
 	if len(head) == 0 || head[0] != '{' {
@@ -178,3 +181,74 @@ func decodeHead(b []byte) []byte {
 // hintPerf ends a refusal of an export. `pbipx perf` is the summary that
 // prints counts and durations only (docs/design/perf.md).
 const hintPerf = "Ask a person to summarize it with `pbipx perf` at a terminal, or leave it out of the call."
+
+// perfFile reports whether the absolute path a is a regular file inside the
+// repository that is an export. A path outside the repository, a missing one
+// and a file that is not regular are not.
+func (s *setup) perfFile(a string) bool {
+	if _, ok := s.rel(a); !ok {
+		return false
+	}
+	info, err := os.Stat(a)
+	return err == nil && info.Mode().IsRegular() && perfExport(a)
+}
+
+// denyPerf is the deny for the export at rel, reached by what (a command, or
+// a search that read it). The message names the file and never its text.
+func denyPerf(what, rel string) Decision {
+	return deny(ReasonPerfExport, "%s %s, a Power BI Performance Analyzer export, which holds query text and visual titles that cannot be vetted. %s",
+		what, displayPath(rel), hintPerf)
+}
+
+// perfExports decides the file operands of a reading or searching command
+// in a shell line (the reading rule of walker.reaches, without the tree
+// scan): one it can place, inside the repository, that is an export denies.
+// A word it cannot place keeps today's rules. Each path is checked once.
+func (w *walker) perfExports() *Decision {
+	s := w.s
+	for _, v := range w.views {
+		if !v.cwd.known() {
+			continue
+		}
+		_, search := searchers[v.name]
+		reader := readers[v.name] || search
+		operandReader := !reader && v.name != "" && v.name != "gh" && readsOperands(v.name)
+		operands := operandWords(v)
+		filter := jqFilter(v)
+		for wi, xw := range v.words {
+			readsInput := xw.redirect && xw.input
+			if wi == filter || xw.here || xw.message && !w.redefines || xw.redirect && !readsInput ||
+				(!reader && !readsInput && (!operandReader || !operands[wi])) {
+				continue
+			}
+			abss, unknown := s.wordSpellings(v, xw)
+			if unknown {
+				continue
+			}
+			for _, a := range abss {
+				if w.cache.memo("perf", a, s.perfFile) {
+					rel, _ := s.rel(a)
+					d := denyPerf("the command reads", rel)
+					return &d
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// exportWatch is the reader of a tree scan: it passes each file through and
+// notes the first that is an export, on the bytes the scanner already read,
+// so the shape check is not another pass over the tree.
+type exportWatch struct {
+	r   scan.Reader
+	hit string
+}
+
+func (e *exportWatch) Read(path string) ([]byte, error) {
+	data, err := e.r.Read(path)
+	if err == nil && e.hit == "" && perfExportShape(data) {
+		e.hit = path
+	}
+	return data, err
+}

@@ -283,7 +283,7 @@ func (s *setup) powershell(line string) Decision {
 		return d
 	}
 	seen := map[string]bool{}
-	var local string
+	var local, export string
 	for _, w := range words {
 		if seen[w] || w == "" {
 			continue
@@ -294,6 +294,9 @@ func (s *setup) powershell(line string) Decision {
 				if scan.IsAgentSettings(rel) || strings.EqualFold(path.Base(rel), ".claude") {
 					return deny(ReasonAgentSettings, "the PowerShell command names a Claude Code settings file "+
 						"or a .claude directory; %s", agentSettingsWhy)
+				}
+				if export == "" && s.perfFile(filepath.Join(s.repo.Root, filepath.FromSlash(rel))) {
+					export = rel
 				}
 				if local == "" {
 					if class, _ := s.policy.Classify(rel); class == policy.LocalState || s.policy.LocalStateDir(rel) || s.nestedLocalState(rel) {
@@ -310,6 +313,9 @@ func (s *setup) powershell(line string) Decision {
 	if local != "" {
 		return deny(ReasonLocalState, "the PowerShell command names %s, Power BI Desktop local state, which is never read",
 			displayPath(local))
+	}
+	if export != "" {
+		return denyPerf("the PowerShell command names", export)
 	}
 	return s.tree(trigger{"the gate cannot read a PowerShell command, so it takes it to touch every protected root",
 		hintPowerShell})

@@ -180,6 +180,10 @@ func (s *setup) shell(line string) Decision {
 	if w.worktreeAfterWrite() {
 		w.setReach(whyWorktreeAfterWrite, hintChange)
 	}
+	// A reading command's file that is a Performance Analyzer export.
+	if d := w.perfExports(); d != nil {
+		return *d
+	}
 	// 3 and 4: a command that can reach a protected root scans the tree.
 	if t := w.reaches(); t.set() {
 		return s.tree(t)
