@@ -376,9 +376,31 @@ only, [perf.md](perf.md)). (Decided 2026-11-04.) The rule:
   `tsconfig.json`, a lock file and a calendar's `events` list stay readable.
   The cost of the fall-back is that an export that puts its event list past
   1 MiB of other keys is not caught.
-- Not covered: a shell command that reads an export (`cat trace.json`), a
-  recursive search, a copy outside the repository and a tree scan, none of
-  which recognizes the shape. Each is a follow-up.
+- **Bash and PowerShell.** Agents on Linux and macOS read through Bash, so
+  the same shape check, and the same deny, apply to a file a reading or
+  searching command is given (`cat`, `head`, `jq`, `sed`, `grep` and the
+  rest of the readers table, and any program taken to read its operands),
+  and to the target of an input redirection (`wc -c < trace.json`): once the
+  gate can place the word, against the working directory the line leaves it
+  in, as it places any word, a regular file inside the repository is
+  checked. A word it cannot place keeps today's rules. A path is checked once
+  per decision. In PowerShell, each word that looks like a path and names a
+  regular file in the repository is checked.
+- **Tree scans.** The scan that a Grep, a recursive search or a shell command
+  runs over the protected roots applies the check to each file the scanner
+  reads, on the bytes it read, so an export under a root denies with
+  `perf-export` where it would have been judged as a clean report file. It is
+  not another pass.
+- **Not covered.** A recursive search whose paths hold no protected root
+  (`grep -r x analysis`, a Grep of a directory outside the roots) is not a
+  tree scan and reads files nothing here names, so it stays as today: an
+  export it reads is not caught. Nor is a command that finds its file at run
+  time (`find . -name '*.json' -exec cat {} +`, `xargs`, a glob the gate
+  cannot expand), a copy outside the repository, or a reader of a
+  here-document. Each is a limitation of the gate's reading of a shell line,
+  not of this rule. A future `pbipx perf <file>` alone is allowed by the
+  tool-alone rule before this check; the change that builds it must keep a
+  pipeline of it from tripping the check on its own argument.
 
 **Divergence (lenient JSON).** The predecessor skips an unparseable report
 JSON file silently unless `--strict` is given (the gate always is). Principle

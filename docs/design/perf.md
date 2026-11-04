@@ -118,11 +118,21 @@ its gate case (`bash-pbipx-perf-denies` becomes an allow, still marked
 `known = "predecessor"`). Until then the command is off the table and the
 ordinary rules judge it.
 
-The agent runs `perf` on a file it may not read: the gate denies the Read with
-`perf-export`, and `pbipx perf <file>` is the way through. That is the
+The agent runs `perf` on a file it may not read: the gate denies a Read of it,
+a shell or PowerShell command that reads it (`cat`, `jq`, `grep`, an input
+redirection) and a tree scan that reaches it, all with `perf-export`, and
+`pbipx perf <file>` is the way through. That is the
 intended shape (principle 8: the capability arrives after the deny, in a
 reviewed change). The command takes a path, so the gate's rules for a path
 word apply to its argument as for any command.
+
+Two follow-ups belong to the change that builds the command. `pbipx perf
+<file> | head` is not the tool alone, so its argument would be checked as a
+reader's operand and denied: the check must skip the tool's own arguments.
+And the gate's rule that a search with no root in its paths reads nothing it
+can name (behavior.md, "Not covered") leaves a recursive search of such a
+directory able to read an export; closing it needs the search rule to say
+which files it reads.
 
 ## Tests the command needs
 
