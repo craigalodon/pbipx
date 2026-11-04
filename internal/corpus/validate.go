@@ -389,8 +389,8 @@ func (v *validator) checkSentinels() {
 			found = found || planted(f.data, f.rel, sen)
 		}
 		for _, f := range v.expected {
-			if planted(f.data, f.rel, sen) {
-				v.addf(f.label, "holds sentinels[%d]; an expected tree never holds a sentinel", i)
+			if strings.HasPrefix(f.label, expectedTree+"/"+expectedRoot+"/") && planted(f.data, f.rel, sen) {
+				v.addf(f.label, "holds sentinels[%d]; the expected root never holds a sentinel; only the working copy may", i)
 			}
 		}
 		if !found {
@@ -430,6 +430,10 @@ func (v *validator) checkReportFixtures() {
 			}
 		}
 		exemptAll = res.Reason == "scan-error"
+		// A collect finding's path is where the file would land in the
+		// repository, not where its fixture is, so an error finding
+		// exempts the case's report JSON as a whole.
+		exemptAll = exemptAll || (v.cs.Spec.IsWorkflow() && len(errPaths) > 0)
 	}
 	for _, f := range slices.Concat(v.files, v.expected) {
 		if !isReportFixture(f.rel) {
@@ -481,6 +485,12 @@ func (v *validator) checkWorkflow() {
 	if !s.IsWorkflow() {
 		if slices.ContainsFunc(s.Args, func(a string) bool { return strings.Contains(a, workPlaceholder) }) {
 			v.addf(caseFile, "args use %s, which only a stage or collect case has", workPlaceholder)
+		}
+		for _, k := range sortedKeys(s.Env) {
+			if strings.Contains(s.Env[k], workPlaceholder) {
+				v.addf(caseFile, "env uses %s, which only a stage or collect case has", workPlaceholder)
+				break
+			}
 		}
 		for _, k := range []struct {
 			set  bool

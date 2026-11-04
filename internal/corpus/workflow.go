@@ -43,6 +43,18 @@ func prepareWork(configDir string) (string, error) {
 	return dir, nil
 }
 
+// withPlaceholders is spec with {root} and {work} replaced in its env
+// values. The spec itself is not changed.
+func withPlaceholders(spec *Spec, p *Prepared) *Spec {
+	out := *spec
+	out.Env = make(map[string]string, len(spec.Env))
+	for k, v := range spec.Env {
+		v = strings.ReplaceAll(v, rootPlaceholder, p.Root)
+		out.Env[k] = strings.ReplaceAll(v, workPlaceholder, p.Work)
+	}
+	return &out
+}
+
 // SetupArgs is one setup command line with {root} and {work} replaced.
 func SetupArgs(args []string, p *Prepared) []string {
 	out := make([]string, len(args))
@@ -57,7 +69,7 @@ func SetupArgs(args []string, p *Prepared) []string {
 // then lays after/tree/ over the working-copy base (Desktop's save, or a
 // folder that was already there) and removes work-deleted paths.
 func (c *Corpus) prepareWorkflow(cs *Case, binary string, p *Prepared) error {
-	env := CommandEnv(os.Environ(), &cs.Spec, p.ConfigDir)
+	env := CommandEnv(os.Environ(), withPlaceholders(&cs.Spec, p), p.ConfigDir)
 	for i, line := range cs.Spec.Setup {
 		out, err := runBinary(binary, p.Root, SetupArgs(line, p), env, nil)
 		if err != nil {

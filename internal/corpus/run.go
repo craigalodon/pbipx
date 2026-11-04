@@ -346,7 +346,7 @@ func Execute(cs *Case, binary string, p *Prepared) (Outcome, error) {
 	if cs.HasStdin {
 		stdin = cs.StdinFor(p.Root)
 	}
-	out, err := runBinary(binary, p.Root, CommandArgs(cs, p), CommandEnv(os.Environ(), &cs.Spec, p.ConfigDir), stdin)
+	out, err := runBinary(binary, p.Root, CommandArgs(cs, p), CommandEnv(os.Environ(), withPlaceholders(&cs.Spec, p), p.ConfigDir), stdin)
 	if err != nil {
 		return out, fmt.Errorf("%s: %w", cs.ID(), err)
 	}

@@ -26,6 +26,7 @@ func TestValidateWorkflowRules(t *testing.T) {
 		{"setup outside stage and collect", slicer, appendTo("case.toml", "setup = [[\"stage\"]]\n"), "setup is set, but only a stage or collect case runs one"},
 		{"status outside stage and collect", slicer, appendTo("case.toml", "status = []\n"), "status is set, but only a stage or collect case has a work-tree status"},
 		{"work-deleted outside stage and collect", slicer, appendTo("case.toml", "work-deleted = [\"a\"]\n"), "work-deleted is set, but only a stage or collect case has a working copy"},
+		{"work in env outside stage and collect", slicer, appendTo("case.toml", "env = { A = \"{work}\" }\n"), "env uses {work}, which only a stage or collect case has"},
 		{"setup runs another command", collect, replace("case.toml", `"stage", "pbip`, `"scan", "pbip`), "setup[0] does not start with stage or collect"},
 		{"setup entry empty", collect, replace("case.toml", `[["stage", "pbip/Example.Report", "--to", "{work}/copy"]]`, `[[]]`), "setup[0] is empty"},
 		{"work-deleted unclean", collect, appendTo("case.toml", "work-deleted = [\"../x\"]\n"), "work-deleted[0] is not a clean relative path"},
@@ -37,7 +38,7 @@ func TestValidateWorkflowRules(t *testing.T) {
 			replace("case.toml", "sentinels   = []", `sentinels   = ["Doe, Jane"]`)(t, dir)
 			write("after/tree/copy/note.txt", "Doe, Jane\n")(t, dir)
 			write("expected/root/note.txt", "Doe, Jane\n")(t, dir)
-		}, "an expected tree never holds a sentinel"},
+		}, "the expected root never holds a sentinel"},
 		{"expected holds a stray directory", collect, write("expected/other/x.txt", "x\n"), "expected/ holds only root/ and work/"},
 		{"ok with exit 1", collect, replace("case.toml", "exit        = 0", "exit = 1"), "ok exits 0"},
 		{"refusal other than findings exits 3", collect, write("expected.json", `{"refusal": "dirty-tree"}`), "a refusal other than findings exits 3"},
@@ -340,5 +341,50 @@ func TestCheckTreesUncheckedWithoutKeys(t *testing.T) {
 	}
 	if errs := CheckTrees(cs, p); len(errs) != 0 {
 		t.Errorf("a case with no tree checks: %v", errs)
+	}
+}
+
+// TestEnvPlaceholders checks that {root} and {work} are replaced in a case's
+// env values, for the setup commands and the command alike.
+func TestEnvPlaceholders(t *testing.T) {
+	spec := Spec{Env: map[string]string{"OneDrive": "{work}/sync", "Other": "{root}", "Plain": "x"}}
+	got := CommandEnv([]string{"PATH=/bin"}, withPlaceholders(&spec, &Prepared{Root: "/r", Work: "/w"}), "/cfg")
+	for _, want := range []string{"OneDrive=/w/sync", "Other=/r", "Plain=x"} {
+		if !slices.Contains(got, want) {
+			t.Errorf("the environment lacks %s", want)
+		}
+	}
+	if spec.Env["OneDrive"] != "{work}/sync" {
+		t.Error("the case's own env was changed")
+	}
+}
+
+// TestValidateAcceptsAnErrorFindingOverBrokenJSON checks that a collect case
+// whose saved report JSON does not parse is valid when it expects an error
+// finding: the finding's path is where the file would land, not where the
+// fixture is.
+func TestValidateAcceptsAnErrorFindingOverBrokenJSON(t *testing.T) {
+	dir := copyTestCorpus(t)
+	caseDir := filepath.Join(dir, filepath.FromSlash(collect))
+	replace("case.toml", "exit        = 0", "exit = 3")(t, caseDir)
+	write("after/tree/copy/"+collectV, `{broken`)(t, caseDir)
+	write("expected.json", `{"refusal": "findings", "findings": [{"path": "`+collectV+`",
+		"context": null, "column": null, "tier": "error", "reasons": ["unparseable-json"]}]}`)(t, caseDir)
+	c := openTest(t, dir)
+	if errs := c.Validate(findCase(t, c, collect)); len(errs) != 0 {
+		t.Errorf("problems: %v", errs)
+	}
+}
+
+// TestEmptyStatusIsChecked checks that `status = []` decodes as a clean-root
+// expectation, not as an omitted key.
+func TestEmptyStatusIsChecked(t *testing.T) {
+	c, err := Open("../../testdata/corpus")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cs := findCase(t, c, "stage/report-already-bound-by-path-is-copied-as-is")
+	if cs.Spec.Status == nil || len(*cs.Spec.Status) != 0 {
+		t.Error("status = [] did not decode as an empty, present list")
 	}
 }
