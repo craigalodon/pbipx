@@ -295,6 +295,215 @@ func TestShellSelfApproval(t *testing.T) {
 	})
 }
 
+// TestShellSelfUnenroll mirrors TestShellSelfApproval for 'policy unenroll',
+// a person's command like approve: any word after 'policy' that begins with
+// it denies as agent-settings, by any path to the tool and under any
+// program that supplies a terminal.
+func TestShellSelfUnenroll(t *testing.T) {
+	newControlDirs(t)
+	root := newRepo(t, settingsFiles())
+	run(t, root, []decideCase{
+		{"the tool", sh("pbipx policy unenroll"), gate.ReasonAgentSettings},
+		{"the tool by path", sh("/usr/local/bin/pbipx policy unenroll"), gate.ReasonAgentSettings},
+		{"the tool, exe", sh("C:/tools/pbipx.exe policy unenroll"), gate.ReasonAgentSettings},
+		{"relative path", sh("./bin/pbipx policy unenroll"), gate.ReasonAgentSettings},
+		{"after an option", sh("pbipx --no-color policy unenroll"), gate.ReasonAgentSettings},
+		{"piped into", sh("yes unenroll | pbipx policy unenroll"), gate.ReasonAgentSettings},
+		{"under env", sh("env TERM=xterm pbipx policy unenroll"), gate.ReasonAgentSettings},
+		{"under script", sh("script -qc 'pbipx policy unenroll' /dev/null"), gate.ReasonAgentSettings},
+		{"under unbuffer", sh("unbuffer pbipx policy unenroll"), gate.ReasonAgentSettings},
+		{"under expect", sh(`expect -c 'spawn pbipx policy unenroll; send "unenroll\r"'`), gate.ReasonAgentSettings},
+		{"under winpty", sh("winpty pbipx policy unenroll"), gate.ReasonAgentSettings},
+		{"under winpty with an option", sh("winpty -Xplain pbipx.exe policy unenroll"), gate.ReasonAgentSettings},
+		{"in sh -c", sh("sh -c 'pbipx policy unenroll'"), gate.ReasonAgentSettings},
+		{"a longer word", sh("pbipx policy unenroll-all"), gate.ReasonAgentSettings},
+
+		{"a commit message", sh(`git commit -m "run pbipx policy unenroll"`), ""},
+		{"echoing it", sh(`echo "pbipx policy unenroll"`), ""},
+	})
+}
+
+// TestShellSelfApprovalWinpty: winpty gives the tool a terminal as script
+// does, so approving under it is refused too.
+func TestShellSelfApprovalWinpty(t *testing.T) {
+	newControlDirs(t)
+	root := newRepo(t, settingsFiles())
+	run(t, root, []decideCase{
+		{"under winpty", sh("winpty pbipx policy approve"), gate.ReasonAgentSettings},
+		{"under winpty, exe", sh("winpty pbipx.exe policy approve"), gate.ReasonAgentSettings},
+		{"under winpty, option", sh("winpty -Xallow-non-tty pbipx policy approve"), gate.ReasonAgentSettings},
+		{"under winpty, quoted", sh(`winpty sh -c "pbipx policy approve"`), gate.ReasonAgentSettings},
+		{"winpty status", sh("winpty pbipx policy status"), ""},
+	})
+}
+
+// TestShellPolicyUnknownWord: a word after 'policy' the gate cannot tell
+// could be approve or unenroll, so it denies as a person's step.
+func TestShellPolicyUnknownWord(t *testing.T) {
+	newControlDirs(t)
+	root := newRepo(t, settingsFiles())
+	run(t, root, []decideCase{
+		{"a variable", sh("pbipx policy $SUB"), gate.ReasonAgentSettings},
+		{"a variable, quoted", sh(`pbipx policy "$SUB"`), gate.ReasonAgentSettings},
+		{"a variable set before", sh("SUB=x; pbipx policy $SUB"), gate.ReasonAgentSettings},
+		{"a command substitution", sh("pbipx policy $(echo x)"), gate.ReasonAgentSettings},
+		{"a backtick", sh("pbipx policy `echo x`"), gate.ReasonAgentSettings},
+		{"after status", sh("pbipx policy status $SUB"), gate.ReasonAgentSettings},
+		{"fed by xargs", sh("echo status | xargs pbipx policy"), gate.ReasonAgentSettings},
+		{"fed by xargs, by path", sh("echo unenroll | xargs /usr/bin/pbipx policy"), gate.ReasonAgentSettings},
+		{"fed by parallel", sh("echo approve | parallel pbipx policy"), gate.ReasonAgentSettings},
+		{"policy word unknown", sh("pbipx $SUB approve"), gate.ReasonAgentSettings},
+		{"under script", sh("script -qc 'pbipx policy $SUB' /dev/null"), gate.ReasonAgentSettings},
+
+		{"policy status", sh("pbipx policy status"), ""},
+		{"policy alone", sh("pbipx policy"), ""},
+		{"an unknown word elsewhere", sh("pbipx scan $SUB"), ""},
+	})
+}
+
+// TestShellToolSubcommands: rule 1 allows the tool alone only for a
+// subcommand on the explicit table of what an agent may run. Any other
+// word, or one the gate cannot tell, is judged by the ordinary rules.
+func TestShellToolSubcommands(t *testing.T) {
+	runBoth(t, []both{
+		{"scan", sh("pbipx scan --all"), "", ""},
+		{"scan-text", sh("pbipx scan-text -"), "", ""},
+		{"explain", sh("pbipx explain pbip"), "", ""},
+		{"version", sh("pbipx version"), "", ""},
+		{"help", sh("pbipx help scan"), "", ""},
+		{"--help", sh("pbipx --help"), "", ""},
+		{"--version", sh("pbipx --version"), "", ""},
+		{"baseline verify", sh("pbipx baseline verify"), "", ""},
+		{"policy status", sh("pbipx policy status"), "", ""},
+		{"after an assignment", sh("PBIPX_NO_REVEAL=1 pbipx scan pbip"), "", ""},
+
+		{"stage", sh("pbipx stage"), "", gate.ReasonFinding},
+		{"collect", sh("pbipx collect"), "", gate.ReasonFinding},
+		{"perf", sh("pbipx perf"), "", gate.ReasonFinding},
+		{"init", sh("pbipx init"), gate.ReasonAgentSettings, gate.ReasonAgentSettings},
+		{"gate", sh("pbipx gate"), gate.ReasonAgentSettings, gate.ReasonAgentSettings},
+		{"an unknown subcommand", sh("pbipx frobnicate"), "", gate.ReasonFinding},
+		{"a variable as the subcommand", sh("pbipx $SUB"), gate.ReasonAgentSettings, gate.ReasonAgentSettings},
+		{"a substitution as the subcommand", sh("pbipx $(echo scan)"), gate.ReasonAgentSettings, gate.ReasonAgentSettings},
+		{"a glob as the subcommand", sh("pbipx sc*"), gate.ReasonAgentSettings, gate.ReasonAgentSettings},
+		{"an option first", sh("pbipx --no-color scan"), "", gate.ReasonFinding},
+		{"a table word in another case", sh("pbipx Scan"), "", gate.ReasonFinding},
+		{"policy with another subcommand", sh("pbipx policy frobnicate"), "", gate.ReasonFinding},
+
+		// By any path, and under a wrapper, the table still applies.
+		{"scan by path", sh("/usr/local/bin/pbipx scan --all"), "", ""},
+		{"stage by path", sh("/usr/local/bin/pbipx stage"), "", gate.ReasonFinding},
+		{"stage under env", sh("env X=1 pbipx stage"), "", gate.ReasonFinding},
+		{"stage under winpty", sh("winpty pbipx stage"), "", gate.ReasonFinding},
+		{"stage under winpty with an option", sh("winpty -Xplain pbipx stage"), "", gate.ReasonFinding},
+		{"scan under winpty", sh("winpty pbipx scan --all"), "", ""},
+		{"stage after scan", sh("pbipx scan --all && pbipx stage"), "", gate.ReasonFinding},
+		{"a reader under winpty", sh("winpty cat pbip/B.Report/" + leakInReport), "", gate.ReasonFinding},
+	})
+}
+
+// TestShellShowValues: --show-values is refused by the tool without a
+// terminal, but a program that supplies one defeats that, so any command
+// holding the flag under one, or the flag plain, denies with no tree
+// consulted.
+func TestShellShowValues(t *testing.T) {
+	newControlDirs(t)
+	root := newRepo(t, settingsFiles())
+	run(t, root, []decideCase{
+		{"plain", sh("pbipx scan --show-values"), gate.ReasonAgentSettings},
+		{"with a value", sh("pbipx scan --show-values=true pbip"), gate.ReasonAgentSettings},
+		{"by path", sh("/opt/bin/pbipx scan --show-values"), gate.ReasonAgentSettings},
+		{"explain", sh("pbipx explain --show-values pbip"), gate.ReasonAgentSettings},
+		{"under script", sh("script -qc 'pbipx scan --show-values' /dev/null"), gate.ReasonAgentSettings},
+		{"under unbuffer", sh("unbuffer pbipx scan --show-values"), gate.ReasonAgentSettings},
+		{"under winpty", sh("winpty pbipx scan --show-values"), gate.ReasonAgentSettings},
+		{"under expect", sh("expect -c 'spawn pbipx scan --show-values'"), gate.ReasonAgentSettings},
+		{"under script, sh -c", sh(`script -qc "sh -c 'pbipx scan --show-values'" /dev/null`), gate.ReasonAgentSettings},
+		{"under sh -c", sh(`sh -c "pbipx scan --show-values"`), gate.ReasonAgentSettings},
+		{"under script, a word it cannot tell", sh("script -qc 'pbipx scan $FLAG' /dev/null"), gate.ReasonAgentSettings},
+		{"under unbuffer, a word it cannot tell", sh("unbuffer pbipx scan $FLAG"), gate.ReasonAgentSettings},
+
+		{"the shape", sh("pbipx scan --show-shape"), ""},
+		{"a plain scan", sh("pbipx scan --all"), ""},
+		{"a word it cannot tell, no terminal", sh("pbipx scan $FLAG"), ""},
+		{"a message naming it", sh(`git commit -m "document --show-values"`), ""},
+		{"echoing it", sh(`echo "pbipx scan --show-values"`), ""},
+	})
+}
+
+// TestShellInitAndGate: init and gate are a person's, with every flag and
+// no tree check; a help request alone runs nothing.
+func TestShellInitAndGate(t *testing.T) {
+	newControlDirs(t)
+	root := newRepo(t, settingsFiles())
+	run(t, root, []decideCase{
+		{"init", sh("pbipx init"), gate.ReasonAgentSettings},
+		{"init --force", sh("pbipx init --force"), gate.ReasonAgentSettings},
+		{"init --dry-run", sh("pbipx init --dry-run"), gate.ReasonAgentSettings},
+		{"init --managed", sh("pbipx init --managed"), gate.ReasonAgentSettings},
+		{"init, help and a flag", sh("pbipx init --help --force"), gate.ReasonAgentSettings},
+		{"gate", sh("pbipx gate"), gate.ReasonAgentSettings},
+		{"gate with an agent", sh("pbipx gate --agent claude-code"), gate.ReasonAgentSettings},
+		{"by path", sh("/usr/local/bin/pbipx init"), gate.ReasonAgentSettings},
+		{"exe", sh("C:/tools/pbipx.exe init"), gate.ReasonAgentSettings},
+		{"under env", sh("env X=1 pbipx init"), gate.ReasonAgentSettings},
+		{"under script", sh("script -qc 'pbipx init' /dev/null"), gate.ReasonAgentSettings},
+		{"under winpty", sh("winpty pbipx init"), gate.ReasonAgentSettings},
+		{"fed by xargs", sh("echo init | xargs pbipx"), gate.ReasonAgentSettings},
+		{"piped", sh("echo y | pbipx init"), gate.ReasonAgentSettings},
+		{"in sh -c", sh("sh -c 'pbipx init'"), gate.ReasonAgentSettings},
+
+		{"init help", sh("pbipx init --help"), ""},
+		{"init -h", sh("pbipx init -h"), ""},
+		{"a path named init", sh("pbipx scan init"), ""},
+		{"a commit message", sh(`git commit -m "pbipx init"`), ""},
+	})
+}
+
+// TestShellUnknownWords: unsure means deny. Two words the gate cannot tell
+// after the tool, and a glob where approve could be, deny; a help flag
+// anywhere prints help only.
+func TestShellUnknownWords(t *testing.T) {
+	newControlDirs(t)
+	root := newRepo(t, settingsFiles())
+	run(t, root, []decideCase{
+		{"two unknown words", sh("pbipx $A $B"), gate.ReasonAgentSettings},
+		{"unknown, then a known one", sh("pbipx $A status"), gate.ReasonAgentSettings},
+		{"policy, two unknown words", sh("pbipx policy $A $B"), gate.ReasonAgentSettings},
+		{"a glob after policy", sh("pbipx policy appro*"), gate.ReasonAgentSettings},
+		{"a ? glob after policy", sh("pbipx policy ?pprove"), gate.ReasonAgentSettings},
+		{"a bracket glob after policy", sh("pbipx policy [a]pprove"), gate.ReasonAgentSettings},
+		{"a glob subcommand", sh("pbipx ini*"), gate.ReasonAgentSettings},
+		{"approve, then help", sh("pbipx policy approve --help"), gate.ReasonAgentSettings},
+		{"help, then approve", sh("pbipx policy --help approve"), gate.ReasonAgentSettings},
+		{"unenroll, then -h", sh("pbipx policy unenroll -h"), gate.ReasonAgentSettings},
+
+		{"policy help", sh("pbipx policy --help"), ""},
+		{"policy bare", sh("pbipx policy"), ""},
+		{"scan help", sh("pbipx scan --help"), ""},
+		{"scan -h after a path", sh("pbipx scan pbip -h"), ""},
+		{"baseline record help", sh("pbipx baseline record -h"), ""},
+		{"a known word with a known one", sh("pbipx scan pbip"), ""},
+	})
+}
+
+// TestShellProgramCase: where the file system folds case, the tool is
+// recognized whatever its case and extension, as the other tables do.
+func TestShellProgramCase(t *testing.T) {
+	newControlDirs(t)
+	root := newRepo(t, settingsFiles())
+	t.Cleanup(gate.SetFoldCase(true))
+	run(t, root, []decideCase{
+		{"upper, exe", sh("PBIPX.EXE policy approve"), gate.ReasonAgentSettings},
+		{"mixed, exe", sh("Pbipx.Exe policy unenroll"), gate.ReasonAgentSettings},
+		{"upper", sh("PBIPX init"), gate.ReasonAgentSettings},
+		{"windows path", sh("C:/Tools/PBIPX.EXE policy unenroll"), gate.ReasonAgentSettings},
+		{"under script", sh("script -qc 'PBIPX.exe policy approve' /dev/null"), gate.ReasonAgentSettings},
+		{"show-values", sh("PBIPX.EXE scan --show-values"), gate.ReasonAgentSettings},
+		{"upper, scan", sh("PBIPX.EXE scan --all"), ""},
+	})
+}
+
 func TestShellQuoting(t *testing.T) {
 	runBoth(t, []both{
 		{"ANSI-C quote hides a second command", sh(`pbipx scan $'\'' ; cat pbip/B.Report/` + leakInReport + ` #'`), "", gate.ReasonFinding},

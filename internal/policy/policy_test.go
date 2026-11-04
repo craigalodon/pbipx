@@ -54,9 +54,9 @@ func TestParseErrors(t *testing.T) {
 		{"duplicate key", header + "version = 1\n", "", 6},
 		{"wrong type", `version = "1"` + "\n", "", 0},
 		{"unknown top-level key", header + "\nstrict = true\n", "", 0},
-		{"unknown key in a table", header + "\n[shapes]\ndob = false\n", "shapes.dob", 8},
-		{"unknown table", header + "\n[heuristics]\n", "heuristics", 0},
-		{"unknown key in accept", header + columns + acceptEntry + "expires = \"2199-12-31\"\n", "accept.expires", 0},
+		{"unknown key in a table", header + "\n[shapes]\ndob = false\n", "", 8},
+		{"unknown table", header + "\n[heuristics]\n", "", 0},
+		{"unknown key in accept", header + columns + acceptEntry + "expires = \"2199-12-31\"\n", "", 0},
 		{"version missing", `protected_roots = ["pbip"]` + "\n[scan]\nreport = [\"pbip/**\"]\n", "version", 0},
 		{"version 2", strings.Replace(header, "version = 1", "version = 2", 1), "version", 0},
 		{"roots missing", "version = 1\n[scan]\nreport = [\"pbip/**\"]\n", "protected_roots", 0},
@@ -133,6 +133,29 @@ func TestLoadDefaultPolicy(t *testing.T) {
 	}
 	if got := p.ProtectedRoots(); len(got) != 1 || got[0] != "pbip" {
 		t.Errorf("roots %v", got)
+	}
+}
+
+// TestUnknownKeyIsNotEchoed: a key the policy does not know is text from
+// the file, so the error gives the line and that a key is not known, not
+// the key. A file that merely parses as TOML must not be a way to read it.
+func TestUnknownKeyIsNotEchoed(t *testing.T) {
+	const name = "private_marker_key"
+	for label, doc := range map[string]string{
+		"top level":  header + "\n" + name + " = true\n",
+		"in a table": header + "\n[shapes]\n" + name + " = false\n",
+		"a table":    header + "\n[" + name + "]\n",
+	} {
+		_, err := parse([]byte(doc))
+		if err == nil {
+			t.Fatalf("%s: parsed", label)
+		}
+		if strings.Contains(err.Error(), name) || strings.Contains(err.Key, name) {
+			t.Errorf("%s: the error echoes the key: %v", label, err)
+		}
+		if err.Line == 0 {
+			t.Errorf("%s: no line", label)
+		}
 	}
 }
 

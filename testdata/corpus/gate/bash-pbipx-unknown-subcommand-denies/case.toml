@@ -1,0 +1,7 @@
+description = "A subcommand the gate does not know is not the tool alone, so the ordinary rules judge it as reaching every protected root and the leaking tree denies"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
+known       = "predecessor"

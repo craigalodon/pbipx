@@ -1,0 +1,7 @@
+description = "pbipx collect is not on the table of subcommands an agent may run alone, so the ordinary rules judge it as reaching every protected root and the leaking tree denies"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
+known       = "predecessor"

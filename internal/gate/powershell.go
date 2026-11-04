@@ -4,6 +4,8 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -163,17 +165,85 @@ func probePowerShell(cwd, home, line string) (spots []spot, unknown bool) {
 	return spots, unknown
 }
 
+// psPersonOnly reports whether w, the word after 'policy', is, or could be,
+// a person-only subcommand: it begins with one (any case), or holds an
+// expansion the gate cannot tell (a variable, a subexpression).
+func psPersonOnly(w string) bool {
+	lw := strings.ToLower(w)
+	return personWord(lw) || strings.ContainsAny(w, "$`(@{")
+}
+
+// psNesting are the programs and cmdlets that run a string as a command,
+// so a command string handed to one is read word by word.
+var psNesting = []string{
+	"invoke-expression", "iex", "pwsh", "powershell", "start-process", "saps",
+	"invoke-command", "icm", "cmd", "bash", "sh", "wsl",
+}
+
+// psAfterPolicyOpens matches 'policy' followed by a group, a hashtable
+// or a variable: what follows is built at run time.
+var psAfterPolicyOpens = regexp.MustCompile(`(?i)\bpolicy\s*[(@{$]`)
+
+// psPersonStep reports whether a PowerShell line runs, or could run, a
+// person-only step of the tool: 'policy' then a word that begins with
+// approve or unenroll or that cannot be told, init or gate, a subcommand
+// word that cannot be told, or --show-values. Where a nesting program
+// (psNesting) is named, its strings are split into words too, and a
+// string built from pieces that names the tool counts as unreadable. An
+// agent has no use for these, so no tree is consulted.
+func psPersonStep(line string, words []string) bool {
+	lower := strings.ToLower(line)
+	nested := slices.ContainsFunc(words, func(w string) bool {
+		return slices.Contains(psNesting, strings.ToLower(progName(w)))
+	})
+	flat := words
+	if nested {
+		flat = nil
+		for _, w := range words {
+			flat = append(flat, strings.FieldsFunc(w, func(r rune) bool {
+				return unicode.IsSpace(r) || psSingle(r) || psDouble(r)
+			})...)
+		}
+		if strings.Contains(lower, "pbipx") && strings.ContainsAny(line, "+$") ||
+			strings.Contains(lower, "pbipx") && (strings.Contains(lower, "-join") || strings.Contains(lower, "-f ")) {
+			return true
+		}
+	}
+	if psAfterPolicyOpens.MatchString(line) && strings.Contains(lower, "pbipx") {
+		return true
+	}
+	tool, reveal := false, false
+	for i, w := range flat {
+		lw := strings.ToLower(w)
+		if lw == "policy" && slices.ContainsFunc(flat[i+1:], psPersonOnly) {
+			return true
+		}
+		if strings.ToLower(progName(w)) == toolName {
+			tool = true
+			args := make([]string, len(flat[i+1:]))
+			for j, a := range flat[i+1:] {
+				args[j] = strings.ToLower(a)
+			}
+			if personOnly(args, nil, false) {
+				return true
+			}
+		}
+		reveal = reveal || strings.Contains(lw, showValuesFlag)
+	}
+	return reveal && (tool || strings.Contains(lower, "pbipx"))
+}
+
 // psControl is the deny for a PowerShell line that names a file outside
 // the repository that controls the gate, or a user-level Claude Code
 // settings directory, or that runs 'pbipx policy approve'. The gate
 // cannot tell a PowerShell read from a write, so naming one is enough.
-func psControl(cwd, home string, words []string, ctl controls) (Decision, bool) {
+func psControl(cwd, home, line string, words []string, ctl controls) (Decision, bool) {
+	if psPersonStep(line, words) {
+		return deny(ReasonAgentSettings, "the command may run a subcommand of the tool that is a person's step at a "+
+			"terminal (approving the policy, setting pbipx up, printing values); an agent may not run it"), true
+	}
 	seen := map[string]bool{}
-	for i, w := range words {
-		if strings.EqualFold(w, "policy") && i+1 < len(words) && strings.EqualFold(words[i+1], "approve") {
-			return deny(ReasonAgentSettings, "the command may run 'pbipx policy approve'; "+
-				"approving the policy is a person's step at a terminal, and an agent may not approve the policy that binds it"), true
-		}
+	for _, w := range words {
 		// A word is placed once: each placing costs file system calls.
 		if seen[w] {
 			continue
@@ -205,7 +275,7 @@ func (s *setup) powershell(line string) Decision {
 	if !ok {
 		return deny(ReasonInternalError, "the PowerShell command holds more than %d words, too many to judge", maxPSWords)
 	}
-	if d, ok := psControl(s.cwd, s.home, words, loadControls()); ok {
+	if d, ok := psControl(s.cwd, s.home, line, words, loadControls()); ok {
 		return d
 	}
 	seen := map[string]bool{}

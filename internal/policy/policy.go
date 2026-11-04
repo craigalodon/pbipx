@@ -212,7 +212,7 @@ func decodeError(err error) *Error {
 	if errors.As(err, &strict) && len(strict.Errors) > 0 {
 		first := &strict.Errors[0]
 		line, _ := first.Position()
-		return &Error{Key: keyName(first.Key()), Line: line, Msg: "is not a known key"}
+		return &Error{Line: line, Msg: "has a key that is not known"} // the key is text from the file: not echoed
 	}
 	var de *toml.DecodeError
 	if errors.As(err, &de) {

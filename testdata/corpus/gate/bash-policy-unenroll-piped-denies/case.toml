@@ -1,0 +1,7 @@
+description = "Running pbipx policy unenroll with input piped to it denies with agent-settings; this case plants no value"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []
+known       = "predecessor"

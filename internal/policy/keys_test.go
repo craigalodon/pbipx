@@ -28,9 +28,7 @@ func TestShapedKeysAreNotPrinted(t *testing.T) {
 					t.Errorf("a shaped key reached the error")
 				}
 			}
-			if !strings.Contains(msg, `"…"`) {
-				t.Errorf("the key is not replaced by a placeholder")
-			}
+			// An unknown key is not echoed at all (TestUnknownKeyIsNotEchoed).
 		}
 	}
 }

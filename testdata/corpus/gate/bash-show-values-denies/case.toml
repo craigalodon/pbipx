@@ -1,0 +1,7 @@
+description = "pbipx scan --show-values denies with agent-settings whatever the tree holds: an agent has no use for the flag; this case plants no value"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []
+known       = "predecessor"

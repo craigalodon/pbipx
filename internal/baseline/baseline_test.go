@@ -53,12 +53,34 @@ func TestLoadMissingIsEmpty(t *testing.T) {
 	}
 }
 
+// TestUnknownKeyIsNotEchoed: a key the baseline does not know is text from
+// the file, so the error gives the line and that a key is not known.
+func TestUnknownKeyIsNotEchoed(t *testing.T) {
+	const name = "private_marker_key"
+	for label, doc := range map[string]string{
+		"top level":   "version = 1\n" + name + " = 1\n",
+		"in an entry": "version = 1\n[entries.\"fp1:00\"]\nseverity = \"warn\"\n" + name + " = 1\n",
+	} {
+		_, err := Load(writeFile(t, doc))
+		var be *Error
+		if !errors.As(err, &be) {
+			t.Fatalf("%s: got %v, want an *Error", label, err)
+		}
+		if strings.Contains(err.Error(), name) || strings.Contains(be.Key, name) {
+			t.Errorf("%s: the error echoes the key: %v", label, err)
+		}
+		if be.Line == 0 {
+			t.Errorf("%s: no line", label)
+		}
+	}
+}
+
 func TestLoadErrors(t *testing.T) {
 	tests := []struct{ name, doc, key string }{
 		{"invalid TOML", "version = 1\n[entries.\"" + sentinel + "\"\n", ""},
 		{"no version", "[entries]\n", "version"},
 		{"wrong version", "version = 2\n", "version"},
-		{"unknown key", "version = 1\nowner = \"" + sentinel + "\"\n", "owner"},
+		{"unknown key", "version = 1\nowner = \"" + sentinel + "\"\n", ""},
 		{"non-warn severity", "version = 1\n[entries.\"fp1:00\"]\nseverity = \"block\"\nexpires = \"2199-12-31\"\n", "severity"},
 		{"non-warn severity under a free-text key", "version = 1\n[entries.\"" + sentinel + "\"]\nseverity = \"block\"\n", "severity"},
 		{"wrong type", "version = 1\n[entries.\"fp1:00\"]\nseverity = \"warn\"\nreasons = \"" + sentinel + "\"\n", ""},

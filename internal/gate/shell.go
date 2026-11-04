@@ -65,9 +65,8 @@ func (s *setup) shell(line string) Decision {
 			return deny(ReasonAgentSettings, "the command names a Claude Code settings file "+
 				"(.claude/settings.json or .claude/settings.local.json) or writes into a .claude directory; %s", agentSettingsWhy)
 		}
-		if selfApproval(v) {
-			return deny(ReasonAgentSettings, "the command runs 'pbipx policy approve'; "+
-				"approving the policy is a person's step at a terminal, and an agent may not approve the policy that binds it")
+		if msg, ok := personStep(v); ok {
+			return deny(ReasonAgentSettings, "%s", msg)
 		}
 	}
 	// 1. The tool alone redacts on its own.
@@ -1101,7 +1100,8 @@ func (w *walker) controls() controls {
 
 // toolAlone reports whether line is one simple command running the tool,
 // optionally after environment assignments, with no command substitution,
-// and not approving the policy.
+// and a subcommand on the table of what an agent may run
+// (agentSubcommands).
 func toolAlone(line string, cmds []simple) bool {
 	if len(cmds) != 1 || len(cmds[0].subs) > 0 || strings.Contains(line, "$(") || strings.Contains(line, "`") {
 		return false
@@ -1109,7 +1109,7 @@ func toolAlone(line string, cmds []simple) bool {
 	args := cmds[0].args()
 	for i, w := range args {
 		if !isAssignment(w) {
-			return w == toolName && !policyApprove(args[i+1:])
+			return w == toolName && toolAloneSubcommand(args[i+1:])
 		}
 	}
 	return false
@@ -1525,6 +1525,7 @@ const (
 	hintExpand = "Write the paths out in full, without variables or command substitutions; files in the protected folders stay unreadable while they hold findings."
 	hintPlain  = "Write the command out plainly, without building it at run time or nesting it more than 4 deep."
 	hintOther  = "Run the command in bash directly, with its paths written out."
+	hintTool   = "Run pbipx scan, scan-text, explain, baseline, policy status, version or help, written out in full; other subcommands are not for an agent."
 	hintLister = "Point find or fd away from the protected folders, or exclude them."
 	hintQuotes = "Balance the quotes in the command."
 	// hintSimplify ends a refusal for a line the gate cannot read.
@@ -1775,6 +1776,13 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 		case slices.ContainsFunc(v.rest, func(a string) bool { return strings.HasPrefix(a, "-f") }),
 			slices.ContainsFunc(v.words, func(x xword) bool { return x.redirect && x.input }):
 			w.setRuntime("at runs commands from a file the gate does not read", hintOther)
+		}
+	case toolName:
+		// A subcommand off the table of what an agent may run (a word
+		// the gate cannot tell, a subcommand not made yet) could print
+		// what it reads: it counts as touching every protected root.
+		if !toolAloneSubcommand(v.rest) {
+			w.setReach("the tool's subcommand is not one an agent may run on its own", hintTool)
 		}
 	case "pwsh", "powershell", "cmd":
 		// No parser for these: a command string, or a script on the
@@ -2997,36 +3005,30 @@ func (s *setup) restWords(v view) []xword {
 	return args[len(args)-len(v.rest):]
 }
 
-// selfApproval reports whether v runs 'pbipx policy approve': the tool by
-// any path, or under script, expect or unbuffer, which give it the
+// selfApproval reports whether v runs a person-only subcommand of the tool
+// ('pbipx policy approve', 'pbipx policy unenroll'; personOnly): the tool by
+// any path, or under script, expect, unbuffer or winpty, which give it the
 // terminal approval asks for.
 func selfApproval(v view) bool {
 	switch v.name {
 	case toolName:
-		return policyApprove(v.rest)
-	case "script", "expect", "unbuffer":
+		fed := feedOf(v.argv, v.argvKnown).runner != ""
+		return personOnly(v.rest, v.restKnown, fed)
+	case "script", "expect", "unbuffer", "winpty", "parallel":
+		// parallel appends the words it reads to the command it is given.
+		fed := v.name == "parallel" && feedOf(v.argv, v.argvKnown).runner != ""
 		tokens := strings.FieldsFunc(strings.Join(v.rest, " "), func(r rune) bool {
 			return strings.ContainsRune(" \t\r\n;&|'\"{}[]()", r)
 		})
 		for i, t := range tokens {
 			if progName(t) == toolName {
-				if policyApprove(tokens[i+1:]) {
+				if personOnly(tokens[i+1:], nil, fed) {
 					return true
 				}
 			}
 		}
 	}
 	return false
-}
-
-// policyApprove reports whether the tool's arguments hold "policy" and,
-// after it, "approve".
-func policyApprove(args []string) bool {
-	i := slices.Index(args, "policy")
-	if i < 0 {
-		return false
-	}
-	return slices.ContainsFunc(args[i+1:], func(a string) bool { return strings.HasPrefix(a, "approve") })
 }
 
 // unknownArgs are the words of git's arguments in v that cannot be told.

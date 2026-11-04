@@ -1,0 +1,7 @@
+description = "Running pbipx policy unenroll denies with agent-settings, whatever the tree holds: unenrolling is a person's step at a terminal; this case plants no value"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []
+known       = "predecessor"
