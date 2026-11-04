@@ -581,7 +581,13 @@ it. In order (ADR-0006, amendment of 2026-11-04):
   any step exits 3 with the clone's record still in place, so the
   repository remains adopted.
 - It then asks the gate's own adoption check (the one `Decide` uses) about
-  this work tree. Not adopted: it prints `pbipx: this clone is no longer
+  each work tree of the clone, this one first. A linked work tree on
+  another branch that holds a `.pbipx.toml` is adopted again by its file:
+  exit 3, naming that tree and saying the record is gone. Paths are
+  printed with a segment that holds a control character shown as `{?}`.
+  The word must be followed by a newline: end of input does not confirm,
+  and neither do spaces around it (`policy approve` is the same). All
+  adopted: not adopted: it prints `pbipx: this clone is no longer
   set up for the gate on this machine. The hook stays registered for other
   repositories. pbipx init or policy approve sets it up again.` and exits
   0. Still adopted, by a policy file or by an enclosing adopted repository
