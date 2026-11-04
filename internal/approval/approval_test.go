@@ -838,7 +838,10 @@ func TestUnenrollTreatsSpellingsOfARootAlike(t *testing.T) {
 	}
 	d := Digest([]byte("x"))
 	viaLink := recordFor(t, s, t.TempDir(), record3(nil, link))
-	upper := recordFor(t, s, t.TempDir(), record3([]string{d}, strings.ToUpper(r.Root), "/elsewhere"))
+	// An absolute path on every system: "/elsewhere" has no drive on
+	// Windows, which makes the record invalid.
+	elsewhere := filepath.Join(t.TempDir(), "elsewhere")
+	upper := recordFor(t, s, t.TempDir(), record3([]string{d}, strings.ToUpper(r.Root), elsewhere))
 	old := foldCase
 	foldCase = true
 	t.Cleanup(func() { foldCase = old })
@@ -849,8 +852,8 @@ func TestUnenrollTreatsSpellingsOfARootAlike(t *testing.T) {
 		t.Error("a root spelled through a symlink was kept")
 	}
 	rec, _, err := readRecord(upper)
-	if err != nil || slices.Contains(rec.Roots, strings.ToUpper(r.Root)) {
-		t.Errorf("a root spelled in another case was kept: %v, %v", rec.Roots, err)
+	if err != nil || !slices.Equal(rec.Roots, []string{elsewhere}) {
+		t.Errorf("a root spelled in another case was kept, or another lost: %v, %v", rec.Roots, err)
 	}
 }
 

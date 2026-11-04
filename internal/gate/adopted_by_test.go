@@ -70,7 +70,9 @@ func TestAdoptedByEnclosing(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := adoptedBy(t, store, nested)
-	if got == nil || got.Kind != gate.ByEnclosing || got.Root != root {
+	// Root is spelled as git prints it, root as the temp dir is (on Windows
+	// a short name such as RUNNER~1).
+	if got == nil || got.Kind != gate.ByEnclosing || !sameDir(t, got.Root, root) {
 		t.Errorf("a nested repository: %+v, want enclosed by the root", got)
 	}
 }
@@ -94,10 +96,46 @@ func TestWorkTrees(t *testing.T) {
 	linked := filepath.Join(root, ".claude", "worktrees", "agent")
 	for _, from := range []string{root, linked} {
 		got := gate.WorkTrees(from)
-		if got[0] != from || len(got) != 2 || !slices.Contains(got, root) || !slices.Contains(got, linked) {
+		// Git spells the other work tree its own way (long names, on
+		// Windows), so compare by directory, and expect each tree once.
+		if got[0] != from || len(got) != 2 ||
+			!slices.ContainsFunc(got, func(g string) bool { return sameDir(t, g, root) }) ||
+			!slices.ContainsFunc(got, func(g string) bool { return sameDir(t, g, linked) }) {
 			t.Errorf("WorkTrees(%s) = %v", filepath.Base(from), got)
 		}
 	}
+}
+
+// A work tree reached through a symlink is the tree git lists under its
+// real name: it is not listed twice.
+func TestWorkTreesListsEachOnce(t *testing.T) {
+	root := newRepo(t, cleanFiles())
+	if err := corpus.AddWorktree(root, ".claude/worktrees/agent"); err != nil {
+		t.Fatal(err)
+	}
+	linked := filepath.Join(root, ".claude", "worktrees", "agent")
+	alias := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(linked, alias); err != nil {
+		t.Skip("no symlinks:", err)
+	}
+	got := gate.WorkTrees(alias)
+	if len(got) != 2 || got[0] != alias || !sameDir(t, got[1], root) {
+		t.Errorf("WorkTrees(alias) = %v, want the alias and the main work tree", got)
+	}
+}
+
+// sameDir is whether a and b are the same directory under any spelling.
+func sameDir(t *testing.T, a, b string) bool {
+	t.Helper()
+	ia, err := os.Stat(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ib, err := os.Stat(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return os.SameFile(ia, ib)
 }
 
 func TestExportedTables(t *testing.T) {
