@@ -1,0 +1,7 @@
+description = "a folder pbipx did not stage is not collected from; no value is planted"
+command = "collect"
+args = ["{work}/copy"]
+policy = "default"
+exit = 3
+sentinels = []
+status = []

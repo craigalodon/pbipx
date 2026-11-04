@@ -28,6 +28,7 @@ type Vocabulary struct {
 	Tiers         map[string]string `toml:"tiers"`
 	Failures      map[string]string `toml:"failures"`
 	GateReasons   map[string]string `toml:"gate-reasons"`
+	Refusals      map[string]string `toml:"refusals"`
 	ExitCodes     map[string]string `toml:"exit-codes"`
 	GateExitCodes map[string]string `toml:"gate-exit-codes"`
 

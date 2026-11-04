@@ -1,0 +1,7 @@
+description = "a recursive search of a root holding an export denies by its shape: the tree scan does not call it a clean report file"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
+known       = "predecessor"

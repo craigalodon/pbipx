@@ -57,6 +57,10 @@ type Prepared struct {
 	// Fingerprint is the resolved fingerprint of the case's [fingerprint],
 	// empty when it has none.
 	Fingerprint string
+	// Work is the working-copy base of a stage or collect case: an existing
+	// empty directory outside the root, where {work} points. Empty for any
+	// other case.
+	Work string
 }
 
 // Prepare builds a case's root (corpus.md, "Running a case", steps 1 to 3,
@@ -74,6 +78,13 @@ func (c *Corpus) Prepare(cs *Case, root, configDir, binary string) (*Prepared, e
 		return nil, fmt.Errorf("%s: the configuration directory must be an absolute path", cs.ID())
 	}
 	p := &Prepared{Root: root, ConfigDir: configDir}
+	if cs.Spec.IsWorkflow() {
+		work, err := prepareWork(configDir)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", cs.ID(), err)
+		}
+		p.Work = work
+	}
 	if cs.HasTree {
 		if err := copyTree(cs.TreeDir(), root); err != nil {
 			return nil, fmt.Errorf("%s: copying tree/: %w", cs.ID(), err)
@@ -102,7 +113,9 @@ func (c *Corpus) Prepare(cs *Case, root, configDir, binary string) (*Prepared, e
 			return nil, fmt.Errorf("%s: %w", cs.ID(), err)
 		}
 	}
-	if cs.HasAfter {
+	// For stage and collect, after/tree/ is laid over the working copy
+	// instead, once the setup commands have run.
+	if cs.HasAfter && !cs.Spec.IsWorkflow() {
 		if err := copyTree(cs.AfterTreeDir(), root); err != nil {
 			return nil, fmt.Errorf("%s: copying after/tree/: %w", cs.ID(), err)
 		}
@@ -127,6 +140,11 @@ func (c *Corpus) Prepare(cs *Case, root, configDir, binary string) (*Prepared, e
 			if err := Approve(root, configDir, approved); err != nil {
 				return nil, fmt.Errorf("%s: %w", cs.ID(), err)
 			}
+		}
+	}
+	if cs.Spec.IsWorkflow() {
+		if err := c.prepareWorkflow(cs, binary, p); err != nil {
+			return nil, fmt.Errorf("%s: %w", cs.ID(), err)
 		}
 	}
 	return p, nil
@@ -276,12 +294,13 @@ func CommandEnv(base []string, spec *Spec, configDir string) []string {
 }
 
 // CommandArgs is the binary's command line for a prepared case: the command,
-// the case's args with {root} and {fingerprint} replaced, and, for a case
+// the case's args with {root}, {work} and {fingerprint} replaced, and, for a case
 // other than the gate that has an expected.json, --format json.
 func CommandArgs(cs *Case, p *Prepared) []string {
 	args := []string{cs.Spec.Command}
 	for _, a := range cs.Spec.Args {
 		a = strings.ReplaceAll(a, rootPlaceholder, p.Root)
+		a = strings.ReplaceAll(a, workPlaceholder, p.Work)
 		args = append(args, strings.ReplaceAll(a, fingerprintPlaceholder, p.Fingerprint))
 	}
 	if cs.Spec.Command != commandGate && cs.Spec.HasResult() {
@@ -327,7 +346,7 @@ func Execute(cs *Case, binary string, p *Prepared) (Outcome, error) {
 	if cs.HasStdin {
 		stdin = cs.StdinFor(p.Root)
 	}
-	out, err := runBinary(binary, p.Root, CommandArgs(cs, p), CommandEnv(os.Environ(), &cs.Spec, p.ConfigDir), stdin)
+	out, err := runBinary(binary, p.Root, CommandArgs(cs, p), CommandEnv(os.Environ(), withPlaceholders(&cs.Spec, p), p.ConfigDir), stdin)
 	if err != nil {
 		return out, fmt.Errorf("%s: %w", cs.ID(), err)
 	}

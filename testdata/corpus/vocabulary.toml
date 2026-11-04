@@ -82,6 +82,7 @@ finding          = "a block finding in the file, or in the protected tree the ca
 unvettable       = "the file, or one in the protected tree, cannot be vetted"
 scan-error       = "the file, or one in the protected tree, could not be scanned"
 local-state      = "a read of Power BI Desktop local state"
+perf-export      = "a Performance Analyzer export, recognized by its shape: query text and titles that no scanner vets"
 agent-settings   = "a write to, or a shell command naming, a Claude Code settings file in the repository"
 git-content      = "a git command that would print content from a protected root"
 policy-error     = "the policy failed to load"
@@ -89,6 +90,20 @@ policy-unapproved = "the policy has no approval, or changed since it was approve
 event-error      = "the hook event is not valid JSON or not an object"
 not-a-repository = "the call touches a repository that adopted pbipx, and git cannot place it, or the working directory in it, in a work tree"
 internal-error   = "any other failure"
+
+# The refusals of stage and collect (a result's "refusal"). A refusal other
+# than findings exits 3, an operational refusal; findings exit as a scan's do.
+[refusals]
+inside-repository = "stage: the working copy would be inside a git repository"
+link-in-path      = "stage: a symbolic link or junction is in the path of the working copy"
+dirty-tree        = "stage: the project's tree has changes git has not committed"
+target-not-empty  = "stage: the working copy's folder exists and is not empty"
+sync-folder       = "stage: the working copy would be in a known sync folder"
+already-staged    = "stage: the model already has a working copy"
+model-not-found   = "stage: the model beside the report cannot be named, or is ambiguous"
+not-a-working-copy = "collect: the folder is not a working copy pbipx staged and registered"
+source-changed    = "collect: the project's tree changed since it was staged"
+findings          = "collect: what is coming back has findings; nothing was brought back"
 
 # Process exit codes, for every command but the gate.
 [exit-codes]

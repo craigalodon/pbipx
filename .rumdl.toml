@@ -1,4 +1,4 @@
 [global]
 # Markdown inside corpus trees is fixture input, kept exactly as written.
-exclude = ["testdata/corpus/*/*/tree/**"]
+exclude = ["testdata/corpus/*/*/tree/**", "testdata/corpus/*/*/after/tree/**", "testdata/corpus/*/*/expected/**"]
 line-length = 80

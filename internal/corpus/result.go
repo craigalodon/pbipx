@@ -36,6 +36,12 @@ type Result struct {
 	Decision string
 	Reason   string
 
+	// OK and Refusal are the result of stage and collect: it succeeded, or
+	// it refused with a class of the vocabulary's refusals. A refusal of
+	// findings also has Findings.
+	OK      bool
+	Refusal string
+
 	// Explain is explain's structure, whose schema is not settled yet.
 	Explain map[string]json.RawMessage
 }
@@ -75,6 +81,8 @@ func ParseResult(data []byte, command string, vocab *Vocabulary, strict bool) (*
 		p.failure(top, res)
 	case command == commandExplain:
 		res.Explain = top
+	case command == commandStage || command == commandCollect:
+		p.workflow(top, res)
 	default:
 		p.findings(top, res)
 	}
@@ -222,6 +230,46 @@ func (p *resultParser) findings(top map[string]json.RawMessage, res *Result) {
 		p.addf("findings is missing (an empty result is \"findings\": [])")
 		return
 	}
+	p.findingItems(raw, res)
+}
+
+// workflow decodes the result of stage or collect: exactly one of "ok" and
+// "refusal", and, for the refusal "findings", the findings that caused it.
+func (p *resultParser) workflow(top map[string]json.RawMessage, res *Result) {
+	p.allowKeys(top, "the result", "ok", "refusal", "findings")
+	if present(top, "ok") {
+		var ok bool
+		if json.Unmarshal(top["ok"], &ok) != nil || !ok {
+			p.addf("ok is not true")
+		}
+		res.OK = ok
+	}
+	if present(top, "refusal") {
+		res.Refusal, _ = p.str(top["refusal"], "refusal")
+		if _, known := p.vocab.Refusals[res.Refusal]; p.strict && !known && res.Refusal != "" {
+			p.addf("refusal is not one of the vocabulary's refusals")
+		}
+	}
+	if res.OK == (res.Refusal != "") {
+		p.addf("the result needs exactly one of ok and refusal")
+	}
+	hasFindings := present(top, "findings")
+	switch {
+	case p.strict && hasFindings && res.Refusal != refusalFindings:
+		p.addf("findings only go with the refusal %s", refusalFindings)
+	case p.strict && !hasFindings && res.Refusal == refusalFindings:
+		p.addf("the refusal %s needs findings", refusalFindings)
+	}
+	if hasFindings {
+		p.findingItems(top["findings"], res)
+	}
+}
+
+// refusalFindings is the refusal of a collect that found a protected value.
+const refusalFindings = "findings"
+
+// findingItems decodes the findings array.
+func (p *resultParser) findingItems(raw json.RawMessage, res *Result) {
 	var items []json.RawMessage
 	if json.Unmarshal(raw, &items) != nil || items == nil {
 		p.addf("findings is not an array")

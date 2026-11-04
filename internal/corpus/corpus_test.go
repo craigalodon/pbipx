@@ -19,7 +19,8 @@ const corpusDir = "../../testdata/corpus"
 // enabledAreas are the areas pbipx is expected to pass. An area is added
 // here, in the change that makes it pass (docs/ROADMAP.md, phase 2). Until
 // then its cases are skipped by TestCorpus, but still validated by
-// TestCorpusValid.
+// TestCorpusValid. The stage and collect areas wait for those commands
+// (docs/ROADMAP.md, phase 6; ADR-0007).
 var enabledAreas = []string{"pbir", "text", "baseline", "policy", "tmdl", "sql", "yaml", "explain", "gate"}
 
 // areasEnv overrides enabledAreas for local work: a comma-separated list of
@@ -96,6 +97,9 @@ func TestCorpus(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, e := range c.Check(cs, out) {
+				t.Error(e)
+			}
+			for _, e := range corpus.CheckTrees(cs, prepared) {
 				t.Error(e)
 			}
 		})

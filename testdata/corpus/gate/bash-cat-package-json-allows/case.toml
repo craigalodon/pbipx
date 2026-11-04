@@ -1,0 +1,6 @@
+description = "cat of an ordinary package.json allows (principle 6): it is not an export; nothing is planted"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = []

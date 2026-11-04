@@ -1,0 +1,6 @@
+description = "a stage with no --to is a usage error; no value is planted"
+command = "stage"
+args = ["pbip/Example.Report"]
+policy = "default"
+exit = 4
+sentinels = []

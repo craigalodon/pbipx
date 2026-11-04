@@ -1,0 +1,7 @@
+description = "Read of an export outside the roots and outside scan scope denies by its shape"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
+known       = "predecessor"

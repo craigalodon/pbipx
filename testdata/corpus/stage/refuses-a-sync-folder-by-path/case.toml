@@ -1,0 +1,7 @@
+description = "a working copy under a folder named for a sync service is refused; no value is planted"
+command = "stage"
+args = ["pbip/Example.Report", "--to", "{work}/Dropbox/copy"]
+policy = "default"
+exit = 3
+sentinels = []
+expect-work-absent = ["Dropbox"]

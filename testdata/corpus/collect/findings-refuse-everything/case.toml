@@ -1,0 +1,8 @@
+description = "a saved slicer selection on a person column refuses the whole collect, including an unrelated benign edit; the working copy is kept"
+command = "collect"
+args = ["{work}/copy"]
+policy = "default"
+exit = 1
+sentinels = ["Doe, Jane"]
+setup = [["stage", "pbip/Example.Report", "--to", "{work}/copy"]]
+status = []

@@ -65,6 +65,12 @@ func (s *setup) read(p string) Decision {
 			}
 		}
 	}
+	// A Performance Analyzer export is denied by its shape wherever it is in
+	// the repository, in scan scope or not (perfexport.go).
+	if rels := s.rels(p); len(rels) > 0 && statErr == nil && info.Mode().IsRegular() && perfExport(a) {
+		return deny(ReasonPerfExport, "%s is a Power BI Performance Analyzer export, which holds query text and visual titles that cannot be vetted. %s",
+			displayPath(rels[0]), hintPerf)
+	}
 	if len(scanned) == 0 {
 		return allow()
 	}
@@ -131,7 +137,14 @@ func (s *setup) tree(t trigger) Decision {
 		return deny(ReasonScanError, "%s; the protected roots could not be listed, so they were not vetted. %s", t.why, t.hint)
 	}
 	defer func() { _ = set.Close() }()
-	if d := verdict(s.scanFrames(set.Paths, set), t); d != nil {
+	// An export the scan reads is denied by its shape, not judged as the
+	// report it may look like (perfexport.go).
+	watch := &exportWatch{r: set}
+	res := s.scanFrames(set.Paths, watch)
+	if watch.hit != "" {
+		return denyPerf(t.why+"; the scan read", watch.hit)
+	}
+	if d := verdict(res, t); d != nil {
 		return *d
 	}
 	return allow()

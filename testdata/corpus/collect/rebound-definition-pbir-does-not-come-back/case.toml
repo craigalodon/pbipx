@@ -1,0 +1,8 @@
+description = "the report definition rebound by stage is not copied back over the original; no value is planted"
+command = "collect"
+args = ["{work}/copy"]
+policy = "default"
+exit = 0
+sentinels = []
+setup = [["stage", "pbip/Example.Report", "--to", "{work}/copy"]]
+status = []

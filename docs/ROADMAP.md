@@ -119,9 +119,16 @@ gate pass against pbipx.
 
 - [ ] `stage` and `collect`: copy outside the repository, rebind the report to
       the model beside it, bring back only what Desktop saved, keep LF and
-      the absence of a final newline
+      the absence of a final newline. Designed in
+      [ADR-0007](adr/0007-the-desktop-round-trip.md) and
+      [stage-collect.md](design/stage-collect.md); the corpus areas `stage`
+      and `collect` are written and wait for the commands
+- [ ] Gate protection for working copies (the registry, then the deny rule),
+      merged before `stage`
 - [ ] Windows and WSL path handling
 - [ ] `perf`: Performance Analyzer summaries, no query text or titles
+      ([specified](design/perf.md); the gate already denies a Read of an
+      export by its shape, `perf-export`)
 
 **Exit:** a staged edit round-trips through Desktop with `git status` showing
 only real changes.

@@ -1,0 +1,6 @@
+description = "Read of a JSON file with an events list of named, timed calendar events allows (principle 6): not an export; nothing is planted"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = []

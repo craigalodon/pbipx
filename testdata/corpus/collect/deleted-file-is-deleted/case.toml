@@ -1,0 +1,10 @@
+description = "a visual deleted in Desktop is deleted in the repository; no value is planted"
+command = "collect"
+args = ["{work}/copy"]
+policy = "default"
+exit = 0
+sentinels = []
+setup = [["stage", "pbip/Example.Report", "--to", "{work}/copy"]]
+work-deleted = ["copy/Example.Report/definition/pages/0000/visuals/0002/visual.json"]
+expect-root-absent = ["pbip/Example.Report/definition/pages/0000/visuals/0002/visual.json"]
+status = [" D pbip/Example.Report/definition/pages/0000/visuals/0002/visual.json"]

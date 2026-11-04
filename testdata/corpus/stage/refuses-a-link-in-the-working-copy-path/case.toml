@@ -1,0 +1,7 @@
+description = "a symbolic link in the path of the working copy is refused, and nothing is written behind it; no value is planted"
+command = "stage"
+args = ["pbip/Example.Report", "--to", "{work}/link/copy"]
+policy = "default"
+exit = 3
+sentinels = []
+expect-work-absent = ["real/copy"]

@@ -49,3 +49,13 @@ against itself.
 repository is strong evidence, and the predecessor's maintainer can run it
 privately at cutover. But its inputs can never be committed here, so it cannot
 be the specification.
+
+## Amendment 2026-11-04: areas that only pbipx has
+
+The corpus is also the specification of behavior the predecessor never had.
+The `stage` and `collect` areas ([ADR-0007](0007-the-desktop-round-trip.md))
+are pbipx-only: no predecessor run is needed for them, and step 1 of the
+decision does not apply. Their cases are written from the design and enabled
+in the change that builds the commands. Because the predecessor is retiring,
+no case in them carries `known = "predecessor"`, and nothing is added to the
+predecessor's repository for them.

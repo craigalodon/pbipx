@@ -37,6 +37,12 @@ func CompareResults(want, got *Result) []string {
 		}
 		return diffs
 	}
+	if want.OK || want.Refusal != "" || got.OK || got.Refusal != "" {
+		if got.OK != want.OK || got.Refusal != want.Refusal {
+			addf("got %s, want %s", describeOutcome(got), describeOutcome(want))
+			return diffs
+		}
+	}
 	if want.Explain != nil {
 		for _, d := range jsonSubset(want.Explain, got.Explain, "") {
 			addf("explain: %s", d)
@@ -134,6 +140,16 @@ func jsonSubset(want, got map[string]json.RawMessage, at string) []string {
 		}
 	}
 	return diffs
+}
+
+func describeOutcome(r *Result) string {
+	if r.OK {
+		return "ok"
+	}
+	if r.Refusal == "" {
+		return "none"
+	}
+	return "refusal " + describeClass(r.Refusal)
 }
 
 func describeDecision(r *Result) string {
