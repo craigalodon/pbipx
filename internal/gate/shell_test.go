@@ -295,6 +295,113 @@ func TestShellSelfApproval(t *testing.T) {
 	})
 }
 
+// TestShellSelfUnenroll mirrors TestShellSelfApproval for 'policy unenroll',
+// a person's command like approve: any word after 'policy' that begins with
+// it denies as agent-settings, by any path to the tool and under any
+// program that supplies a terminal.
+func TestShellSelfUnenroll(t *testing.T) {
+	newControlDirs(t)
+	root := newRepo(t, settingsFiles())
+	run(t, root, []decideCase{
+		{"the tool", sh("pbipx policy unenroll"), gate.ReasonAgentSettings},
+		{"the tool by path", sh("/usr/local/bin/pbipx policy unenroll"), gate.ReasonAgentSettings},
+		{"the tool, exe", sh("C:/tools/pbipx.exe policy unenroll"), gate.ReasonAgentSettings},
+		{"relative path", sh("./bin/pbipx policy unenroll"), gate.ReasonAgentSettings},
+		{"after an option", sh("pbipx --no-color policy unenroll"), gate.ReasonAgentSettings},
+		{"piped into", sh("yes unenroll | pbipx policy unenroll"), gate.ReasonAgentSettings},
+		{"under env", sh("env TERM=xterm pbipx policy unenroll"), gate.ReasonAgentSettings},
+		{"under script", sh("script -qc 'pbipx policy unenroll' /dev/null"), gate.ReasonAgentSettings},
+		{"under unbuffer", sh("unbuffer pbipx policy unenroll"), gate.ReasonAgentSettings},
+		{"under expect", sh(`expect -c 'spawn pbipx policy unenroll; send "unenroll\r"'`), gate.ReasonAgentSettings},
+		{"under winpty", sh("winpty pbipx policy unenroll"), gate.ReasonAgentSettings},
+		{"under winpty with an option", sh("winpty -Xplain pbipx.exe policy unenroll"), gate.ReasonAgentSettings},
+		{"in sh -c", sh("sh -c 'pbipx policy unenroll'"), gate.ReasonAgentSettings},
+		{"a longer word", sh("pbipx policy unenroll-all"), gate.ReasonAgentSettings},
+
+		{"a commit message", sh(`git commit -m "run pbipx policy unenroll"`), ""},
+		{"echoing it", sh(`echo "pbipx policy unenroll"`), ""},
+	})
+}
+
+// TestShellSelfApprovalWinpty: winpty gives the tool a terminal as script
+// does, so approving under it is refused too.
+func TestShellSelfApprovalWinpty(t *testing.T) {
+	newControlDirs(t)
+	root := newRepo(t, settingsFiles())
+	run(t, root, []decideCase{
+		{"under winpty", sh("winpty pbipx policy approve"), gate.ReasonAgentSettings},
+		{"under winpty, exe", sh("winpty pbipx.exe policy approve"), gate.ReasonAgentSettings},
+		{"under winpty, option", sh("winpty -Xallow-non-tty pbipx policy approve"), gate.ReasonAgentSettings},
+		{"under winpty, quoted", sh(`winpty sh -c "pbipx policy approve"`), gate.ReasonAgentSettings},
+		{"winpty status", sh("winpty pbipx policy status"), ""},
+	})
+}
+
+// TestShellPolicyUnknownWord: a word after 'policy' the gate cannot tell
+// could be approve or unenroll, so it denies as a person's step.
+func TestShellPolicyUnknownWord(t *testing.T) {
+	newControlDirs(t)
+	root := newRepo(t, settingsFiles())
+	run(t, root, []decideCase{
+		{"a variable", sh("pbipx policy $SUB"), gate.ReasonAgentSettings},
+		{"a variable, quoted", sh(`pbipx policy "$SUB"`), gate.ReasonAgentSettings},
+		{"a variable set before", sh("SUB=x; pbipx policy $SUB"), gate.ReasonAgentSettings},
+		{"a command substitution", sh("pbipx policy $(echo x)"), gate.ReasonAgentSettings},
+		{"a backtick", sh("pbipx policy `echo x`"), gate.ReasonAgentSettings},
+		{"after status", sh("pbipx policy status $SUB"), gate.ReasonAgentSettings},
+		{"fed by xargs", sh("echo status | xargs pbipx policy"), gate.ReasonAgentSettings},
+		{"fed by xargs, by path", sh("echo unenroll | xargs /usr/bin/pbipx policy"), gate.ReasonAgentSettings},
+		{"fed by parallel", sh("echo approve | parallel pbipx policy"), gate.ReasonAgentSettings},
+		{"policy word unknown", sh("pbipx $SUB approve"), gate.ReasonAgentSettings},
+		{"under script", sh("script -qc 'pbipx policy $SUB' /dev/null"), gate.ReasonAgentSettings},
+
+		{"policy status", sh("pbipx policy status"), ""},
+		{"policy alone", sh("pbipx policy"), ""},
+		{"an unknown word elsewhere", sh("pbipx scan $SUB"), ""},
+	})
+}
+
+// TestShellToolSubcommands: rule 1 allows the tool alone only for a
+// subcommand on the explicit table of what an agent may run. Any other
+// word, or one the gate cannot tell, is judged by the ordinary rules.
+func TestShellToolSubcommands(t *testing.T) {
+	runBoth(t, []both{
+		{"scan", sh("pbipx scan --all"), "", ""},
+		{"scan-text", sh("pbipx scan-text -"), "", ""},
+		{"explain", sh("pbipx explain pbip"), "", ""},
+		{"version", sh("pbipx version"), "", ""},
+		{"help", sh("pbipx help scan"), "", ""},
+		{"--help", sh("pbipx --help"), "", ""},
+		{"--version", sh("pbipx --version"), "", ""},
+		{"baseline verify", sh("pbipx baseline verify"), "", ""},
+		{"policy status", sh("pbipx policy status"), "", ""},
+		{"after an assignment", sh("PBIPX_NO_REVEAL=1 pbipx scan pbip"), "", ""},
+
+		{"stage", sh("pbipx stage"), "", gate.ReasonFinding},
+		{"collect", sh("pbipx collect"), "", gate.ReasonFinding},
+		{"perf", sh("pbipx perf"), "", gate.ReasonFinding},
+		{"init", sh("pbipx init"), "", gate.ReasonFinding},
+		{"gate", sh("pbipx gate"), "", gate.ReasonFinding},
+		{"an unknown subcommand", sh("pbipx frobnicate"), "", gate.ReasonFinding},
+		{"a variable as the subcommand", sh("pbipx $SUB"), "", gate.ReasonFinding},
+		{"a substitution as the subcommand", sh("pbipx $(echo scan)"), "", gate.ReasonFinding},
+		{"a glob as the subcommand", sh("pbipx sc*"), "", gate.ReasonFinding},
+		{"an option first", sh("pbipx --no-color scan"), "", gate.ReasonFinding},
+		{"a table word in another case", sh("pbipx Scan"), "", gate.ReasonFinding},
+		{"policy with another subcommand", sh("pbipx policy frobnicate"), "", gate.ReasonFinding},
+
+		// By any path, and under a wrapper, the table still applies.
+		{"scan by path", sh("/usr/local/bin/pbipx scan --all"), "", ""},
+		{"stage by path", sh("/usr/local/bin/pbipx stage"), "", gate.ReasonFinding},
+		{"stage under env", sh("env X=1 pbipx stage"), "", gate.ReasonFinding},
+		{"stage under winpty", sh("winpty pbipx stage"), "", gate.ReasonFinding},
+		{"stage under winpty with an option", sh("winpty -Xplain pbipx stage"), "", gate.ReasonFinding},
+		{"scan under winpty", sh("winpty pbipx scan --all"), "", ""},
+		{"stage after scan", sh("pbipx scan --all && pbipx stage"), "", gate.ReasonFinding},
+		{"a reader under winpty", sh("winpty cat pbip/B.Report/" + leakInReport), "", gate.ReasonFinding},
+	})
+}
+
 func TestShellQuoting(t *testing.T) {
 	runBoth(t, []both{
 		{"ANSI-C quote hides a second command", sh(`pbipx scan $'\'' ; cat pbip/B.Report/` + leakInReport + ` #'`), "", gate.ReasonFinding},

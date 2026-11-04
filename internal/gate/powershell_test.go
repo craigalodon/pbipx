@@ -72,6 +72,14 @@ func TestPowerShell(t *testing.T) {
 			{"names local state", ps("Get-Content " + strings.ReplaceAll(localState, "/", `\`)), gate.ReasonLocalState},
 			{"runs policy approve", ps("pbipx policy approve"), gate.ReasonAgentSettings},
 			{"policy approve quoted in one string", ps("Write-Output 'pbipx policy approve'"), ""},
+			{"runs policy unenroll", ps("pbipx policy unenroll"), gate.ReasonAgentSettings},
+			{"runs policy unenroll, exe", ps(`& C:\tools\pbipx.exe policy unenroll`), gate.ReasonAgentSettings},
+			{"runs policy unenroll, any case", ps("PBIPX policy UnEnroll"), gate.ReasonAgentSettings},
+			{"runs policy unenroll, after an option", ps("pbipx policy --force unenroll"), gate.ReasonAgentSettings},
+			{"policy unenroll quoted in one string", ps("Write-Output 'pbipx policy unenroll'"), ""},
+			{"policy then a variable", ps("pbipx policy $sub"), gate.ReasonAgentSettings},
+			{"policy then a subexpression", ps("pbipx policy $(Get-Sub)"), gate.ReasonAgentSettings},
+			{"policy status", ps("pbipx policy status"), ""},
 		})
 	})
 }

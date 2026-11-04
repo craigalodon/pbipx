@@ -2101,6 +2101,7 @@ var wrappers = map[string]wrapper{
 	"setsid":     {},
 	"caffeinate": {short: "tw"},
 	"unbuffer":   {},
+	"winpty":     {}, // its options (-Xplain, --showkey) take no value
 	"chronic":    {},
 	"taskset":    {operands: 1, flags: "acpr", longFlags: []string{"all-tasks", "cpu-list", "pid", "reset", "help", "version"}},
 	"flock": {short: "wE", long: []string{"timeout", "wait", "conflict-exit-code"}, operands: 1, flags: "sxunoFc",

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -163,6 +164,14 @@ func probePowerShell(cwd, home, line string) (spots []spot, unknown bool) {
 	return spots, unknown
 }
 
+// psPersonOnly reports whether w, the word after 'policy', is, or could be,
+// a person-only subcommand: it begins with one (any case), or holds an
+// expansion the gate cannot tell (a variable, a subexpression).
+func psPersonOnly(w string) bool {
+	lw := strings.ToLower(w)
+	return personWord(lw) || strings.ContainsAny(w, "$`")
+}
+
 // psControl is the deny for a PowerShell line that names a file outside
 // the repository that controls the gate, or a user-level Claude Code
 // settings directory, or that runs 'pbipx policy approve'. The gate
@@ -170,8 +179,8 @@ func probePowerShell(cwd, home, line string) (spots []spot, unknown bool) {
 func psControl(cwd, home string, words []string, ctl controls) (Decision, bool) {
 	seen := map[string]bool{}
 	for i, w := range words {
-		if strings.EqualFold(w, "policy") && i+1 < len(words) && strings.EqualFold(words[i+1], "approve") {
-			return deny(ReasonAgentSettings, "the command may run 'pbipx policy approve'; "+
+		if strings.EqualFold(w, "policy") && slices.ContainsFunc(words[i+1:], psPersonOnly) {
+			return deny(ReasonAgentSettings, "the command may run a person-only subcommand of the tool ('pbipx policy approve'); "+
 				"approving the policy is a person's step at a terminal, and an agent may not approve the policy that binds it"), true
 		}
 		// A word is placed once: each placing costs file system calls.
