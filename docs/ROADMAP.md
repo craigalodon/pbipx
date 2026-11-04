@@ -122,6 +122,8 @@ gate pass against pbipx.
       the absence of a final newline
 - [ ] Windows and WSL path handling
 - [ ] `perf`: Performance Analyzer summaries, no query text or titles
+      ([specified](design/perf.md); the gate already denies a Read of an
+      export by its shape, `perf-export`)
 
 **Exit:** a staged edit round-trips through Desktop with `git status` showing
 only real changes.
