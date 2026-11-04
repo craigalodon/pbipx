@@ -1,0 +1,6 @@
+description = "Read of a JSON file with an events list whose items are not named, timed events allows (principle 6): not an export; nothing is planted"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = []

@@ -1,0 +1,7 @@
+description = "Read of an export under a protected root, in the report scan glob, denies by its shape; the report scanner finds nothing in it"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = ["Doe, Jane"]
+known       = "predecessor"
