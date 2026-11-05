@@ -35,6 +35,39 @@ const stagesDir = "stages"
 // workingCopyVersion is the entry format version.
 const workingCopyVersion = 1
 
+// Limits on the registry. Every gated call reads it, so it is small:
+// AddWorkingCopy refuses past MaxWorkingCopies entries, and a registry read
+// with more than MaxWorkingCopiesRead is an error (the gate denies).
+const (
+	MaxWorkingCopies     = 64
+	MaxWorkingCopiesRead = 256
+)
+
+// Errors of the registry. None names a path or holds file content.
+var (
+	// ErrTooManyWorkingCopies is a registry at its cap on add, or past the
+	// read cap on read.
+	ErrTooManyWorkingCopies = errors.New("approval: too many working copies are registered")
+	// ErrNotACopyPlace is a path that cannot be a working copy: a root, the
+	// home folder or a parent of it, or a folder in or holding a git work
+	// tree.
+	ErrNotACopyPlace = errors.New("approval: the path cannot be a working copy")
+)
+
+// EntryError is an entry that could not be read or is not valid. Name is
+// the entry's file name in the registry, a hash of the working copy's path,
+// which names nothing; Err is ErrBadRecord or the read error.
+type EntryError struct {
+	Name string
+	Err  error
+}
+
+func (e *EntryError) Error() string {
+	return "approval: the registry entry " + e.Name + " cannot be used"
+}
+
+func (e *EntryError) Unwrap() error { return e.Err }
+
 // WorkingCopy is one registry entry.
 type WorkingCopy struct {
 	// Path is the working copy's folder: absolute and clean. AddWorkingCopy
@@ -80,12 +113,57 @@ func (s *Store) AddWorkingCopy(w WorkingCopy) error {
 		}
 	}
 	path := ResolveExisting(w.Path)
+	if err := checkCopyPlace(path); err != nil {
+		return err
+	}
+	key := entryKey(path) + ".json"
+	dir := filepath.Join(s.Dir, stagesDir)
+	if entries, err := readDir(dir); err == nil {
+		n := 0
+		for _, e := range entries {
+			if !entryName.MatchString(e.Name()) {
+				continue
+			}
+			if e.Name() == key {
+				n = -1 << 30 // a replacement, not an addition
+			}
+			n++
+		}
+		if n >= MaxWorkingCopies {
+			return ErrTooManyWorkingCopies
+		}
+	}
 	data, err := json.Marshal(entry{Version: workingCopyVersion, Path: path, GitDir: w.GitDir, Model: w.Model,
 		Staged: w.Staged.UTC().Truncate(time.Second)})
 	if err != nil {
 		return err
 	}
-	return writeAtomic(filepath.Join(s.Dir, stagesDir, entryKey(path)+".json"), append(data, '\n'))
+	return writeAtomic(filepath.Join(dir, key), append(data, '\n'))
+}
+
+// checkCopyPlace is ErrNotACopyPlace for a resolved absolute path that is a
+// file system root, the home folder or a parent of it, or a folder that
+// holds a git entry or has one in a folder above it (it is, or would be,
+// inside a git work tree).
+func checkCopyPlace(path string) error {
+	if filepath.Dir(path) == path {
+		return ErrNotACopyPlace
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		for _, h := range []string{filepath.Clean(home), ResolveExisting(home)} {
+			if Within(path, h) {
+				return ErrNotACopyPlace
+			}
+		}
+	}
+	for d := path; ; d = filepath.Dir(d) {
+		if _, err := os.Lstat(filepath.Join(d, ".git")); err == nil {
+			return ErrNotACopyPlace
+		}
+		if filepath.Dir(d) == d {
+			return nil
+		}
+	}
 }
 
 // RemoveWorkingCopy removes the entry for the working copy at path, found
@@ -139,9 +217,15 @@ func (s *Store) WorkingCopies() ([]WorkingCopy, error) {
 		if !entryName.MatchString(e.Name()) {
 			continue
 		}
+		if len(out) >= MaxWorkingCopiesRead {
+			return nil, ErrTooManyWorkingCopies
+		}
 		w, found, err := readEntry(filepath.Join(dir, e.Name()))
 		if err != nil {
-			return nil, err
+			if errors.Is(err, ErrStoreNotDir) {
+				return nil, err
+			}
+			return nil, &EntryError{Name: e.Name(), Err: err}
 		}
 		if found {
 			out = append(out, w)
