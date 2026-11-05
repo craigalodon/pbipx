@@ -13,8 +13,10 @@ minimum_pre_commit_version: "4.0.0"
 # and no reformatting (CONTRIBUTING.md), so no fixer may touch the corpus
 # trees (tree/, after/tree/, expected/root/ and expected/work/), or those of
 # the corpus package's own test cases. The
-# private-terms hook is not subject to this.
-exclude: ^(testdata/corpus|internal/corpus/testdata/corpus)/.*/(tree|expected/root|expected/work)/
+# private-terms hook is not subject to this. So are the sample project and its
+# planted file (examples/sample-pbip/README.md), which keep the same
+# serialization.
+exclude: ^((testdata/corpus|internal/corpus/testdata/corpus)/.*/(tree|expected/root|expected/work)/|examples/sample-pbip/(project|planted)/)
 
 repos:
   - repo: local

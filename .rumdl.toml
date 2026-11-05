@@ -1,4 +1,11 @@
 [global]
-# Markdown inside corpus trees is fixture input, kept exactly as written.
-exclude = ["testdata/corpus/*/*/tree/**", "testdata/corpus/*/*/after/tree/**", "testdata/corpus/*/*/expected/**"]
+# Markdown inside corpus trees and the sample project is fixture input, kept
+# exactly as written.
+exclude = [
+  "testdata/corpus/*/*/tree/**",
+  "testdata/corpus/*/*/after/tree/**",
+  "testdata/corpus/*/*/expected/**",
+  "examples/sample-pbip/project/**",
+  "examples/sample-pbip/planted/**",
+]
 line-length = 80

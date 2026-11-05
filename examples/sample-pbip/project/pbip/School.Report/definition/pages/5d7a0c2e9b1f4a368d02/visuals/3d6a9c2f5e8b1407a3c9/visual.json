@@ -1,0 +1,57 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.4.0/schema.json",
+  "name": "3d6a9c2f5e8b1407a3c9",
+  "position": {
+    "x": 400,
+    "y": 176,
+    "z": 2000,
+    "height": 360,
+    "width": 640,
+    "tabOrder": 2000
+  },
+  "visual": {
+    "visualType": "clusteredBarChart",
+    "query": {
+      "queryState": {
+        "Category": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "course"
+                    }
+                  },
+                  "Property": "title"
+                }
+              },
+              "queryRef": "course.title",
+              "nativeQueryRef": "title",
+              "active": true
+            }
+          ]
+        },
+        "Y": {
+          "projections": [
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "enrollment"
+                    }
+                  },
+                  "Property": "Enrollment Count"
+                }
+              },
+              "queryRef": "enrollment.Enrollment Count",
+              "nativeQueryRef": "Enrollment Count"
+            }
+          ]
+        }
+      }
+    },
+    "drillFilterOtherVisuals": true
+  }
+}

@@ -1,0 +1,45 @@
+table enrollment
+	lineageTag: 00000000-0000-0000-0000-000000000301
+
+	measure 'Enrollment Count' = COUNTROWS(enrollment)
+		formatString: 0
+		lineageTag: 00000000-0000-0000-0000-000000000302
+
+	column enrollment_id
+		dataType: string
+		lineageTag: 00000000-0000-0000-0000-000000000303
+		summarizeBy: none
+		sourceColumn: enrollment_id
+
+	column student_id
+		dataType: string
+		lineageTag: 00000000-0000-0000-0000-000000000304
+		summarizeBy: none
+		sourceColumn: student_id
+
+	column course_id
+		dataType: string
+		lineageTag: 00000000-0000-0000-0000-000000000305
+		summarizeBy: none
+		sourceColumn: course_id
+
+	column term_start
+		dataType: dateTime
+		formatString: Long Date
+		lineageTag: 00000000-0000-0000-0000-000000000306
+		summarizeBy: none
+		sourceColumn: term_start
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	partition enrollment = m
+		mode: import
+		source =
+				let
+					Source = Sql.Database("sql.contoso.example.cloud", "registrar"),
+					enrollment = Source{[Schema = "school", Item = "enrollment"]}[Data]
+				in
+					enrollment
+
+	annotation PBI_ResultType = Table
+
