@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -37,6 +38,9 @@ const (
 	plantedCohort = "Fall 2150"
 	plantedEmail  = "jane.doe@example.com"
 )
+
+// plantedYear is the year in plantedCohort, on its own.
+var plantedYear = regexp.MustCompile(`\b2150\b`)
 
 // reportScanner stands in for the report scanner: each line
 // "<table>.<column>=<value>" is a literal on that column.
@@ -141,10 +145,15 @@ func runIn(t *testing.T, stdin string, args ...string) outcome {
 // leaks names the planted value found in the output, or "".
 func (o outcome) leaks() string {
 	all := o.stdout + o.stderr
-	for _, v := range []string{"Doe", "Jane", plantedCohort, "2150", plantedEmail, "jane.doe"} {
+	for _, v := range []string{"Doe", "Jane", plantedCohort, plantedEmail, "jane.doe"} {
 		if strings.Contains(all, v) {
 			return v
 		}
+	}
+	// As a whole word: a temporary directory in a printed path can hold these
+	// digits in its random suffix.
+	if plantedYear.MatchString(all) {
+		return "2150"
 	}
 	return ""
 }
