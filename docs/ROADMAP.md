@@ -141,7 +141,7 @@ only real changes.
   `scripts/check-private-terms.sh --history` in a `git clone --mirror` clone
   (this covers `refs/pull/*`), and `--github` for pull request, issue and
   release text
-- [x] A synthetic sample PBIP project to demonstrate with, in
+- [ ] A synthetic sample PBIP project to demonstrate with, in
   `examples/sample-pbip/`, with a planted finding and an acceptance test
   (Desktop must still open it once: see its README)
 - [ ] Docs written for analysts, not maintainers
