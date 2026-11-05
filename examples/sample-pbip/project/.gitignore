@@ -1,0 +1,4 @@
+# Power BI Desktop's local state and data cache
+**/.pbi/
+*.pbix
+*.abf

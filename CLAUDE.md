@@ -50,6 +50,7 @@ you, fix the cause or tell the user.
 ```text
 cmd/pbipx/          the entry point; commands on cobra (ADR-0005)
 internal/           packages; nothing is a public Go API yet
+examples/           a synthetic sample PBIP project and its demo test
 testdata/corpus/    the language-neutral behavior corpus (docs/design/corpus.md)
 docs/ROADMAP.md     phases and exit criteria
 docs/design/        principles, threat model, corpus format

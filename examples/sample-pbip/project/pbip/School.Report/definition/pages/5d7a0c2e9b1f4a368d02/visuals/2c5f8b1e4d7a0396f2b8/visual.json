@@ -1,0 +1,38 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.4.0/schema.json",
+  "name": "2c5f8b1e4d7a0396f2b8",
+  "position": {
+    "x": 400,
+    "y": 32,
+    "z": 1000,
+    "height": 120,
+    "width": 240,
+    "tabOrder": 1000
+  },
+  "visual": {
+    "visualType": "card",
+    "query": {
+      "queryState": {
+        "Values": {
+          "projections": [
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "student"
+                    }
+                  },
+                  "Property": "Student Count"
+                }
+              },
+              "queryRef": "student.Student Count",
+              "nativeQueryRef": "Student Count"
+            }
+          ]
+        }
+      }
+    },
+    "drillFilterOtherVisuals": true
+  }
+}
