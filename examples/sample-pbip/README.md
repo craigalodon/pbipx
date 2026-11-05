@@ -3,8 +3,8 @@
 A small, invented Power BI project for trying pbipx: a report with a person
 slicer, a card and a bar chart, over a three-table school model (`student`,
 `course`, `enrollment`). Everything in it is synthetic: Contoso names, a
-source on `example.cloud`, all-zero GUIDs, and no data at all. It contains no
-value for pbipx to find, until you plant one.
+source on `example.cloud`, freshly generated GUIDs, and no data at all. It
+contains no value for pbipx to find, until you plant one.
 
 ```text
 examples/sample-pbip/
