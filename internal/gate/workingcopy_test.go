@@ -335,6 +335,9 @@ func TestWorkingCopyFoldsCase(t *testing.T) {
 			name, reason = "case-folding", wc
 		}
 		t.Run(name, func(t *testing.T) {
+			if !fold && (runtime.GOOS == "windows" || runtime.GOOS == "darwin") {
+				t.Skip("the file system folds case, so another case is the same path")
+			}
 			defer gate.SetFoldCase(fold)()
 			m.run(t, []wcCase{
 				{"read in upper case", "", wcRead(filepath.Join(upper, wcReport)), reason},

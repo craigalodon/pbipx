@@ -1,6 +1,7 @@
 package approval
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -117,7 +118,12 @@ func TestWorkingCopiesReadCap(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	body := []byte(`{"version":1,"path":"/x"}`)
+	// An absolute path on every platform: a drive letter on Windows.
+	abs, err := json.Marshal(filepath.Join(t.TempDir(), "x"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`{"version":1,"path":` + string(abs) + `}`)
 	write := func(i int) {
 		name := strings.Repeat("0", 64-len(strconv.Itoa(i))) + strconv.Itoa(i) + ".json"
 		if err := os.WriteFile(filepath.Join(dir, name), body, 0o600); err != nil {

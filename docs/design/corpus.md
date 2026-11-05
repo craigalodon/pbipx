@@ -359,7 +359,11 @@ store, which a gate case's runner owns. So a gate case can register some:
   existing, empty directory outside the root, in no git repository, with no
   symbolic link in its path. In a gate case it is valid in `stdin`, `args`
   and `env`, and only when `working-copies` is set. In `stdin` it is written
-  as JSON string content, as `{root}` is.
+  with forward slashes (`C:/Users/...` on Windows), as a user of Bash
+  there writes a path, and then as JSON string content, as `{root}` is. A
+  backslash in a Bash command is an escape, so a command written with the
+  native path would name another path (`C:\a\b` is `C:ab`), and the case
+  would test nothing. The gate's own tests cover the native spellings.
 
 A working copy holds nothing in a case, because the gate never opens a file
 under one: whether a path exists changes nothing. A path through a glob

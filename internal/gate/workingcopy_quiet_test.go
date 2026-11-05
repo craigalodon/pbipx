@@ -119,7 +119,7 @@ func TestWorkingCopyTooManyEntries(t *testing.T) {
 	m := newWCMachine(t)
 	for i := range approval.MaxWorkingCopiesRead {
 		name := fmt.Sprintf("%064x.json", i+1)
-		write(t, filepath.Join(m.ctl.store, "stages"), name, `{"version":1,"path":"/nowhere/x"}`)
+		write(t, filepath.Join(m.ctl.store, "stages"), name, `{"version":1,"path":`+quote(filepath.Join(m.outside, "nowhere"))+`}`)
 	}
 	d := m.decide(wcRead(filepath.Join(m.outside, "notes.txt")), "")
 	check(t, d, gate.ReasonInternalError)

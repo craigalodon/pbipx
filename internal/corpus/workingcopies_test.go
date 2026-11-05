@@ -141,9 +141,23 @@ func TestPrepareWithoutWorkingCopiesMakesNoBase(t *testing.T) {
 // string content, as {root} is.
 func TestStdinWithEscapesWork(t *testing.T) {
 	cs := Case{Spec: Spec{Command: commandGate}, HasStdin: true, Stdin: []byte(`{"cwd": "{root}", "p": "{work}/x"}`)}
-	p := &Prepared{Root: `C:\r "q"`, Work: `C:\w "q"`}
+	p := &Prepared{Root: `C:\r "q"`, Work: `/w "q"`}
 	got := string(cs.StdinWith(p))
-	if want := `{"cwd": "C:\\r \"q\"", "p": "C:\\w \"q\"/x"}`; got != want {
+	if want := `{"cwd": "C:\\r \"q\"", "p": "/w \"q\"/x"}`; got != want {
+		t.Errorf("stdin = %s, want %s", got, want)
+	}
+}
+
+// TestWorkForSlashes checks {work} is written with forward slashes, as a
+// bash user writes a Windows path: a backslash in a shell command is an
+// escape, and would make the command name another path.
+func TestWorkForSlashes(t *testing.T) {
+	if got, want := slashes(`C:\Users\a b\work-1`), "C:/Users/a b/work-1"; got != want {
+		t.Errorf("slashes = %q, want %q", got, want)
+	}
+	cs := Case{Spec: Spec{Command: commandGate}, HasStdin: true, Stdin: []byte(`{"c": "cat {work}/copy/x"}`)}
+	got := string(cs.StdinWith(&Prepared{Root: "/r", Work: "/w"}))
+	if want := `{"c": "cat /w/copy/x"}`; got != want {
 		t.Errorf("stdin = %s, want %s", got, want)
 	}
 }

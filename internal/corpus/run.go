@@ -332,10 +332,15 @@ func (cs *Case) StdinWith(p *Prepared) []byte {
 	}
 	out := bytes.ReplaceAll(cs.Stdin, []byte(rootPlaceholder), enc(p.Root))
 	if p.Work != "" {
-		out = bytes.ReplaceAll(out, []byte(workPlaceholder), enc(p.Work))
+		out = bytes.ReplaceAll(out, []byte(workPlaceholder), enc(slashes(p.Work)))
 	}
 	return out
 }
+
+// slashes is a path with forward slashes, as a bash user writes a Windows
+// path in a command: an unquoted backslash there is an escape, so a command
+// written with the native path would name another one.
+func slashes(p string) string { return strings.ReplaceAll(p, `\`, "/") }
 
 // jsonStringContent is s encoded as a JSON string, without the quotes.
 func jsonStringContent(s string) []byte {

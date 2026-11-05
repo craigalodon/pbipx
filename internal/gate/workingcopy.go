@@ -86,8 +86,10 @@ func (f *finder) workingCopyDeny() *Decision {
 	// built into a command), is taken to reach it.
 	if f.ev.Tool == Shell || f.ev.Tool == PowerShell {
 		for _, root := range roots {
-			if namesPath(f.ev.Command, root, f.fold) {
-				return &reach
+			for _, form := range pathForms(root, windowsPaths) {
+				if namesPath(f.ev.Command, form, f.fold) {
+					return &reach
+				}
 			}
 		}
 	}
@@ -222,6 +224,22 @@ func namesPath(line, name string, fold bool) bool {
 		}
 		i = start + 1
 	}
+}
+
+// pathForms are the ways a line can spell the absolute path root: as the
+// operating system writes it, and on Windows with forward slashes
+// ("C:/Users/x") and as bash writes a drive path ("/c/Users/x").
+func pathForms(root string, windows bool) []string {
+	forms := []string{root}
+	if !windows {
+		return forms
+	}
+	slashed := strings.ReplaceAll(root, `\`, "/")
+	forms = append(forms, slashed)
+	if len(slashed) >= 2 && slashed[1] == ':' && isASCIILetter(slashed[0]) {
+		forms = append(forms, "/"+strings.ToLower(slashed[:1])+slashed[2:])
+	}
+	return forms
 }
 
 // containsPath reports whether paths holds p, as spelled or, with fold, in
