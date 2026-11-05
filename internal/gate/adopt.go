@@ -55,6 +55,8 @@ type spot struct {
 	container bool
 	bare      bool
 	prose     bool
+	// only: for working copies alone; the adoption finder ignores it.
+	only bool
 }
 
 // finder finds the adopted repositories one call touches.
@@ -165,6 +167,9 @@ func (f *finder) targets() ([]*source.Repo, *Decision) {
 		}
 	}
 	for _, sp := range spots {
+		if sp.only {
+			continue
+		}
 		for _, a := range []string{sp.path, resolve(sp.path)} {
 			var holders []string
 			for d := a; ; d = filepath.Dir(d) {
@@ -501,14 +506,26 @@ func probeShell(cwd, home, line string, m *msysSession) (*walker, []spot, bool) 
 		// under it, as walker.reaches has them.
 		lists := v.cwd.known() && lister(v.name, v.rest)
 		mover := v.name == "cd" || v.name == "pushd" || v.name == "chdir"
-		for _, xw := range v.words {
+		quiet := quietWords(ps, v)
+		for wi, xw := range v.words {
 			abss, unk := ps.wordSpellings(v, xw)
 			if unk && reader && !optionOnly(xw.text) {
 				unknown = true
 			}
+			bare := lists || mover && !xw.redirect || quiet[wi]
 			for _, a := range abss {
-				spots = append(spots, spot{path: a, container: true,
-					bare: lists || mover && !xw.redirect, prose: xw.message && !w.redefines})
+				spots = append(spots, spot{path: a, container: true, bare: bare, prose: xw.message && !w.redefines})
+			}
+			// A path attached to a short option (-C/dir, -I/dir/x) is placed
+			// for working copies only: it is a limit of the adoption finder
+			// that adopted repositories keep.
+			if val, ok := attachedValue(xw); ok {
+				vw := xw
+				vw.text, vw.pattern, vw.glob = val, val, false
+				vabss, _ := ps.wordSpellings(v, vw)
+				for _, a := range vabss {
+					spots = append(spots, spot{path: a, container: true, bare: bare, only: true})
+				}
 			}
 		}
 		paths, everywhere := w.searchReads(v)

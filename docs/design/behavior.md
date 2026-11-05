@@ -741,8 +741,12 @@ approval records are: through a temporary file renamed into place, mode
 replaces it; removing a path that has none is not an error; a file in the
 directory whose name is not a hex SHA-256 and `.json` is not an entry.
 `stage` adds an entry and `collect --done` or `--discard` removes it
-(`Store.AddWorkingCopy` and `Store.RemoveWorkingCopy`); nothing else
-writes the registry, and the gate denies an agent's write into the store
+(`Store.AddWorkingCopy` and `Store.RemoveWorkingCopy`). Adding refuses a
+path that cannot be a copy: a file system root, the home folder or a
+parent of it, a folder that holds a `.git` entry, and a folder with a
+`.git` entry in a folder above it (a folder inside a git work tree), all
+judged with symlinks resolved; and it refuses an entry past 64. Nothing
+else writes the registry, and the gate denies an agent's write into the store
 (`agent-settings`, above), the registry included.
 
 *What counts as touching.* The same paths the adoption finder places for
@@ -754,10 +758,23 @@ command runs in (a `cd` into one included), every word placed against it
 a file system that folds it, symlinks as given and resolved), every
 redirection target, and the paths a recursive search, `find`, `fd` and
 `xargs` read under; for PowerShell, every word that looks like a path. A
-path **at or under** a working copy denies. A path **above** one denies
-when the call reads under it: a Grep or LSP path, and a Bash word of a
-command that is not a lister (below). So `grep -r X ~`, `cp -r ~/work x`
-and a Grep of a parent folder deny, and `ls ~` does not. A call that
+path **at or under** a working copy denies, for every program. A path
+**above** one denies when the call reads under it: a Grep or LSP path, a
+search or `find` that goes under it, and a Bash word of a program that
+could read under it. So `grep -r X ~`, `rg X` from the folder above,
+`cp -r ~/work x` (a source) and `tar czf x -C ~ .` deny, and so does a
+program the gate does not know. A word naming a folder above a copy does
+not deny when the program is known to read nothing under it: the
+programs that never read their operands as files (`echo`, `printf`,
+`test`, `[`, `dirname`, `basename`, `export`, `rm`, `mv`, `ls`, `git`,
+and the rest of the `neverReadsOperands` table), a program that opens a
+place (`code`, `open`, `xdg-open`, `explorer`), a destination of `cp`, `mv`,
+`rsync` and the like, and the directory `tar x -C`, `unzip -d` and `wget -P`
+unpack or download into. So `echo ~`, `export X=$HOME`, `cp f ~/`,
+`unzip a.zip -d ~` and `git -C ~ status` are allowed. A path attached to
+a short option (`make -C<dir>`, `cc -I<dir>/x`, `sort -o<file>`) is
+placed for working copies, which the adoption finder does not do for
+adopted repositories; a glob attached to one is not expanded. A call that
 touches something that cannot be placed (the finder's "touches every
 indexed work tree": a reading command's word with a `$` or `` ` `` the gate
 cannot expand, a working directory it cannot tell, a line built at run
@@ -768,22 +785,34 @@ message included; the words of a git message are not placed as paths.
 Names are compared without regard to case on a file system that folds it
 (macOS, Windows), and exactly elsewhere.
 
-*Listing.* **A listing of a working copy denies** (`ls`, `stat`, `du`,
-`tree`, `find` that only tests names, with the working copy or anything in
-it as an operand). Principle 1 allows listing a protected root, since
-names are schema, but ADR-0007 says every path, and nothing a person
-needs from an agent depends on a listing: the person works in the folder
-in Desktop, and `collect` reports what it brought back by path and count.
-A lister of a directory **above** a working copy is allowed, as is a `cd`
-to one: they name the directory and read nothing under it. So are PowerShell
-calls whose working directory is above one.
+*Listing.* **A listing with a working copy, or a path in it, as an
+operand denies** (`ls`, `stat`, `du`, `tree`, `find` that only tests
+names). Principle 1 allows listing a protected root, since names are
+schema, but ADR-0007 denies a path under a working copy, and nothing a
+person needs from an agent depends on a listing: the person works in the
+folder in Desktop, and `collect` reports what it brought back by path and
+count. **A recursive lister of a directory above a working copy is
+allowed**, and what it prints is not nothing: `ls -R ~`, `du -a ~`,
+`tree ~` and `find ~ -printf '%p %s'` show the names of the files in the
+working copy and their sizes, and so can `ls -l`'s sizes and times. This
+is a deliberate reading of principle 1 (names are schema, a size is
+metadata), not an oversight, and the maintainer can overturn it by
+treating a lister's word as reaching what is below it. A `cd` to a folder
+above a copy is allowed too, as are PowerShell calls whose working
+directory is above one.
 
 *Registry errors.* A registry that cannot be read (an entry that does not
 parse or cannot be read, a `stages` that is a file) denies every call with
 `internal-error`, as a broken store does: a working copy the gate cannot
-see is one it cannot protect. An entry whose folder no longer exists is
-skipped; a registry of only such entries, or with none, changes nothing.
-The registry is read for every call the gate decides.
+see is one it cannot protect. So does a registry with more than 256
+entries (Add stops at 64, so only a hand edit gets there). The message
+says what to do and names no path: for an entry, the entry's file name (a
+hash, which names nothing) and "remove that file", and that
+`pbipx collect --discard` will do it once it exists. An entry whose folder
+no longer exists is skipped; a registry of only such entries, or with none,
+changes nothing. An entry the store would refuse to add (the home folder,
+say), written by hand, still protects what it names. The registry is read
+for every call the gate decides.
 
 *The message.* The class is `working-copy` (pbipx only). The message is
 fixed, and prints a path only as `<working copy>/<path inside it>` with
@@ -798,7 +827,8 @@ line that spells one. The hint ends it: "Leave it out of the call: a
 person works there in Power BI Desktop."
 
 *Not covered.* The gate cannot see a path an interpreter builds at run
-time inside a script it is not shown, nor a PowerShell variable that is not
+time inside a script it is not shown, a glob attached to a short option
+(`-I<dir>/*`), nor a PowerShell variable that is not
 in a word that looks like a path; as for every control here, a process
 outside the gate is the sandbox's to stop (threat model, layer 7). Without
 adoption configured (`Options.Adoption` nil, as in a library caller) the

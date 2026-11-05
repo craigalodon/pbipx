@@ -4,8 +4,11 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"slices"
 	"strings"
 	"syscall"
+
+	"github.com/craigalodon/pbipx/internal/approval"
 )
 
 // Working copies (ADR-0007; behavior.md, "The gate", working copies).
@@ -41,7 +44,7 @@ func (f *finder) workingCopyDeny() *Decision {
 	}
 	entries, err := f.store.WorkingCopies()
 	if err != nil {
-		d := deny(ReasonInternalError, "the registry of Power BI Desktop working copies cannot be read; the call is denied")
+		d := registryDeny(err)
 		return &d
 	}
 	var roots []string
@@ -89,6 +92,103 @@ func (f *finder) workingCopyDeny() *Decision {
 		}
 	}
 	return nil
+}
+
+// registryDeny is the deny for a registry that cannot be read. The message
+// is fixed; the only thing it takes from the error is the name of an entry
+// file, which is a hash of a path and names nothing.
+func registryDeny(err error) Decision {
+	const fix = "Ask a person to remove the entry file from the stages folder of the pbipx configuration directory " +
+		"(`pbipx collect --discard` will do this once it exists)."
+	var ee *approval.EntryError
+	switch {
+	case errors.As(err, &ee):
+		return deny(ReasonInternalError, "the registry of Power BI Desktop working copies has an entry that cannot be used (the file %s); "+
+			"every call is denied until it is fixed: remove that file. %s", displayPath(ee.Name), fix)
+	case errors.Is(err, approval.ErrTooManyWorkingCopies):
+		return deny(ReasonInternalError, "more than %d Power BI Desktop working copies are registered, more than the gate reads; "+
+			"every call is denied until some are removed: remove entry files. %s", approval.MaxWorkingCopiesRead, fix)
+	}
+	return deny(ReasonInternalError, "the registry of Power BI Desktop working copies cannot be read; every call is denied "+
+		"until the stages folder of the pbipx configuration directory can be read again.")
+}
+
+// attachedValue is the value attached to a short option in a word
+// (-C/dir, -I/dir/x, -o/file), which the finder does not place.
+func attachedValue(xw xword) (string, bool) {
+	t := xw.text
+	if xw.redirect || xw.message || !xw.known || xw.glob || len(t) < 3 || t[0] != '-' || t[1] == '-' || t[1] == '=' {
+		return "", false
+	}
+	return t[2:], true
+}
+
+// openers are programs that open a path in a window or a viewer: they name
+// a folder and a person looks at it, nothing is read to the agent.
+var openers = map[string]bool{"code": true, "cursor": true, "open": true, "xdg-open": true, "explorer": true, "explorer.exe": true}
+
+// quietWords are the indexes in v.words of words that name a place and
+// read nothing under it, so a working copy below one is not reached: every
+// operand of a program known to read none of its operands as files
+// (neverReadsOperands) or to only open a place, a destination of cp, mv,
+// rsync, tee and the like, and the directory a program is told to work in
+// when it only unpacks or downloads into it (tar x -C, unzip -d, wget -P).
+// Any other program could recurse, so its words are not quiet.
+func quietWords(s *setup, v view) map[int]bool {
+	q := map[int]bool{}
+	var args []int // indexes of the words that are not redirections
+	for i, xw := range v.words {
+		if !xw.redirect {
+			args = append(args, i)
+		}
+	}
+	if neverReadsOperands[v.name] || openers[v.name] {
+		for _, i := range args {
+			q[i] = true
+		}
+		return q
+	}
+	dests, _ := s.destinations(v)
+	for i, xw := range v.words {
+		for _, d := range dests {
+			if xw.text == d.text && xw.redirect == d.redirect {
+				q[i] = true
+			}
+		}
+	}
+	if len(v.rest) > len(args) {
+		return q
+	}
+	rest := args[len(args)-len(v.rest):]
+	var flags []string // options whose next word is a directory to work in
+	var prefixes []string
+	switch v.name {
+	case "tar":
+		first := ""
+		if len(v.rest) > 0 {
+			first = v.rest[0]
+		}
+		extract := slices.Contains(v.rest, "--extract") || slices.Contains(v.rest, "--get") ||
+			!strings.HasPrefix(first, "--") && strings.Contains(first, "x")
+		if extract {
+			flags, prefixes = []string{"-C", "--directory"}, []string{"--directory="}
+		}
+	case "unzip":
+		flags = []string{"-d"}
+	case "wget":
+		flags, prefixes = []string{"-P", "--directory-prefix"}, []string{"--directory-prefix="}
+	}
+	for j, a := range v.rest {
+		if slices.Contains(flags, a) && j+1 < len(rest) {
+			q[rest[j+1]] = true
+		}
+		for _, pre := range prefixes {
+			if strings.HasPrefix(a, pre) {
+				q[rest[j]] = true
+			}
+		}
+	}
+	return q
 }
 
 // inWorkingCopy is the deny for a path rel below a working copy ("." for
