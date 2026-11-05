@@ -142,7 +142,7 @@ func psPathLike(cwd, w string) bool {
 // that looks like a path and holds an expansion ($) cannot be placed, nor
 // can a line with too many words.
 func probePowerShell(cwd, home, line string) (spots []spot, unknown bool) {
-	spots = append(spots, spot{path: cwd, container: true})
+	spots = append(spots, spot{path: cwd, container: true, bare: true})
 	words, ok := psWords(line)
 	if !ok {
 		return spots, true

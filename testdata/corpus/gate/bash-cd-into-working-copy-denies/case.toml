@@ -1,0 +1,8 @@
+description = "cd into a registered working copy, then ls, denies; no value is planted"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []
+known       = "predecessor"
+working-copies = ["copy"]

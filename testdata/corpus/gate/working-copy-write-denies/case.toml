@@ -1,0 +1,8 @@
+description = "A Write of a new file in a registered working copy denies; no value is planted"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []
+known       = "predecessor"
+working-copies = ["copy"]

@@ -1,0 +1,8 @@
+description = "A Read of the data cache in a registered working copy denies with working-copy, with no scan of the file; no value is planted"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []
+known       = "predecessor"
+working-copies = ["copy"]

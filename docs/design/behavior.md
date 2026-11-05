@@ -570,6 +570,10 @@ repositories a call is the gate's to judge
   set, and otherwise the directory the variable defaults to (the store, or
   `~/.claude`). So `rm -rf $PBIPX_CONFIG_DIR/approved` denies like the
   literal path, and a plain read of it stays allowed.
+- **A registered working copy is denied before any of this**
+  ([ADR-0007](../adr/0007-the-desktop-round-trip.md); "Working copies",
+  below). A call that touches a path under one is denied with
+  `working-copy`, adopted repository or not, from any working directory.
 - An adopted repository that git cannot open as a work tree (its `.git`
   removed, say, while its work tree stays indexed), or a working directory
   inside one that git cannot place (inside the git directory, or gone),
@@ -707,6 +711,128 @@ as given or with symlinks resolved (of the root, and of the directory's
 deepest existing ancestor): the gate denies every call with
 `internal-error`, and `policy approve` and `policy status` exit 3. `scan`
 does not check approval.
+
+### Working copies
+
+**Divergence (pbipx only).** A working copy is a folder `pbipx stage`
+makes outside every repository for Power BI Desktop to open
+([stage-collect.md](stage-collect.md)). Desktop writes a data cache there
+(`.pbi/cache.abf`) holding a copy of real data that no scanner vets, so
+the gate denies **every path under a registered working copy, with no
+scanning**, from any working directory, in a repository that adopted pbipx
+or not (principle 8; ADR-0007). The deny comes first: before the policy of
+any repository is loaded, so a working copy nested in a repository (a
+person ran `git init` there) is still a working copy, not whatever its
+repository's policy would say.
+
+*The registry.* Working copies are registered in the approval store,
+outside every repository, beside the approval records:
+`${PBIPX_CONFIG_DIR:-<user config dir>/pbipx}/stages/<key>.json`, one file
+per working copy. The key is the hex SHA-256 of the working copy's
+absolute, symlink-resolved path. An entry is JSON holding `version = 1`
+and `path` (absolute and clean, symlinks resolved as far as the folder
+exists), and optionally `git-dir` (the git directory of the clone it was
+staged from, absolute), `model` (the model's repository path) and
+`staged` (a UTC time): paths and a date, never policy content or anything
+read from a file. An entry with an unknown key or version, a relative or
+unclean path, or invalid JSON is not valid. Entries are written as
+approval records are: through a temporary file renamed into place, mode
+0600, in directories created 0700. Adding an entry for a path that has one
+replaces it; removing a path that has none is not an error; a file in the
+directory whose name is not a hex SHA-256 and `.json` is not an entry.
+`stage` adds an entry and `collect --done` or `--discard` removes it
+(`Store.AddWorkingCopy` and `Store.RemoveWorkingCopy`). Adding refuses a
+path that cannot be a copy: a file system root, the home folder or a
+parent of it, a folder that holds a `.git` entry, and a folder with a
+`.git` entry in a folder above it (a folder inside a git work tree), all
+judged with symlinks resolved; and it refuses an entry past 64. Nothing
+else writes the registry, and the gate denies an agent's write into the store
+(`agent-settings`, above), the registry included.
+
+*What counts as touching.* The same paths the adoption finder places for
+an adopted repository, with the same placement: the working directory; a
+Read's, Edit's or Write's path; a Grep's path (default: the working
+directory); an LSP call's paths; for Bash, every working directory a
+command runs in (a `cd` into one included), every word placed against it
+(globs, `..`, `~`, `$HOME`, `${HOME}`, spellings of Git Bash and of case on
+a file system that folds it, symlinks as given and resolved), every
+redirection target, and the paths a recursive search, `find`, `fd` and
+`xargs` read under; for PowerShell, every word that looks like a path. A
+path **at or under** a working copy denies, for every program. A path
+**above** one denies when the call reads under it: a Grep or LSP path, a
+search or `find` that goes under it, and a Bash word of a program that
+could read under it. So `grep -r X ~`, `rg X` from the folder above,
+`cp -r ~/work x` (a source) and `tar czf x -C ~ .` deny, and so does a
+program the gate does not know. A word naming a folder above a copy does
+not deny when the program is known to read nothing under it: the
+programs that never read their operands as files (`echo`, `printf`,
+`test`, `[`, `dirname`, `basename`, `export`, `rm`, `mv`, `ls`, `git`,
+and the rest of the `neverReadsOperands` table), a program that opens a
+place (`code`, `open`, `xdg-open`, `explorer`), a destination of `cp`, `mv`,
+`rsync` and the like, and the directory `tar x -C`, `unzip -d` and `wget -P`
+unpack or download into. So `echo ~`, `export X=$HOME`, `cp f ~/`,
+`unzip a.zip -d ~` and `git -C ~ status` are allowed. A path attached to
+a short option (`make -C<dir>`, `cc -I<dir>/x`, `sort -o<file>`) is
+placed for working copies, which the adoption finder does not do for
+adopted repositories; a glob attached to one is not expanded. A call that
+touches something that cannot be placed (the finder's "touches every
+indexed work tree": a reading command's word with a `$` or `` ` `` the gate
+cannot expand, a working directory it cannot tell, a line built at run
+time) counts as touching every registered working copy. A Bash or
+PowerShell line that spells a working copy's absolute path anywhere as a
+whole word (a string handed to an interpreter, say) denies too, a git
+message included; the words of a git message are not placed as paths.
+Names are compared without regard to case on a file system that folds it
+(macOS, Windows), and exactly elsewhere.
+
+*Listing.* **A listing with a working copy, or a path in it, as an
+operand denies** (`ls`, `stat`, `du`, `tree`, `find` that only tests
+names). Principle 1 allows listing a protected root, since names are
+schema, but ADR-0007 denies a path under a working copy, and nothing a
+person needs from an agent depends on a listing: the person works in the
+folder in Desktop, and `collect` reports what it brought back by path and
+count. **A recursive lister of a directory above a working copy is
+allowed**, and what it prints is not nothing: `ls -R ~`, `du -a ~`,
+`tree ~` and `find ~ -printf '%p %s'` show the names of the files in the
+working copy and their sizes, and so can `ls -l`'s sizes and times. This
+is a deliberate reading of principle 1 (names are schema, a size is
+metadata), not an oversight, and the maintainer can overturn it by
+treating a lister's word as reaching what is below it. A `cd` to a folder
+above a copy is allowed too, as are PowerShell calls whose working
+directory is above one.
+
+*Registry errors.* A registry that cannot be read (an entry that does not
+parse or cannot be read, a `stages` that is a file) denies every call with
+`internal-error`, as a broken store does: a working copy the gate cannot
+see is one it cannot protect. So does a registry with more than 256
+entries (Add stops at 64, so only a hand edit gets there). The message
+says what to do and names no path: for an entry, the entry's file name (a
+hash, which names nothing) and "remove that file", and that
+`pbipx collect --discard` will do it once it exists. An entry whose folder
+no longer exists is skipped; a registry of only such entries, or with none,
+changes nothing. An entry the store would refuse to add (the home folder,
+say), written by hand, still protects what it names. The registry is read
+for every call the gate decides.
+
+*The message.* The class is `working-copy` (pbipx only). The message is
+fixed, and prints a path only as `<working copy>/<path inside it>` with
+each segment displayed as a finding displays a name (a segment with the
+shape of personal data, or a control character, is `{?}`), never where the
+working copy is and never a file's content: "`<working copy>/<path>` is in
+a Power BI Desktop working copy, which holds a copy of real data that
+cannot be vetted.", "`<working copy>` is a Power BI Desktop working copy,
+..." for the folder itself, or "the call could reach a Power BI Desktop
+working copy, ..." for a path above one, a word that cannot be placed or a
+line that spells one. The hint ends it: "Leave it out of the call: a
+person works there in Power BI Desktop."
+
+*Not covered.* The gate cannot see a path an interpreter builds at run
+time inside a script it is not shown, a glob attached to a short option
+(`-I<dir>/*`), nor a PowerShell variable that is not
+in a word that looks like a path; as for every control here, a process
+outside the gate is the sandbox's to stop (threat model, layer 7). Without
+adoption configured (`Options.Adoption` nil, as in a library caller) the
+gate has no store and the registry is not consulted.
 
 The gate reads `.pbipx.toml` once. It parses those bytes and checks the
 digest of the same bytes against the approval, so a policy swapped between
@@ -1979,7 +2105,7 @@ the Bash tool with the paths written out."; and for `agent-settings`,
 
 Gate reason classes: `finding`, `unvettable`, `scan-error`,
 `local-state`, `perf-export` (pbipx only), `agent-settings` (pbipx only),
-`git-content`, `policy-error`,
+`git-content`, `working-copy` (pbipx only), `policy-error`,
 `policy-unapproved` (pbipx only), `event-error`, `not-a-repository`,
 `internal-error`.
 

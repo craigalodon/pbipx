@@ -76,6 +76,10 @@ type Spec struct {
 	// Approved, for a gate case, is false to run without an approval of the
 	// policy; a gate case otherwise runs against an approved one.
 	Approved *bool `toml:"approved"`
+	// WorkingCopies, for a gate case, are folders, relative to the
+	// working-copy base ({work}), that the runner makes and registers as
+	// working copies in the case's store before the command runs.
+	WorkingCopies []string `toml:"working-copies"`
 
 	// Baseline and Fingerprint describe findings the runner resolves to
 	// fingerprints (corpus.md, "Baseline cases").

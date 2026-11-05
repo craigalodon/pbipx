@@ -419,12 +419,16 @@ anything, rather than fail part way.
 
 ## Gate interplay
 
-Nothing here changes `internal/gate`. For the later protection pull request
-(ADR-0007), the gate needs: the registry in the store; a deny for every path
-under a registered working copy, any tool, no scanning; the same deny for a
-shell command that names such a path or `cd`s into one; and, in that
-pull request or the one that builds the commands, the two commands in the
-person-only list. Gate corpus cases for these belong to those pull requests.
+The protection is built ahead of the commands (ADR-0007;
+[behavior.md](behavior.md), "Working copies"): the registry in the store
+(`Store.AddWorkingCopy` and `Store.RemoveWorkingCopy`, which `stage` and
+`collect` will call), a deny for every path under a registered working
+copy, any tool, no scanning, the same deny for a shell command that names
+such a path or `cd`s into one, and gate corpus cases for these. Still to do
+in the pull request that builds the commands: put `stage` and `collect` in
+the gate's person-only list. The entry's format is the one behavior.md
+gives: this section's `stages/<key>.json` holds `version`, `path`,
+`git-dir`, `model` and `staged`.
 
 ## What only Desktop can confirm
 

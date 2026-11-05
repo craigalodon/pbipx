@@ -88,6 +88,7 @@ worktrees  = []                      # linked work trees added at the commit
 env        = { CI = "true" }         # environment for the command
 known      = "predecessor"           # see "Known differences"
 approved   = false                   # gate only: run with no policy approval
+working-copies = ["copy"]            # gate only: working copies under {work}
 
 # Optional, stage and collect only ("Stage and collect cases").
 setup              = [["stage", "pbip/Example.Report", "--to", "{work}/copy"]]
@@ -344,6 +345,32 @@ operational refusal); refusal of a block or an unknown fingerprint exits 4.
 An expiry is metadata, not a planted value. A case that needs an expired
 entry uses a past year; the years 2100 to 2199 are for values.
 
+## Gate cases with working copies
+
+The gate denies every path under a registered working copy
+([behavior.md](behavior.md), "Working copies"), and the registry is in the
+store, which a gate case's runner owns. So a gate case can register some:
+
+- **`working-copies`** is a list of folders, relative to `{work}` (clean,
+  forward slashes, none inside another). Before the command runs, the runner
+  makes each folder, empty, and registers it in the case's store, as `stage`
+  will. A gate case without the key has no working copy and no `{work}`.
+- **`{work}`** is the working-copy base, as in a stage or collect case: an
+  existing, empty directory outside the root, in no git repository, with no
+  symbolic link in its path. In a gate case it is valid in `stdin`, `args`
+  and `env`, and only when `working-copies` is set. In `stdin` it is written
+  with forward slashes (`C:/Users/...` on Windows), as a user of Bash
+  there writes a path, and then as JSON string content, as `{root}` is. A
+  backslash in a Bash command is an escape, so a command written with the
+  native path would name another path (`C:\a\b` is `C:ab`), and the case
+  would test nothing. The gate's own tests cover the native spellings.
+
+A working copy holds nothing in a case, because the gate never opens a file
+under one: whether a path exists changes nothing. A path through a glob
+must therefore match the folder itself, since a pattern that matches
+nothing names nothing. The cases are pbipx only, and set
+`known = "predecessor"`.
+
 ## Stage and collect cases
 
 `stage` and `collect` ([stage-collect.md](stage-collect.md)) copy a project
@@ -356,7 +383,8 @@ amending ADR-0003).
 - **`{work}`** in `args`, in `setup` and in `env` values is the **working-copy
   base**: an existing, empty directory outside the root, in no git repository,
   with no symbolic link in its path. A case names the working copy inside it
-  (`--to {work}/copy`). `{work}` is valid only in a stage or collect case.
+  (`--to {work}/copy`). `{work}` is valid only in a stage or collect case,
+  or in a gate case with `working-copies` (above).
 - **`setup`** is a list of command lines, each an array starting with `stage`
   or `collect`, run in the root after step 3 with the case's environment. Each
   must exit 0. A collect case uses it to stage first.

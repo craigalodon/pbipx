@@ -1,0 +1,8 @@
+description = "A Read of a report file in a registered working copy denies even though it would scan clean: every path under it is denied; no value is planted"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []
+known       = "predecessor"
+working-copies = ["copy"]

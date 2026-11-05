@@ -1,0 +1,8 @@
+{
+  "hook_event_name": "PreToolUse",
+  "cwd": "{work}/copy",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "pwd"
+  }
+}

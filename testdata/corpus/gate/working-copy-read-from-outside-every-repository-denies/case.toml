@@ -1,0 +1,8 @@
+description = "A Read of a file in a registered working copy from a working directory outside every repository denies; no value is planted"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []
+known       = "predecessor"
+working-copies = ["copy"]

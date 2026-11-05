@@ -43,9 +43,20 @@ func (a *Adoption) store() *approval.Store {
 // spot is a path a call touches, absolute. A container spot also touches
 // every adopted work tree below it: a search, or a command's word, can
 // reach what is under a directory. The working directory alone does not.
+//
+// Two flags narrow what a spot means to a registered working copy
+// (workingcopy.go), which is denied with no scan. bare: the call names the
+// path and reads nothing under it (a lister's word, a cd's target, a
+// PowerShell call's working directory), so a working copy below it is not
+// reached; a working copy at or under the path still is. prose: the word
+// is the text of a git message, no path.
 type spot struct {
 	path      string
 	container bool
+	bare      bool
+	prose     bool
+	// only: for working copies alone; the adoption finder ignores it.
+	only bool
 }
 
 // finder finds the adopted repositories one call touches.
@@ -68,6 +79,10 @@ type finder struct {
 	cwdErr    error
 	// msys places Git Bash paths (msys.go), nil off Windows.
 	msys *msysSession
+	// found is the result of spots, once spotsDone.
+	found     []spot
+	foundUnk  bool
+	spotsDone bool
 }
 
 // newFinder is the finder for ev over store (nil: none), with the store's
@@ -111,6 +126,9 @@ func decideAdopted(ev Event, opts Options) Decision {
 	if !f.placeable() {
 		return deny(ReasonInternalError, "a path in Git Bash form could not be placed by Git Bash's cygpath; the call is denied")
 	}
+	if d := f.workingCopyDeny(); d != nil {
+		return *d
+	}
 	targets, failed := f.targets()
 	if failed != nil {
 		return *failed
@@ -149,6 +167,9 @@ func (f *finder) targets() ([]*source.Repo, *Decision) {
 		}
 	}
 	for _, sp := range spots {
+		if sp.only {
+			continue
+		}
 		for _, a := range []string{sp.path, resolve(sp.path)} {
 			var holders []string
 			for d := a; ; d = filepath.Dir(d) {
@@ -381,7 +402,15 @@ func WorkTrees(root string) []string {
 // directory a command runs in and every word placed against it
 // (probeShell); and for a PowerShell call, the working directory and every
 // word that looks like a path (probePowerShell).
-func (f *finder) spots() (spots []spot, unknown bool) {
+func (f *finder) spots() ([]spot, bool) {
+	if !f.spotsDone {
+		f.found, f.foundUnk = f.findSpots()
+		f.spotsDone = true
+	}
+	return f.found, f.foundUnk
+}
+
+func (f *finder) findSpots() (spots []spot, unknown bool) {
 	ev := f.ev
 	addAll := func(paths []string, container bool) {
 		for _, p := range paths {
@@ -473,13 +502,30 @@ func probeShell(cwd, home, line string, m *msysSession) (*walker, []spot, bool) 
 		}
 		_, search := searchers[v.name]
 		reader := readers[v.name] || search
-		for _, xw := range v.words {
+		// A lister's words and a cd's target name a place and read nothing
+		// under it, as walker.reaches has them.
+		lists := v.cwd.known() && lister(v.name, v.rest)
+		mover := v.name == "cd" || v.name == "pushd" || v.name == "chdir"
+		quiet := quietWords(ps, v)
+		for wi, xw := range v.words {
 			abss, unk := ps.wordSpellings(v, xw)
 			if unk && reader && !optionOnly(xw.text) {
 				unknown = true
 			}
+			bare := lists || mover && !xw.redirect || quiet[wi]
 			for _, a := range abss {
-				spots = append(spots, spot{path: a, container: true})
+				spots = append(spots, spot{path: a, container: true, bare: bare, prose: xw.message && !w.redefines})
+			}
+			// A path attached to a short option (-C/dir, -I/dir/x) is placed
+			// for working copies only: it is a limit of the adoption finder
+			// that adopted repositories keep.
+			if val, ok := attachedValue(xw); ok {
+				vw := xw
+				vw.text, vw.pattern, vw.glob = val, val, false
+				vabss, _ := ps.wordSpellings(v, vw)
+				for _, a := range vabss {
+					spots = append(spots, spot{path: a, container: true, bare: bare, only: true})
+				}
 			}
 		}
 		paths, everywhere := w.searchReads(v)

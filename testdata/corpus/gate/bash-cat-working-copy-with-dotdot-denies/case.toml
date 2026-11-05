@@ -1,0 +1,8 @@
+description = "cat of a path in a registered working copy written with .. through its sibling denies; no value is planted"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []
+known       = "predecessor"
+working-copies = ["copy"]

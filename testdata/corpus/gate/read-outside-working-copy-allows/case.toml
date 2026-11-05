@@ -1,0 +1,8 @@
+description = "A Read of a clean file in the adopted repository is allowed while a working copy is registered; no value is planted"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = []
+known       = "predecessor"
+working-copies = ["copy"]

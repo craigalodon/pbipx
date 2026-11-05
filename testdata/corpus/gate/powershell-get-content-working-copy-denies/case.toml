@@ -1,0 +1,8 @@
+description = "Get-Content of the data cache in a registered working copy, from PowerShell, denies; no value is planted"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []
+known       = "predecessor"
+working-copies = ["copy"]
