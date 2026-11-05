@@ -1,0 +1,8 @@
+description = "grep -r of the directory that holds a registered working copy denies; no value is planted"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []
+known       = "predecessor"
+working-copies = ["copy"]

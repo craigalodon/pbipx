@@ -78,12 +78,15 @@ func (c *Corpus) Prepare(cs *Case, root, configDir, binary string) (*Prepared, e
 		return nil, fmt.Errorf("%s: the configuration directory must be an absolute path", cs.ID())
 	}
 	p := &Prepared{Root: root, ConfigDir: configDir}
-	if cs.Spec.IsWorkflow() {
+	if cs.Spec.IsWorkflow() || len(cs.Spec.WorkingCopies) > 0 {
 		work, err := prepareWork(configDir)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", cs.ID(), err)
 		}
 		p.Work = work
+		if err := registerWorkingCopies(cs, configDir, work); err != nil {
+			return nil, fmt.Errorf("%s: %w", cs.ID(), err)
+		}
 	}
 	if cs.HasTree {
 		if err := copyTree(cs.TreeDir(), root); err != nil {
@@ -314,11 +317,24 @@ func CommandArgs(cs *Case, p *Prepared) []string {
 // written as JSON string content: a Windows path's backslashes are
 // escaped. Any other stdin gets root as it is.
 func (cs *Case) StdinFor(root string) []byte {
-	repl := []byte(root)
-	if cs.Spec.Command == commandGate {
-		repl = jsonStringContent(root)
+	return cs.StdinWith(&Prepared{Root: root})
+}
+
+// StdinWith is the case's stdin with {root} and {work} replaced, as
+// StdinFor writes {root}. {work} is replaced only when the case has a
+// working-copy base.
+func (cs *Case) StdinWith(p *Prepared) []byte {
+	enc := func(s string) []byte {
+		if cs.Spec.Command == commandGate {
+			return jsonStringContent(s)
+		}
+		return []byte(s)
 	}
-	return bytes.ReplaceAll(cs.Stdin, []byte(rootPlaceholder), repl)
+	out := bytes.ReplaceAll(cs.Stdin, []byte(rootPlaceholder), enc(p.Root))
+	if p.Work != "" {
+		out = bytes.ReplaceAll(out, []byte(workPlaceholder), enc(p.Work))
+	}
+	return out
 }
 
 // jsonStringContent is s encoded as a JSON string, without the quotes.
@@ -344,7 +360,7 @@ type Outcome struct {
 func Execute(cs *Case, binary string, p *Prepared) (Outcome, error) {
 	var stdin []byte
 	if cs.HasStdin {
-		stdin = cs.StdinFor(p.Root)
+		stdin = cs.StdinWith(p)
 	}
 	out, err := runBinary(binary, p.Root, CommandArgs(cs, p), CommandEnv(os.Environ(), withPlaceholders(&cs.Spec, p), p.ConfigDir), stdin)
 	if err != nil {

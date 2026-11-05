@@ -482,12 +482,14 @@ func sortedKeys[V any](m map[string]V) []string {
 // (corpus.md, "Stage and collect cases").
 func (v *validator) checkWorkflow() {
 	s := &v.cs.Spec
+	v.checkWorkingCopies()
 	if !s.IsWorkflow() {
-		if slices.ContainsFunc(s.Args, func(a string) bool { return strings.Contains(a, workPlaceholder) }) {
+		hasBase := len(s.WorkingCopies) > 0
+		if !hasBase && slices.ContainsFunc(s.Args, func(a string) bool { return strings.Contains(a, workPlaceholder) }) {
 			v.addf(caseFile, "args use %s, which only a stage or collect case has", workPlaceholder)
 		}
 		for _, k := range sortedKeys(s.Env) {
-			if strings.Contains(s.Env[k], workPlaceholder) {
+			if !hasBase && strings.Contains(s.Env[k], workPlaceholder) {
 				v.addf(caseFile, "env uses %s, which only a stage or collect case has", workPlaceholder)
 				break
 			}
@@ -533,5 +535,31 @@ func (v *validator) checkWorkflow() {
 				v.addf(caseFile, "status[%d] is not a git status --porcelain line", i)
 			}
 		}
+	}
+}
+
+// checkWorkingCopies checks working-copies, and the {work} placeholder in
+// stdin (corpus.md, "Gate cases with working copies").
+func (v *validator) checkWorkingCopies() {
+	s := &v.cs.Spec
+	if len(s.WorkingCopies) > 0 && s.Command != commandGate {
+		v.addf(caseFile, "working-copies is set, but only a gate case registers one")
+	}
+	for i, p := range s.WorkingCopies {
+		switch {
+		case !validRelPath(p):
+			v.addf(caseFile, "working-copies[%d] is not a clean relative path with forward slashes", i)
+		case slices.Contains(s.WorkingCopies[:i], p):
+			v.addf(caseFile, "working-copies[%d] is listed twice", i)
+		default:
+			for j, q := range s.WorkingCopies[:i] {
+				if strings.HasPrefix(p, q+"/") || strings.HasPrefix(q, p+"/") {
+					v.addf(caseFile, "working-copies[%d] is inside working-copies[%d], or holds it", i, j)
+				}
+			}
+		}
+	}
+	if v.cs.HasStdin && !s.IsWorkflow() && len(s.WorkingCopies) == 0 && strings.Contains(string(v.cs.Stdin), workPlaceholder) {
+		v.addf(stdinFile, "stdin uses %s, which only a stage or collect case, or a gate case with working-copies, has", workPlaceholder)
 	}
 }

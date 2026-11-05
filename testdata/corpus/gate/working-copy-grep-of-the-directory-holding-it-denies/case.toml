@@ -1,0 +1,8 @@
+description = "A Grep of the directory that holds a registered working copy denies: the search would read under it; no value is planted"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []
+known       = "predecessor"
+working-copies = ["copy"]

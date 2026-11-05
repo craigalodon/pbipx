@@ -1,0 +1,8 @@
+description = "cat of a word the gate cannot expand could name a file in a registered working copy, so it denies; no value is planted"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []
+known       = "predecessor"
+working-copies = ["copy"]

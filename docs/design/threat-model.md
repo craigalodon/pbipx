@@ -96,6 +96,26 @@ should set up:
    the repository again with no approval. It cannot tell that
    `PBIPX_CONFIG_DIR` differs from the one the gate runs with, so it prints
    the store directory for the person to check.
+
+   The gate also protects **working copies**, the folders `pbipx stage`
+   makes outside every repository for Power BI Desktop, which writes a
+   data cache of real data into them that a scan would pass
+   ([ADR-0007](../adr/0007-the-desktop-round-trip.md)). They are
+   registered in the store, and the gate denies every path under a
+   registered one with `working-copy`, with no scan, from any working
+   directory, adopted repository or not: a Read, Edit, Write, Grep or LSP
+   call, a Bash word or redirection, a working directory inside one, a
+   search over a directory holding one, and the words of a PowerShell line
+   that look like paths, each placed as the gate places a path into an
+   adopted repository (links, `..`, `~`, globs, case, Git Bash forms).
+   A call that touches something it cannot place counts as touching every
+   registered working copy, and a registry the gate cannot read denies
+   every call. Listing a working copy is denied too. An agent cannot add,
+   change or remove an entry: the registry is in the store, which the gate
+   denies an agent's write into. The limits are the gate's own: a path an
+   interpreter builds at run time inside a script the gate is not shown, and
+   a PowerShell variable outside a word that looks like a path, pass it, as
+   does any process outside the gate (layer 7).
 4. **The gate binary outside the repository**, installed at a pinned
    version. When the gate runs code from the working tree, an agent edit to
    that code changes the gate on its next call. A binary on the user's `PATH`

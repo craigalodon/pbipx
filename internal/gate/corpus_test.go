@@ -78,10 +78,11 @@ func TestCorpusGateCases(t *testing.T) {
 				t.Fatal("the case has no expected.json")
 			}
 			root, config := tempRoot(t), t.TempDir()
-			if _, err := c.Prepare(cs, root, config, ""); err != nil {
+			prepared, err := c.Prepare(cs, root, config, "")
+			if err != nil {
 				t.Fatal(err)
 			}
-			stdin := cs.StdinFor(root)
+			stdin := cs.StdinWith(prepared)
 			ev, ok := eventFrom(stdin)
 			if !ok {
 				// Not an event at all: the adapter's case, not Decide's.

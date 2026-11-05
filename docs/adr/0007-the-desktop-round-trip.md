@@ -129,6 +129,12 @@ at collect time, which is cheap beside the Desktop session that precedes it.
 
 ### Gate protection for working copies
 
+> **Built** (2026-11-05): the registry, the deny rule, the reason class
+> `working-copy` and the gate corpus cases are in, ahead of `stage`.
+> [behavior.md](../design/behavior.md), "Working copies", says what they
+> do; the person-only entries for `stage` and `collect` come with those
+> commands.
+
 Every path under a registered working copy is denied by the gate, with no
 scanning, because `cache.abf` holds real data that a scanner would call clean
 (principle 8). The registry of working copies lives in the store, beside the

@@ -123,7 +123,7 @@ gate pass against pbipx.
       [ADR-0007](adr/0007-the-desktop-round-trip.md) and
       [stage-collect.md](design/stage-collect.md); the corpus areas `stage`
       and `collect` are written and wait for the commands
-- [ ] Gate protection for working copies (the registry, then the deny rule),
+- [x] Gate protection for working copies (the registry, then the deny rule),
       merged before `stage`
 - [ ] Windows and WSL path handling
 - [ ] `perf`: Performance Analyzer summaries, no query text or titles

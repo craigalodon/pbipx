@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/craigalodon/pbipx/internal/approval"
 )
 
 // The two trees under a case's expected/ directory (corpus.md, "Stage and
@@ -41,6 +43,23 @@ func prepareWork(configDir string) (string, error) {
 		return "", fmt.Errorf("making the working-copy base: %w", err)
 	}
 	return dir, nil
+}
+
+// registerWorkingCopies makes each of a gate case's working-copies folder,
+// under the working-copy base, and registers it in the store at configDir as
+// `pbipx stage` will: the gate then protects it.
+func registerWorkingCopies(cs *Case, configDir, work string) error {
+	store := &approval.Store{Dir: configDir}
+	for _, rel := range cs.Spec.WorkingCopies {
+		dir := filepath.Join(work, filepath.FromSlash(rel))
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return fmt.Errorf("working-copies: making a folder: %w", err)
+		}
+		if err := store.AddWorkingCopy(approval.WorkingCopy{Path: dir}); err != nil {
+			return fmt.Errorf("working-copies: registering a folder: %w", err)
+		}
+	}
+	return nil
 }
 
 // withPlaceholders is spec with {root} and {work} replaced in its env
