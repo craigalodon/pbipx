@@ -109,6 +109,7 @@ const (
 	ReasonPerfExport       = "perf-export"
 	ReasonAgentSettings    = "agent-settings"
 	ReasonGitContent       = "git-content"
+	ReasonWorkingCopy      = "working-copy"
 	ReasonPolicyError      = "policy-error"
 	ReasonPolicyUnapproved = "policy-unapproved"
 	ReasonEventError       = "event-error"
@@ -118,7 +119,7 @@ const (
 
 // Reasons lists every reason class.
 var Reasons = []string{
-	ReasonFinding, ReasonUnvettable, ReasonScanError, ReasonLocalState, ReasonPerfExport, ReasonAgentSettings, ReasonGitContent,
+	ReasonFinding, ReasonUnvettable, ReasonScanError, ReasonLocalState, ReasonPerfExport, ReasonAgentSettings, ReasonGitContent, ReasonWorkingCopy,
 	ReasonPolicyError, ReasonPolicyUnapproved, ReasonEventError, ReasonNotARepository, ReasonInternalError,
 }
 
