@@ -86,7 +86,7 @@ func (f *finder) workingCopyDeny() *Decision {
 	// built into a command), is taken to reach it.
 	if f.ev.Tool == Shell || f.ev.Tool == PowerShell {
 		for _, root := range roots {
-			for _, form := range pathForms(root, windowsPaths) {
+			for _, form := range pathForms(root, windowsPaths, shortPathName) {
 				if namesPath(f.ev.Command, form, f.fold) {
 					return &reach
 				}
@@ -229,15 +229,38 @@ func namesPath(line, name string, fold bool) bool {
 // pathForms are the ways a line can spell the absolute path root: as the
 // operating system writes it, and on Windows with forward slashes
 // ("C:/Users/x") and as bash writes a drive path ("/c/Users/x").
-func pathForms(root string, windows bool) []string {
-	forms := []string{root}
+//
+// On Windows it also yields the 8.3 short spellings a temporary folder is
+// handed out with (RUNNER~1): for each folder above root (and root itself),
+// short names it by its short name, joined to the rest of root as
+// registered. A name short cannot give is left long, so a failure leaves
+// the long forms. short is nil for none.
+func pathForms(root string, windows bool, short func(string) (string, bool)) []string {
 	if !windows {
-		return forms
+		return []string{root}
 	}
-	slashed := strings.ReplaceAll(root, `\`, "/")
-	forms = append(forms, slashed)
-	if len(slashed) >= 2 && slashed[1] == ':' && isASCIILetter(slashed[0]) {
-		forms = append(forms, "/"+strings.ToLower(slashed[:1])+slashed[2:])
+	natives := []string{root}
+	if short != nil {
+		for d := root; ; {
+			i := strings.LastIndexByte(d, '\\')
+			if i <= 2 { // the drive and its root
+				break
+			}
+			if s, ok := short(d); ok && s != d {
+				if v := s + root[len(d):]; !slices.Contains(natives, v) {
+					natives = append(natives, v)
+				}
+			}
+			d = d[:i]
+		}
+	}
+	var forms []string
+	for _, n := range natives {
+		slashed := strings.ReplaceAll(n, `\`, "/")
+		forms = append(forms, n, slashed)
+		if len(slashed) >= 2 && slashed[1] == ':' && isASCIILetter(slashed[0]) {
+			forms = append(forms, "/"+strings.ToLower(slashed[:1])+slashed[2:])
+		}
 	}
 	return forms
 }
