@@ -66,6 +66,8 @@ type finder struct {
 	// can; found on first use (cwdUsable).
 	cwdOpened bool
 	cwdErr    error
+	// msys places Git Bash paths (msys.go), nil off Windows.
+	msys *msysSession
 }
 
 // newFinder is the finder for ev over store (nil: none), with the store's
@@ -104,6 +106,10 @@ func decideAdopted(ev Event, opts Options) Decision {
 	f, err := newFinder(ev, opts.Adoption.store())
 	if err != nil {
 		return deny(ReasonInternalError, "the index of repositories set up for pbipx cannot be read; the call is denied")
+	}
+	f.msys = opts.msys
+	if !f.placeable() {
+		return deny(ReasonInternalError, "a path in Git Bash form could not be placed by Git Bash's cygpath; the call is denied")
 	}
 	targets, failed := f.targets()
 	if failed != nil {
@@ -386,17 +392,17 @@ func (f *finder) spots() (spots []spot, unknown bool) {
 	switch ev.Tool {
 	case Read, Write, Edit:
 		if ev.Path != "" {
-			addAll(spellings(ev.Cwd, expandHome(ev.Path, f.home)), false)
+			addAll(f.spellings(expandHome(ev.Path, f.home)), false)
 		}
 	case Search:
 		p := ev.Path
 		if p == "" {
 			p = ev.Cwd
 		}
-		addAll(spellings(ev.Cwd, expandHome(p, f.home)), true)
+		addAll(f.spellings(expandHome(p, f.home)), true)
 	case Shell:
 		var probed []spot
-		f.probe, probed, unknown = probeShell(ev.Cwd, f.home, ev.Command)
+		f.probe, probed, unknown = probeShell(ev.Cwd, f.home, ev.Command, f.msys)
 		spots = append(spots, probed...)
 	case PowerShell:
 		var probed []spot
@@ -405,11 +411,39 @@ func (f *finder) spots() (spots []spot, unknown bool) {
 	case LSP:
 		for _, p := range ev.Paths {
 			if p != "" {
-				addAll(spellings(ev.Cwd, expandHome(p, f.home)), true)
+				addAll(f.spellings(expandHome(p, f.home)), true)
 			}
 		}
 	}
 	return spots, unknown
+}
+
+// spellings are the spellings of p against the call's working directory,
+// and as placed when p is an absolute Git Bash path (msys.go).
+func (f *finder) spellings(p string) []string {
+	out := spellings(f.ev.Cwd, p)
+	if pl, needed, ok := f.msys.word(p); needed && ok {
+		out = append(out, spellings(f.ev.Cwd, pl)...)
+	}
+	return out
+}
+
+// placeable reports whether every path a file tool names that is in Git
+// Bash form can be placed.
+func (f *finder) placeable() bool {
+	var paths []string
+	switch f.ev.Tool {
+	case Read, Write, Edit, Search:
+		paths = []string{f.ev.Path}
+	case LSP:
+		paths = f.ev.Paths
+	}
+	for _, p := range paths {
+		if _, _, ok := f.msys.word(p); !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // probeShell walks a shell line as the shell rule does, with no repository,
@@ -420,8 +454,8 @@ func (f *finder) spots() (spots []spot, unknown bool) {
 // "touches every protected root" has it: a working directory that cannot
 // be told, a word a reading command has that cannot be placed, a line
 // nested too deep or built at run time, or one too long to judge.
-func probeShell(cwd, home, line string) (*walker, []spot, bool) {
-	ps := &setup{cwd: cwd, home: home, fold: foldCase, ctlVars: ctlVarsFixed(line)}
+func probeShell(cwd, home, line string, m *msysSession) (*walker, []spot, bool) {
+	ps := &setup{cwd: cwd, home: home, fold: foldCase, ctlVars: ctlVarsFixed(line), msys: m}
 	w := &walker{s: ps, cache: newSpellCache(), probe: true}
 	st := cwdState{dirs: []string{cwd}}
 	w.commands(line, splitCommands(line), &st, 0)
@@ -454,7 +488,7 @@ func probeShell(cwd, home, line string) (*walker, []spot, bool) {
 		}
 		for _, p := range paths {
 			for _, d := range v.cwd.dirs {
-				for _, a := range spellings(d, p) {
+				for _, a := range ps.spellingsAt(d, p) {
 					spots = append(spots, spot{path: a, container: true})
 				}
 			}
@@ -472,11 +506,14 @@ func (w *walker) probeIn(st cwdState, p string) {
 			w.setReach("a relative path from an unknown working directory", "")
 			return
 		}
-		w.probed = append(w.probed, spellings(string(filepath.Separator), p)...)
-		return
+		w.probed = append(w.probed, w.s.spellingsAt(string(filepath.Separator), p)...)
+	} else {
+		for _, d := range st.dirs {
+			w.probed = append(w.probed, w.s.spellingsAt(d, p)...)
+		}
 	}
-	for _, d := range st.dirs {
-		w.probed = append(w.probed, spellings(d, p)...)
+	if _, _, ok := w.s.msys.word(p); !ok {
+		w.setReach("a path the gate cannot place", "")
 	}
 }
 
@@ -492,7 +529,7 @@ func (f *finder) controls() Decision {
 		if f.ev.Path == "" {
 			break
 		}
-		paths := append(spellings(f.ev.Cwd, f.ev.Path), spellings(f.ev.Cwd, expandHome(f.ev.Path, f.home))...)
+		paths := append(f.spellings(f.ev.Path), f.spellings(expandHome(f.ev.Path, f.home))...)
 		if what, ok := ctl.target(paths); ok {
 			return deny(ReasonAgentSettings, "the path is %s; %s", what, controlWhy)
 		}

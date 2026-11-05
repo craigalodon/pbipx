@@ -271,6 +271,10 @@ func (w *walker) unknownProgram(c simple, v view) string {
 			continue
 		}
 		switch {
+		case !known && j == k && v.words[args[j]].placeFailed && literalPlaced(wd):
+			// A literal path that could not be placed (msys.go) to a program
+			// named by its last element: that program, whatever the
+			// directory.
 		case !known && j == k && w.literalProgram(wd):
 			// A path whose directory cannot be told, to a program named
 			// by its literal last element: that program.
@@ -281,6 +285,27 @@ func (w *walker) unknownProgram(c simple, v view) string {
 		}
 	}
 	return ""
+}
+
+// literalPlaced reports whether wd, a command word written out in full
+// (/usr/bin/tool), is known by the name of its last element: as for
+// literalProgram, not when that names a shell, an interpreter, a wrapper
+// or eval, source or ., whose arguments matter.
+func literalPlaced(wd word) bool {
+	var text strings.Builder
+	for _, p := range wd.parts {
+		if p.kind != litPart || !p.quoted && hasGlob(p.text) {
+			// A glob, in the directory or the name, can stand for a shell.
+			return false
+		}
+		text.WriteString(p.text)
+	}
+	t := text.String()
+	base := progName(t[strings.LastIndexByte(t, '/')+1:])
+	_, wrap := wrappers[base]
+	_, interp := interpreters[interpreterFamily(base)]
+	_, runner := runners[base]
+	return base != "" && !wrap && !interp && !runner && !shells[base] && !slices.Contains([]string{"eval", "source", "."}, base)
 }
 
 // literalProgram reports whether wd, a command word whose value cannot be
@@ -1158,6 +1183,11 @@ type xword struct {
 	// message is set for git's message text (gitMessageText), which is
 	// not placed as a path.
 	message bool
+	// noPlace is set for a word that is a program's pattern or script, not
+	// a path (patternSlots): it is not placed (msys.go). placeFailed is
+	// set when known is false only because a path in it could not be
+	// placed.
+	noPlace, placeFailed bool
 }
 
 // view is one simple command as the rules see it.
@@ -1461,17 +1491,26 @@ func (w *walker) reachesIn(st cwdState, p, why string) {
 		w.probeIn(st, p)
 		return
 	}
-	if !st.known() {
-		if !fullPath(p) || w.s.touchesIn("/", p) {
-			w.setReach(why+", from a working directory the gate cannot tell", hintLister)
-		}
+	paths := []string{p}
+	if pl, needed, ok := w.s.msys.word(p); !ok {
+		w.setReach(why+", at a path the gate cannot place", hintLister)
 		return
+	} else if needed {
+		paths = append(paths, pl)
 	}
-	for _, d := range st.dirs {
-		for _, a := range spellings(d, p) {
-			if w.s.touchesAbs(a) {
-				w.setReach(why+", in a directory that "+w.s.whereAbs(a), hintLister)
-				return
+	for _, p := range paths {
+		if !st.known() {
+			if !fullPath(p) || w.s.touchesIn("/", p) {
+				w.setReach(why+", from a working directory the gate cannot tell", hintLister)
+			}
+			continue
+		}
+		for _, d := range st.dirs {
+			for _, a := range spellings(d, p) {
+				if w.s.touchesAbs(a) {
+					w.setReach(why+", in a directory that "+w.s.whereAbs(a), hintLister)
+					return
+				}
 			}
 		}
 	}
@@ -1855,9 +1894,26 @@ func (s *setup) viewOf(c simple, st cwdState, ph []string) view {
 		}
 	}
 	v.argv = stripKeywords(args)
-	v.argvKnown = known[len(known)-len(v.argv):]
 	v.argvShapes = shapes[len(shapes)-len(v.argv):]
 	v.name, v.rest, v.under = command(v.argv)
+	if s.msys != nil {
+		// Place the absolute Git Bash paths among the words; a pattern or
+		// a script is no path.
+		slots := patternSlots(v)
+		known = known[:0]
+		for wi := range v.words {
+			xw := &v.words[wi]
+			if slots[wi] {
+				xw.noPlace = true
+			} else {
+				s.placeCheck(xw)
+			}
+			if !xw.redirect {
+				known = append(known, xw.known)
+			}
+		}
+	}
+	v.argvKnown = known[len(known)-len(v.argv):]
 	v.restKnown = v.argvKnown[len(v.argvKnown)-len(v.rest):]
 	// Words a runner (xargs, parallel) substitutes input words for: those
 	// of the runners this command runs under, and of any it is nested in.
@@ -1865,6 +1921,37 @@ func (s *setup) viewOf(c simple, st cwdState, ph []string) view {
 		markFed(&v, known, len(args)-len(v.argv), phs)
 	}
 	return v
+}
+
+// placeCheck places the absolute Git Bash paths in xw (msys.go) and makes
+// the word unknown when one cannot be placed: a reader given it then
+// touches every protected root, a cd to it leaves the working directory
+// unknown, and git given it prints no content. The word's text is never
+// changed, so a script in it is still read as written.
+func (s *setup) placeCheck(xw *xword) {
+	if s.msys == nil || !xw.known || xw.message {
+		return
+	}
+	for _, text := range []string{xw.text, xw.pattern} {
+		for _, c := range msysCands(text) {
+			if _, _, ok := s.msys.word(c); !ok {
+				xw.known, xw.placeFailed = false, true
+				return
+			}
+		}
+	}
+}
+
+// spellingsAt are the spellings of the path p against dir, and as placed
+// when p is an absolute Git Bash path (msys.go). A path that cannot be
+// placed has the first only: where it is a word, placeCheck has made it
+// unknown.
+func (s *setup) spellingsAt(dir, p string) []string {
+	out := spellings(dir, p)
+	if pl, needed, ok := s.msys.word(p); needed && ok {
+		out = append(out, spellings(dir, pl)...)
+	}
+	return out
 }
 
 // fedScript reads the script a shell reads from a here-document or a
@@ -2277,17 +2364,29 @@ func (s *setup) chdir(v view, st *cwdState) {
 		unknown()
 		return
 	}
-	bases := st.dirs
-	if fullPath(target) {
-		bases = []string{string(filepath.Separator)}
+	// An absolute Git Bash path (/tmp/x) is a directory as written and the
+	// one Git Bash puts it in; one that cannot be placed leaves the
+	// working directory unknown.
+	targets := []string{target}
+	if pl, needed, ok := s.msys.word(target); !ok {
+		unknown()
+		return
+	} else if needed {
+		targets = append(targets, pl)
 	}
 	var dirs []string
-	for _, d := range bases {
-		// cd is logical by default: ".." is applied to the path as
-		// written. The physical directory is judged as well.
-		for _, nd := range []string{abs(d, target), resolvePath(rawJoin(d, target))} {
-			if !slices.Contains(dirs, nd) {
-				dirs = append(dirs, nd)
+	for _, tg := range targets {
+		bases := st.dirs
+		if fullPath(tg) {
+			bases = []string{string(filepath.Separator)}
+		}
+		for _, d := range bases {
+			// cd is logical by default: ".." is applied to the path as
+			// written. The physical directory is judged as well.
+			for _, nd := range []string{abs(d, tg), resolvePath(rawJoin(d, tg))} {
+				if !slices.Contains(dirs, nd) {
+					dirs = append(dirs, nd)
+				}
 			}
 		}
 	}
@@ -2475,25 +2574,43 @@ func (s *setup) spellWord(v view, xw xword, c *spellCache) (out []string, unknow
 		for _, d := range dirs {
 			out = append(out, spellings(d, cand)...)
 		}
+		// An absolute Git Bash path is also the place Git Bash puts it.
+		// (A pattern or a script is no path: noPlace.)
+		if pl, needed, ok := s.placeWord(xw, cand); !ok {
+			unknown = true
+		} else if needed {
+			for _, d := range dirs {
+				out = append(out, spellings(d, pl)...)
+			}
+		}
 	}
 	if xw.glob {
+		pats := []string{xw.pattern}
+		if pl, needed, ok := s.placeWord(xw, xw.pattern); !ok {
+			unknown = true
+		} else if needed {
+			pats = append(pats, pl)
+		}
+	globs:
 		for _, d := range dirs {
-			if !v.cwd.known() && !fullPath(xw.pattern) {
-				break
-			}
-			pat := rawJoin(d, xw.pattern)
-			matches, over := globMatches(pat, c)
-			if over && s.repo == nil {
-				// A probe (adopt.go): the glob could stand for anything.
-				unknown = true
-				break
-			}
-			if over {
-				out = append(out, s.repo.Root)
-				break
-			}
-			for _, m := range matches {
-				out = append(out, spellings(d, m)...)
+			for _, pattern := range pats {
+				if !v.cwd.known() && !fullPath(pattern) {
+					continue
+				}
+				pat := rawJoin(d, pattern)
+				matches, over := globMatches(pat, c)
+				if over && s.repo == nil {
+					// A probe (adopt.go): the glob could stand for anything.
+					unknown = true
+					break globs
+				}
+				if over {
+					out = append(out, s.repo.Root)
+					break globs
+				}
+				for _, m := range matches {
+					out = append(out, spellings(d, m)...)
+				}
 			}
 		}
 	}
@@ -3062,6 +3179,80 @@ func unknownArgs(v view) []string {
 // directory: a subcommand that prints content is then unprovable
 // (gitContent).
 func (s *setup) gitRule(v view) *gitDenial {
+	// An absolute Git Bash path in its words (/tmp/x) is a path as written
+	// and the one Git Bash hands git: the line is judged as each.
+	if placed, ok := s.placedView(v); ok {
+		if g := s.gitRuleAs(placed); g != nil {
+			return g
+		}
+	}
+	return s.gitRuleAs(v)
+}
+
+// placedView is v, a git command, with each absolute Git Bash path in its
+// words (or the value of a --flag=value) replaced by the Windows path
+// cygpath says it is (msys.go), for the rules that read git's arguments.
+// ok is false when no word changes. The words of the line itself are never
+// changed, only this copy.
+func (s *setup) placedView(v view) (view, bool) {
+	if s.msys == nil || v.name != "git" {
+		return v, false
+	}
+	var nonRedirect []int
+	for wi, w := range v.words {
+		if !w.redirect {
+			nonRedirect = append(nonRedirect, wi)
+		}
+	}
+	first := len(nonRedirect) - len(v.argv)
+	if first < 0 {
+		return v, false
+	}
+	swap := func(t string) (string, bool) {
+		if strings.HasPrefix(t, "/") {
+			if pl, needed, ok := s.msys.word(t); needed && ok {
+				return pl, true
+			}
+			return t, false
+		}
+		if head, val, ok := strings.Cut(t, "="); ok && strings.HasPrefix(val, "/") {
+			if pl, needed, ok := s.msys.word(val); needed && ok {
+				return head + "=" + pl, true
+			}
+		}
+		return t, false
+	}
+	argv, words := slices.Clone(v.argv), slices.Clone(v.words)
+	changed := false
+	for p := len(v.argv) - len(v.rest); p < len(v.argv); p++ {
+		text := v.argv[p]
+		wi := nonRedirect[first+p]
+		if words[wi].message || !words[wi].known {
+			continue
+		}
+		nt, ok := swap(text)
+		if !ok {
+			continue
+		}
+		changed = true
+		argv[p], words[wi].text = nt, nt
+		if np, ok := swap(words[wi].pattern); ok && words[wi].glob {
+			words[wi].pattern = np
+		} else {
+			words[wi].pattern = escapeGlob(nt)
+		}
+	}
+	if !changed {
+		return v, false
+	}
+	v.argv, v.words = argv, words
+	v.name, v.rest, v.under = command(v.argv)
+	v.restKnown = v.argvKnown[len(v.argvKnown)-len(v.rest):]
+	return v, true
+}
+
+// gitRuleAs is gitRule for v as it stands.
+func (s *setup) gitRuleAs(v view) *gitDenial {
 	v = s.expandShellGlobs(v)
 	unknown := unknownArgs(v)
 	if v.name == "git" && feedOf(v.argv, v.argvKnown).runner != "" {
@@ -3248,7 +3439,7 @@ func (w *walker) reaches() trigger {
 		touched := func(ps []string) string {
 			for _, p := range ps {
 				for _, d := range v.cwd.dirs {
-					for _, a := range spellings(d, p) {
+					for _, a := range s.spellingsAt(d, p) {
 						if s.touchesAbs(a) {
 							return s.whereAbs(a)
 						}
@@ -3320,4 +3511,213 @@ func namesWord(line, name string) bool {
 
 func wordByte(b byte) bool {
 	return b == '_' || b == '-' || b == '.' || '0' <= b && b <= '9' || 'a' <= b && b <= 'z' || 'A' <= b && b <= 'Z' || b >= 0x80
+}
+
+// placeWord is msys.word of p, a part of the word xw, unless xw is a
+// pattern or a script.
+func (s *setup) placeWord(xw xword, p string) (placed string, needed, ok bool) {
+	if xw.noPlace {
+		return "", false, true
+	}
+	return s.msys.word(p)
+}
+
+// patternSlots says which words of v are a program's pattern or script and
+// no path: sed's and awk's script (and their -e and -v values), the pattern
+// of grep, rg and the other searches (and the value of -e and --regexp), jq's
+// filter, and the value of find's name and path tests. A word starting with
+// a slash is placed as a path only outside these (msys.go); a word a reader
+// takes as a file is still a file. The slice is indexed like v.words.
+func patternSlots(v view) []bool {
+	slots := make([]bool, len(v.words))
+	var args []int // the index in v.words of each argument
+	for i, xw := range v.words {
+		if !xw.redirect {
+			args = append(args, i)
+		}
+	}
+	start := len(args) - len(v.rest)
+	if start < 0 {
+		return slots
+	}
+	mark := func(r int) {
+		if r >= 0 && r < len(v.rest) {
+			slots[args[start+r]] = true
+		}
+	}
+	if sr, ok := searchers[v.name]; ok {
+		for _, r := range parseSearch(sr, v.rest).patterns {
+			mark(r)
+		}
+		return slots
+	}
+	switch {
+	case v.name == "sed":
+		for _, r := range scriptArgs(v.rest, sedOptions) {
+			mark(r)
+		}
+	case awks[v.name]:
+		for _, r := range scriptArgs(v.rest, awkOptions) {
+			mark(r)
+		}
+	case v.name == "jq" || v.name == "yq" || v.name == "gojq":
+		if f := jqFilter(v); f >= 0 && jqOptionsKnown(v, args[start:], f) {
+			slots[f] = true
+		}
+	case v.name == "find":
+		for i := 0; i+1 < len(v.rest); i++ {
+			if slices.Contains(findPatternTests, v.rest[i]) {
+				mark(i + 1)
+				i++
+			}
+		}
+	}
+	return slots
+}
+
+// jqFlags are the options of jq that take no value.
+var jqFlags = []string{
+	"-n", "-r", "-j", "-a", "-s", "-c", "-e", "-S", "-C", "-M", "-R", "-h", "-V", "--null-input", "--raw-output",
+	"--join-output", "--ascii-output", "--slurp", "--compact-output", "--exit-status", "--sort-keys",
+	"--color-output", "--monochrome-output", "--raw-input", "--tab", "--stream", "--unbuffered", "--args",
+	"--jsonargs", "--seq", "--raw-output0", "--help", "--version",
+}
+
+// jqOptionsKnown reports whether every option of v before its filter, the
+// word at index filter in v.words, is one jq's tables classify: an option
+// that cannot be told might take the filter's place as its value.
+func jqOptionsKnown(v view, args []int, filter int) bool {
+	for r, wi := range args {
+		if wi == filter {
+			return true
+		}
+		a := v.rest[r]
+		if a == "--" {
+			return true
+		}
+		if !strings.HasPrefix(a, "-") || a == "-" {
+			continue
+		}
+		name, _, _ := strings.Cut(a, "=")
+		if _, ok := jqOptionValues[name]; !ok && !slices.Contains(jqFlags, name) {
+			return false
+		}
+	}
+	return false
+}
+
+// findPatternTests are find's tests whose value is a pattern.
+var findPatternTests = []string{
+	"-name", "-iname", "-path", "-ipath", "-wholename", "-iwholename", "-regex", "-iregex", "-lname", "-ilname",
+}
+
+// scriptTool describes the options of sed or awk, so that the words after
+// them can be told: a script, a file or neither. An option not listed
+// cannot be classified, and nothing after it is taken for a script.
+type scriptTool struct {
+	// valued, scripts and files are the short options that take a value: a
+	// value that is no path, a script, and a file (a script file, or one a
+	// program reads as source, whose parse errors print its lines); flags
+	// are those that take none.
+	valued, scripts, files, flags string
+	// longValued, longScripts, longFiles and longFlags are the same for the
+	// long options, which may also take their value after an =.
+	longValued, longScripts, longFiles, longFlags []string
+}
+
+var sedOptions = scriptTool{
+	valued: "l", scripts: "e", files: "f", flags: "nEerszub",
+	longValued: []string{"line-length"}, longScripts: []string{"expression"}, longFiles: []string{"file"},
+	longFlags: []string{
+		"posix", "debug", "sandbox", "quiet", "silent", "regexp-extended", "null-data", "separate", "unbuffered",
+		"binary", "follow-symlinks", "in-place", "help", "version",
+	},
+}
+
+var awkOptions = scriptTool{
+	valued: "vF", scripts: "e", files: "fEiW", flags: "bcCghnNOPrsStV",
+	longValued: []string{"assign", "field-separator"}, longScripts: []string{"source"},
+	longFiles: []string{"file", "exec", "include"},
+	longFlags: []string{
+		"version", "help", "posix", "traditional", "lint", "re-interval", "characters-as-bytes", "use-lc-numeric",
+		"optimize", "no-optimize", "bignum", "sandbox", "csv", "non-decimal-data",
+	},
+}
+
+// scriptArgs are the indexes in rest of the script words of sed or awk: the
+// value of each script option, the value of each option that takes one that
+// is no file, and, when no script option, script file or option that cannot
+// be classified is given, the first word that is no option. A file's name is
+// a file, not a script.
+func scriptArgs(rest []string, t scriptTool) []int {
+	var out []int
+	given := false
+	value := func(i *int, attached bool) {
+		if attached {
+			out = append(out, *i)
+		} else if *i+1 < len(rest) {
+			*i++
+			out = append(out, *i)
+		}
+	}
+	for i := 0; i < len(rest); i++ {
+		a := rest[i]
+		switch {
+		case a == "--":
+			if !given && i+1 < len(rest) {
+				out = append(out, i+1)
+			}
+			return out
+		case strings.HasPrefix(a, "--"):
+			name, _, hasValue := strings.Cut(a[2:], "=")
+			switch {
+			case slices.Contains(t.longScripts, name):
+				given = true
+				value(&i, hasValue)
+			case slices.Contains(t.longValued, name):
+				value(&i, hasValue)
+			case slices.Contains(t.longFiles, name):
+				given = true
+				if !hasValue {
+					i++
+				}
+			case slices.Contains(t.longFlags, name):
+			default:
+				given = true
+			}
+		case strings.HasPrefix(a, "-") && len(a) > 1:
+		cluster:
+			for j := 1; j < len(a); j++ {
+				c := a[j]
+				switch {
+				case strings.IndexByte(t.scripts, c) >= 0:
+					given = true
+					value(&i, j+1 < len(a))
+					break cluster
+				case strings.IndexByte(t.valued, c) >= 0:
+					value(&i, j+1 < len(a))
+					break cluster
+				case strings.IndexByte(t.files, c) >= 0:
+					given = true
+					if j+1 == len(a) {
+						i++
+					}
+					break cluster
+				case strings.IndexByte(t.flags, c) >= 0:
+				case c == 'i' && t.flags == sedOptions.flags:
+					// sed -i[SUFFIX]
+					break cluster
+				default:
+					given = true
+					break cluster
+				}
+			}
+		default:
+			if !given {
+				out = append(out, i)
+				given = true
+			}
+		}
+	}
+	return out
 }

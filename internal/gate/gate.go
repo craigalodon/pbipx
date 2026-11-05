@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -93,6 +94,10 @@ type Options struct {
 
 	// Now is when baseline expiry is judged; zero means time.Now().
 	Now time.Time
+
+	// msys places the Git Bash paths of one decision (msys.go); Decide
+	// sets it.
+	msys *msysSession
 }
 
 // Reason classes (vocabulary.toml, [gate-reasons]).
@@ -151,6 +156,9 @@ type setup struct {
 	// PBIPX_CONFIG_DIR or CLAUDE_CONFIG_DIR, so a word naming one is
 	// expanded from the gate's environment (ctlVarsFixed).
 	ctlVars bool
+	// msys places the absolute Git Bash paths that are not drive paths,
+	// nil off Windows (msys.go).
+	msys *msysSession
 }
 
 // Decide decides one tool call. It never panics: a panic below it is a deny
@@ -160,7 +168,15 @@ func Decide(ev Event, opts Options) (d Decision) {
 		if recover() != nil {
 			d = deny(ReasonInternalError, "the gate failed; the call is denied")
 		}
+		if !d.Allow && opts.msys.notFound() {
+			d.Message += " " + msysNotFoundNote
+		}
 	}()
+	if opts.msys == nil {
+		opts.msys = newMSYSSession()
+		opts.msys.addRoot(ev.Cwd)
+		opts.msys.addRepoOf(ev.Cwd)
+	}
 	if opts.Adoption != nil {
 		return decideAdopted(ev, opts)
 	}
@@ -171,8 +187,62 @@ func Decide(ev Event, opts Options) (d Decision) {
 	return s.decide(ev)
 }
 
-// decide decides ev against the setup's repository.
+// decide decides ev against the setup's repository. A file tool's path in
+// Git Bash form (/tmp/x) is judged as written and as placed (msys.go); one
+// that cannot be placed is denied.
 func (s *setup) decide(ev Event) Decision {
+	alt, ok := s.placedEvent(ev)
+	if !ok {
+		return deny(ReasonInternalError, "a path in Git Bash form could not be placed by Git Bash's cygpath; the call is denied")
+	}
+	if alt != nil {
+		if d := s.decideAs(*alt); !d.Allow {
+			return d
+		}
+	}
+	return s.decideAs(ev)
+}
+
+// placedEvent is ev with each path in Git Bash form placed, nil when no
+// path needs it; ok is false when one cannot be placed.
+func (s *setup) placedEvent(ev Event) (alt *Event, ok bool) {
+	if s.msys == nil {
+		return nil, true
+	}
+	switch ev.Tool {
+	case Read, Search, Write, Edit:
+		pl, needed, ok := s.msys.word(ev.Path)
+		if !ok {
+			return nil, false
+		}
+		if !needed {
+			return nil, true
+		}
+		a := ev
+		a.Path = pl
+		return &a, true
+	case LSP:
+		a := ev
+		a.Paths = slices.Clone(ev.Paths)
+		changed := false
+		for i, p := range ev.Paths {
+			pl, needed, ok := s.msys.word(p)
+			if !ok {
+				return nil, false
+			}
+			if needed {
+				a.Paths[i], changed = pl, true
+			}
+		}
+		if changed {
+			return &a, true
+		}
+	}
+	return nil, true
+}
+
+// decideAs decides ev as written.
+func (s *setup) decideAs(ev Event) Decision {
 	switch ev.Tool {
 	case Read:
 		return s.read(ev.Path)
@@ -257,7 +327,8 @@ func loadAt(ev Event, opts Options, repo *source.Repo) (*setup, *Decision) {
 	if now.IsZero() {
 		now = time.Now()
 	}
-	return &setup{repo: repo, policy: p, baseline: b, cwd: ev.Cwd, now: now, fold: foldCase, home: userHome(), gitq: newGitSession()}, nil
+	opts.msys.addRoot(repo.Root)
+	return &setup{repo: repo, policy: p, baseline: b, cwd: ev.Cwd, now: now, fold: foldCase, home: userHome(), gitq: newGitSession(), msys: opts.msys}, nil
 }
 
 // userHome is the directory "~" and $HOME stand for, "" when unknown. On

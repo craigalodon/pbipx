@@ -221,6 +221,10 @@ type searchArgs struct {
 	// that turns the configuration off.
 	unsafe, everywhere string
 	unknown, noConfig  bool
+	// patterns are the indexes of the arguments that are the pattern: the
+	// first word that is no option when none is given by an option, and
+	// the value of each option that gives one.
+	patterns []int
 }
 
 type searchRead struct {
@@ -315,6 +319,9 @@ func parseSearch(sr searcher, rest []string) searchArgs {
 			if slices.Contains(sr.longPattern, opt) || slices.Contains(sr.longNoPattern, opt) {
 				patternGiven = true
 			}
+			if slices.Contains(sr.longPattern, opt) && hasValue {
+				a.patterns = append(a.patterns, at)
+			}
 		case strings.HasPrefix(w, "-") && len(w) > 1:
 		cluster:
 			for j := 1; j < len(w); j++ {
@@ -341,6 +348,9 @@ func parseSearch(sr searcher, rest []string) searchArgs {
 						read(at, value)
 					}
 					patternGiven = patternGiven || strings.IndexByte(sr.pattern, c) >= 0
+					if strings.IndexByte(sr.pattern, c) >= 0 {
+						a.patterns = append(a.patterns, at)
+					}
 					break cluster
 				case strings.IndexByte(sr.flags, c) >= 0 || sr.digits && '0' <= c && c <= '9':
 					if !safe {
@@ -357,6 +367,7 @@ func parseSearch(sr searcher, rest []string) searchArgs {
 		}
 	}
 	if !patternGiven && len(pos) > 0 {
+		a.patterns = append(a.patterns, pos[0])
 		pos = pos[1:]
 	}
 	a.operands = pos
