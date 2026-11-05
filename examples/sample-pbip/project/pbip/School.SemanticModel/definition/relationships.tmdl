@@ -1,0 +1,8 @@
+relationship 00000000-0000-0000-0000-000000000401
+	fromColumn: enrollment.student_id
+	toColumn: student.student_id
+
+relationship 00000000-0000-0000-0000-000000000402
+	fromColumn: enrollment.course_id
+	toColumn: course.course_id
+

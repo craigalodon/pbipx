@@ -91,9 +91,9 @@ Met on a synthetic sample, 2026-10-29: a fresh clone set up with `pbipx init`
 denied a planted finding, a recursive search, `git show`, a write to Claude
 Code settings and every call after a policy edit through the exact hook
 command init registered, and allowed a clean read; a missing binary denied.
-Met in full 2026-11-03: CI passed on Linux and Windows for the release
-commit, and on macOS for the release candidates (GitHub found no macOS
-runner for the final commit's runs; the tag's run covers it). Sessions in
+Met in full 2026-11-03: CI passed on Linux and Windows for the v0.1.0 commit,
+and on macOS for its release candidates (GitHub found no macOS runner for that
+commit's runs). v0.1.1's code passed on all three on 2026-11-05. Sessions in
 Claude Code itself on the release candidate denied every planted read that
 reached the registered hook. Before tagging, the gate went
 through thirteen rounds of independent security review, closed with a
@@ -141,7 +141,9 @@ only real changes.
   `scripts/check-private-terms.sh --history` in a `git clone --mirror` clone
   (this covers `refs/pull/*`), and `--github` for pull request, issue and
   release text
-- [ ] A synthetic sample PBIP repository to demonstrate with
+- [ ] A synthetic sample PBIP project to demonstrate with, in
+  `examples/sample-pbip/`, with a planted finding and an acceptance test
+  (Desktop must still open it once: see its README)
 - [ ] Docs written for analysts, not maintainers
 - [ ] Repository made public; issue tracker and `SECURITY.md` contact live
 
