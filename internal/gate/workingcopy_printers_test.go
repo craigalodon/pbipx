@@ -24,13 +24,24 @@ func TestWorkingCopyFedPrinters(t *testing.T) {
 		{"xargs echo on a file", "", wcShell("xargs echo < notes.txt"), ""},
 		{"xargs -a echo", "", wcShell("xargs -a L echo"), ""},
 		{"parallel echo stays a feed (its options are not read apart)", "", wcShell("cat files.txt | parallel echo"), wc},
-		{"env echo", "", wcShell("cat files.txt | xargs env echo"), ""},
+		{"env echo is a wrapper", "", wcShell("cat files.txt | xargs env echo"), wc},
 
 		// Words and redirections are placed as usual.
 		{"a redirection from a copy", "", wcShell("xargs echo < " + inCopy), wc},
 		{"a word in a copy", "", wcShell("cat files.txt | xargs echo " + inCopy), wc},
 		{"a redirection into a copy", "", wcShell("cat files.txt | xargs echo > " + inCopy), wc},
 		{"a word above a copy that is read", "", wcShell("cat ~ | xargs echo"), wc},
+
+		// A wrapper with no program runs what is in the input.
+		{"xargs env", "", wcShell("xargs env < CC"), wc},
+		{"xargs nice", "", wcShell("xargs nice < CC"), wc},
+		{"xargs timeout", "", wcShell("xargs timeout 5 < CC"), wc},
+		{"xargs -a env", "", wcShell("xargs -a CC env"), wc},
+		{"xargs env -S", "", wcShell("xargs env -S cat < CL"), wc},
+		{"xargs env --split-string", "", wcShell("xargs env --split-string=cat < CL"), wc},
+		{"xargs env -Scat", "", wcShell("xargs env -Scat < CL"), wc},
+		{"xargs nice echo", "", wcShell("cat files.txt | xargs nice echo"), wc},
+		{"xargs command echo", "", wcShell("cat files.txt | xargs command echo"), wc},
 
 		// Not only printers.
 		{"parallel with no program", "", wcShell("cat files.txt | parallel"), wc},

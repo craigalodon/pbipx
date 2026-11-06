@@ -59,6 +59,12 @@ func printsOnly(v view, feed runnerFeed) bool {
 	if slices.Contains(feed.placeholders, fedAll) {
 		return false
 	}
+	// The runner is the only thing the program runs under: a wrapper between
+	// them (env, nice, timeout, command) runs what is in the input, and with
+	// no program after it there is nothing but the input to run.
+	if len(v.under) != 1 || v.under[0] != feed.runner {
+		return false
+	}
 	switch v.name {
 	case "echo", "printf":
 		return true
