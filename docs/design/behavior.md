@@ -916,6 +916,14 @@ filters between it and the runner:
   `{.}` and `{//}`), or a runner whose options the gate cannot read, is not
   confined.
 
+A runner whose program only prints its arguments gets no feed spot, whatever
+the input: `xargs` with no program, `xargs echo` and `xargs printf` (also
+under `env`). `git log --oneline | head | xargs echo` and `cat files.txt |
+xargs` are allowed; the words and redirections of the line are placed as
+usual, so `xargs echo < COPY/x` still denies. A runner whose options the gate
+cannot read, and `parallel` (even `parallel echo`: its options are not read
+apart from the program), is still a feed.
+
 And `cp`, `mv`, `ln`, `install`, `rsync` and `tee` have no quiet word when a
 runner feeds them, or when `find` or `fd -exec` runs them: their words are
 not all in the line. So `git ls-files | xargs gofmt -l`, `find src -name

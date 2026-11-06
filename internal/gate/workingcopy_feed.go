@@ -39,12 +39,33 @@ func hasGroup(line string) bool {
 // input, the spots the words it will get can touch: those of the producer
 // when it is confined, every copy when it is not.
 func (w *walker) judgeFeed(c simple, v view, feed runnerFeed, ch *pipeChain) {
+	if printsOnly(v, feed) {
+		return
+	}
 	spots, ok := w.feedSource(c, v, feed, ch)
 	if !ok {
 		w.feedSpots = append(w.feedSpots, spot{only: true, all: true})
 		return
 	}
 	w.feedSpots = append(w.feedSpots, spots...)
+}
+
+// printsOnly reports whether the program a runner feeds only prints its
+// arguments: echo or printf, or xargs with no program (which runs echo). It
+// reads no name it is given, so the input is not a reach whatever it holds. A
+// runner whose options the gate could not read, or parallel with no program
+// (its input is the commands), is not one.
+func printsOnly(v view, feed runnerFeed) bool {
+	if slices.Contains(feed.placeholders, fedAll) {
+		return false
+	}
+	switch v.name {
+	case "echo", "printf":
+		return true
+	case "":
+		return feed.runner == "xargs" && len(v.rest) == 0
+	}
+	return false
 }
 
 // feedSource is the spots of the names the pipeline into the runner command
