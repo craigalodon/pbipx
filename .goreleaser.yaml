@@ -32,6 +32,7 @@ archives:
       - README.md
       # The license goes in every archive; matching nothing is not an error.
       - LICENSE*
+      - NOTICE
 
 checksum:
   name_template: checksums.txt

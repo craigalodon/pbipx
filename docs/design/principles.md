@@ -1,7 +1,7 @@
 # Design principles
 
 These come from a predecessor implementation that ran in production on a
-repository of Power BI projects holding education records. Each one either
+repository of Power BI projects holding sensitive records. Each one either
 held up there or was learned when its absence caused a failure. They are
 written here generically. A change that breaks one needs a decision record.
 
