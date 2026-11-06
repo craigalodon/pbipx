@@ -1065,7 +1065,8 @@ path, is denied with `event-error`: the call cannot be judged.
     carries forward). `cd` to a target that cannot be told (`cd $X`,
     `cd -` with no earlier `cd`, `popd`, a bare name while `CDPATH` is set
     in the gate's environment or may be set by the line itself (the name
-    appears anywhere but as `$CDPATH` or `${CDPATH}`: `export`, `declare`,
+    appears anywhere but as `$CDPATH` or `${CDPATH}`, quotes and backslashes
+    removed first, so `CDP""ATH` counts: `export`, `declare`,
     `read`, `printf -v`, a prefix assignment, `env`; or the line holds an
     `eval`, `source` or `.` command, which can set it unseen; a path that
     starts with `./` or `../` is still told), `cd` with `HOME` unknown,

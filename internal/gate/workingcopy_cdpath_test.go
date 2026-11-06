@@ -35,6 +35,11 @@ func TestWorkingCopyCDPATH(t *testing.T) {
 		{"unset first", "", wcShell("unset CDPATH; export CDPATH=~/work; cd copy; cat x"), wc},
 		{"from a folder", m.outside, wcShell("export CDPATH=~/work; cd copy; cat model.txt"), wc},
 
+		{"a quoted name", "", wcShell(`export CDP""ATH=$HOME/work; cd copy; cat model.txt`), wc},
+		{"a single-quoted name", "", wcShell(`export CDP''ATH=$HOME/work; cd copy; cat model.txt`), wc},
+		{"a backslash in the name", "", wcShell(`export CDP\ATH=$HOME/work; cd copy; cat model.txt`), wc},
+		{"a quoted assignment", "", wcShell(`"CDPATH"=$HOME/work cd copy; cat model.txt`), wc},
+
 		// Allowed.
 		{"no CDPATH", "", wcShell("cd sub; cat x"), ""},
 		{"a dot path", "", wcShell("export CDPATH=~/work; cd ./sub; cat x"), ""},

@@ -244,6 +244,9 @@ func onlyReferenced(line string, names []string) bool {
 // the line holds no eval, source or dot command, which can set it by a name
 // built at run time or in a file.
 func cdpathFixed(line string) bool {
+	// Quotes and backslashes inside a name do not change it to the shell:
+	// export CDP""ATH=x sets CDPATH.
+	line = strings.NewReplacer(`"`, "", `'`, "", `\`, "").Replace(line)
 	for _, tok := range lineTokens(line) {
 		if tok == "eval" || tok == "source" {
 			return false
