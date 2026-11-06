@@ -448,6 +448,29 @@ spec assumes and what a session would show.
 | D9 | The `.pbi/` folder is created beside the model, and not beside the report | list after the first open |
 | D10 | Desktop and the folder layout survive a long path, and what the limit is | stage deep and open |
 
+### Measured so far
+
+One open and save of a synthetic project with no edits, in Desktop on
+Windows, copied to WSL afterwards (2026-11-05):
+
+- **D3:** every file came back with CRLF. Report JSON and the `.pbir`,
+  `.pbism` and `.pbip` files have no final newline; TMDL keeps one. **No
+  untouched content changed:** with line endings ignored, visuals, pages,
+  tables and relationships are byte-identical, so `.gitattributes` normalizing
+  to LF should leave `git status` empty, and the exit criterion needs no other
+  normalization.
+- **The first save upgrades an older project** in the files that name a
+  format: it adds `$schema` to `.pbip`, `.pbir` and `.pbism`, raises
+  `report.json`'s schema and theme versions, `.pbism`'s version and the
+  model's `compatibilityLevel`, adds a `PBI_ProTooling` annotation, and
+  replaces an all-zero `logicalId` with a new GUID. Those are real changes for
+  a person to review.
+- **D1:** `byPath` opens the model beside the report, and Desktop keeps it.
+- **D5:** yes. A security product's stream on each saved file appears under
+  WSL as `<file>:<stream>`, not only `:Zone.Identifier`, so the rule that any
+  name with `:` is left behind matters. Do not read these.
+- **D9:** `.pbi/` appears beside the report as well as the model.
+
 ## Open questions
 
 1. **A second collect from one session.** The clean-tree check of step 2

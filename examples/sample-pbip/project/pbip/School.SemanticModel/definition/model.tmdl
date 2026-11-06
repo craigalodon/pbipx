@@ -4,6 +4,8 @@ model Model
 	discourageImplicitMeasures
 	sourceQueryCulture: en-US
 
+annotation PBI_ProTooling = ["DevMode"]
+
 ref table student
 ref table course
 ref table enrollment
