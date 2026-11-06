@@ -7,6 +7,13 @@ import "strings"
 // a destination from a source by position. An option in none of the tables
 // is not understood, and then the command's words are not placed: each
 // is taken to be both (copyArgs).
+//
+// Left out on purpose, so a command that has one is not understood: mv
+// --exchange (it swaps the two operands, so every one is a source), cp -b,
+// --backup and --remove-destination (they rename or remove what is at the
+// destination), and rsync's --link-dest, --compare-dest, --copy-dest and
+// --backup-dir (a third path read or linked). mv --backup and rsync --backup
+// are in: they set a name aside only for a file the command replaces.
 
 // optSpec lists a program's options. short are the single letters that take
 // no value, value the letters that take one (attached or as the next
@@ -32,13 +39,13 @@ type copyWord struct{ idx, skip int }
 
 var copyOptSpecs = map[string]optSpec{
 	"cp": {
-		short: "abdfHiLlnPpRrsTuvxZcg",
+		short: "adfHiLlnPpRrsTuvxZcg",
 		value: "St",
 		long: map[string]int{
-			"archive": 0, "attributes-only": 0, "backup": 2, "copy-contents": 0, "debug": 0, "dereference": 0,
+			"archive": 0, "attributes-only": 0, "copy-contents": 0, "debug": 0, "dereference": 0,
 			"force": 0, "interactive": 0, "link": 0, "no-clobber": 0, "no-dereference": 0, "no-preserve": 1,
 			"no-target-directory": 0, "one-file-system": 0, "parents": 0, "preserve": 2, "recursive": 0,
-			"reflink": 2, "remove-destination": 0, "sparse": 1, "strip-trailing-slashes": 0, "suffix": 1,
+			"reflink": 2, "sparse": 1, "strip-trailing-slashes": 0, "suffix": 1,
 			"symbolic-link": 0, "target-directory": 1, "update": 2, "verbose": 0, "context": 2, "help": 0,
 			"version": 0, "keep-directory-symlink": 0,
 		},
@@ -48,7 +55,7 @@ var copyOptSpecs = map[string]optSpec{
 		short: "bfinTuvZ",
 		value: "St",
 		long: map[string]int{
-			"backup": 2, "debug": 0, "exchange": 0, "force": 0, "interactive": 0, "no-clobber": 0, "no-copy": 0,
+			"backup": 2, "debug": 0, "force": 0, "interactive": 0, "no-clobber": 0, "no-copy": 0,
 			"no-target-directory": 0, "strip-trailing-slashes": 0, "suffix": 1, "target-directory": 1,
 			"update": 2, "verbose": 0, "context": 0, "help": 0, "version": 0,
 		},

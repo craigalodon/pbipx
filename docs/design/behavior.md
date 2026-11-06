@@ -787,12 +787,19 @@ allowlist is its own, much smaller one (`wcQuietPrograms`):
   value (`-tDIR`, `--target-directory=DIR`) and a unique prefix of a long
   option (`--target`, `--target-dir`). A command with an option the gate
   does not know, an ambiguous prefix, or a word it cannot tell (which could
-  be an option) has no quiet word at all. A **source** is never quiet: `cp`
-  and `rsync` read it, and `mv` and `ln` of a folder above a copy move the
-  copy out of its registered path (the entry is then stale, and a stale
-  entry is skipped) or make a path that reads through to it (`ln -s ~ L`
-  and a read of `L` in the same call). A source of `mv` or `ln` that cannot
-  be told counts as touching every working copy.
+  be an option) has no quiet word at all. An option that moves or reads a
+  path beside the destination is one the tables leave out on purpose, so
+  the command has no quiet word: `mv --exchange` (it swaps the operands, so
+  every one is a source; `--exch` too), `cp -b`, `--backup` and
+  `--remove-destination`, and rsync's `--link-dest`, `--compare-dest`,
+  `--copy-dest` and `--backup-dir`. `mv --backup` and `rsync --backup` stay
+  in: they set aside only a file the command replaces. The cost is
+  `cp -b f ~/`, which denies while a copy is registered. A **source** is
+  never quiet: `cp` and `rsync` read it, and `mv` and `ln` of a folder above
+  a copy move the copy out of its registered path (the entry is then
+  stale, and a stale entry is skipped) or make a path that reads through to
+  it (`ln -s ~ L` and a read of `L` in the same call). A source of `mv` or
+  `ln` that cannot be told counts as touching every working copy.
 - The directory `tar -C` or `--directory` names, only when tar is proven to
   extract: the one operation is `x`, as a leading letter bundle (`xzf`,
   with the values of `f` and `C` following in order), `-x`, `--extract` or

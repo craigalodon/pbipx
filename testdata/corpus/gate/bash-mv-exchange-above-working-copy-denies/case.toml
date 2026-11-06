@@ -1,0 +1,8 @@
+description = "mv --exchange swaps its two operands, so the folder above a registered working copy is moved and has no quiet word; no value is planted"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []
+known       = "predecessor"
+working-copies = ["copy"]
