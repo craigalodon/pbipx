@@ -133,9 +133,17 @@ func quietWords(s *setup, v view) map[int]bool {
 	return q
 }
 
-// openerQuiet reports whether v, an opener, is given operands only.
+// openerQuiet reports whether v, an opener, is given operands only, every
+// one known: code --diff, --goto, --merge and - (a stdin), open -a, -f and
+// -t, and the options that take a file's content as an argument can put
+// content before the agent or run something. An opened editor's search is
+// not the agent's, but a form with an option is not proven, so code with
+// one denies above a copy; that is a small cost.
 func openerQuiet(v view) bool {
-	return true
+	if !allKnown(v.restKnown, len(v.rest)) {
+		return false
+	}
+	return !slices.ContainsFunc(v.rest, func(a string) bool { return strings.HasPrefix(a, "-") })
 }
 
 // pbipxQuiet reports whether v, a pbipx command, is a subcommand that reads
