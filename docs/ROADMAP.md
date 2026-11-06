@@ -135,7 +135,6 @@ only real changes.
 
 ## Phase 7: going public
 
-- [ ] Institutional approval to publish
 - [x] License chosen and added
 - [ ] The full history checked against the private-terms list: run
   `scripts/check-private-terms.sh --history` in a `git clone --mirror` clone

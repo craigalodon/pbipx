@@ -27,9 +27,8 @@ Treat this repository as public from its first commit.
 - **Sample projects** use placeholder connection strings, tenants and
   workspaces. A real connection string identifies a tenant and a workspace.
 
-Going public then needs only the checks in roadmap phase 7: a license, the
-maintainer's institutional approval, and the full history checked against the
-private list.
+Going public then needs only the checks in roadmap phase 7: a license and the
+full history checked against the private list.
 
 ## Consequences
 
