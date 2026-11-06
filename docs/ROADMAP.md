@@ -137,7 +137,8 @@ only real changes.
 ## Phase 7: going public
 
 - [x] License chosen and added
-- [ ] The full history checked against the private-terms list: run
+- [x] The full history checked against the private-terms list (2026-11-06):
+  run
   `scripts/check-private-terms.sh --history` in a `git clone --mirror` clone
   (this covers `refs/pull/*`), and `--github` for pull request, issue and
   release text
@@ -145,7 +146,8 @@ only real changes.
   `examples/sample-pbip/`, with a planted finding and an acceptance test;
   Desktop opened and saved it 2026-11-05
 - [ ] Docs written for analysts, not maintainers
-- [ ] Repository made public; issue tracker and `SECURITY.md` contact live
+- [x] Repository made public (2026-11-06); issue tracker and `SECURITY.md`
+  contact live
 
 ## Open questions
 

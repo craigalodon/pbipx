@@ -1,9 +1,9 @@
 # Instructions for AI agents
 
-## This repository is built to be public
+## This repository is public
 
-It may be private today. Write every file, fixture, comment and commit message
-as if it were already public, because an exposure is hard to reverse
+Every file, fixture, comment and commit message is public as soon as it is
+pushed, and an exposure is hard to reverse
 ([ADR-0002](docs/adr/0002-built-for-public-from-the-first-commit.md)).
 
 - **Nothing from a real deployment.** No organization, tenant, workspace,
