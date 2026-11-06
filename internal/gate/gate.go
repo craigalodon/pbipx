@@ -173,6 +173,9 @@ func Decide(ev Event, opts Options) (d Decision) {
 		if recover() != nil {
 			d = deny(ReasonInternalError, "the gate failed; the call is denied")
 		}
+		if !d.Allow && ev.Tool == Shell && holdsWidenedCd(ev.Command) {
+			d.Message += " " + hintWidenedCd
+		}
 		if !d.Allow && opts.msys.notFound() {
 			d.Message += " " + msysNotFoundNote
 		}

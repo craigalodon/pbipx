@@ -1034,7 +1034,19 @@ that ends in
 script the gate is not shown; and a variable name built from expansions
 (`CDP${E}ATH`, `CDPAT{H,}`). A further cost: a link whose text goes up to
 a folder that holds a copy, such as `ln -s .. sub/up` in a repository
-directly under a home folder that holds one, denies.
+directly under a home folder that holds one, denies. And these denials,
+which an honest line can meet: with an approved adopted repository or a
+copy registered, an input redirection from a word the gate cannot tell
+denies, even outside the repository (`python3 x.py < "$IN"`), and so do
+`~+`, `~-`, `~N` and `~user` at a word start; a line with `$'` or `$"` and
+a later bare-name `cd` denies. A deny whose line holds a `cd` judged from the
+folder before it as well (one not directly followed by `&&`) ends with a fixed
+sentence saying that a `cd` joined with `&&` is judged from its target alone;
+it holds no source text. Not placed against the folder a program is told to
+work in, for want of a small change: the operands of `env -C DIR cmd` and of
+`tar -C DIR` (`env -C work/other cat ../stage1/x`), which are placed against
+the working directory; the `-C` word itself is placed, so a folder at or above
+a copy denies.
 
 *Not covered.* The gate cannot see a path an interpreter builds at run
 time inside a script it is not shown, a glob attached to a short option
