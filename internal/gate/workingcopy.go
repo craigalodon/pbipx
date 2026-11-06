@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"syscall"
@@ -58,11 +59,27 @@ func (f *finder) workingCopyDeny() *Decision {
 			}
 		}
 	}
-	if len(roots) == 0 {
+	if len(roots) == 0 && len(entries) == 0 {
 		return nil
 	}
 	reach := deny(ReasonWorkingCopy, "the call could reach a Power BI Desktop working copy, "+whyWorkingCopy+hintWorkingCopy)
 	spots, unknown := f.spots()
+	// The backstop for a copy the registry does not find (its folder was
+	// moved: the entry is stale and skipped): while any entry exists, a path
+	// that reads a file called cache.abf in a folder called .pbi is denied
+	// by name, in any repository or none.
+	namedCache := func() *Decision {
+		for _, sp := range spots {
+			if sp.reads && !sp.prose && namesCache(sp.path, f.fold) {
+				d := deny(ReasonWorkingCopy, "the call reads a Power BI Desktop data cache (.pbi/cache.abf), "+whyWorkingCopy+hintWorkingCopy)
+				return &d
+			}
+		}
+		return nil
+	}
+	if len(roots) == 0 {
+		return namedCache()
+	}
 	for _, sp := range spots {
 		if sp.prose {
 			continue
@@ -81,6 +98,9 @@ func (f *finder) workingCopyDeny() *Decision {
 			}
 		}
 	}
+	if d := namedCache(); d != nil {
+		return d
+	}
 	if unknown {
 		return &reach
 	}
@@ -97,6 +117,17 @@ func (f *finder) workingCopyDeny() *Decision {
 		}
 	}
 	return nil
+}
+
+// namesCache reports whether the absolute path p ends in .pbi/cache.abf: a
+// file of that name in a folder of that name, in the case it is written in
+// unless fold.
+func namesCache(p string, fold bool) bool {
+	p = filepath.ToSlash(p)
+	if fold {
+		p = strings.ToLower(p)
+	}
+	return strings.HasSuffix(p, "/.pbi/cache.abf")
 }
 
 // registryDeny is the deny for a registry that cannot be read. The message

@@ -1,0 +1,8 @@
+{
+  "hook_event_name": "PreToolUse",
+  "cwd": "{root}",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "echo {work} | xargs cat"
+  }
+}

@@ -1,0 +1,8 @@
+description = "A bare cd in a line that does not name CDPATH is placed against the working directory and is allowed with a copy registered elsewhere; no value is planted"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = []
+known       = "predecessor"
+working-copies = ["copy"]

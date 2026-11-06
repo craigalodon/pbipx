@@ -157,6 +157,10 @@ type setup struct {
 	// PBIPX_CONFIG_DIR or CLAUDE_CONFIG_DIR, so a word naming one is
 	// expanded from the gate's environment (ctlVarsFixed).
 	ctlVars bool
+	// cdpath is whether the call's line may set CDPATH, or the gate's own
+	// environment has it: cd then takes a bare name from a folder the gate
+	// cannot tell (cdpathFixed).
+	cdpath bool
 	// msys places the absolute Git Bash paths that are not drive paths,
 	// nil off Windows (msys.go).
 	msys *msysSession
@@ -168,6 +172,9 @@ func Decide(ev Event, opts Options) (d Decision) {
 	defer func() {
 		if recover() != nil {
 			d = deny(ReasonInternalError, "the gate failed; the call is denied")
+		}
+		if !d.Allow && ev.Tool == Shell && holdsWidenedCd(ev.Command) {
+			d.Message += " " + hintWidenedCd
 		}
 		if !d.Allow && opts.msys.notFound() {
 			d.Message += " " + msysNotFoundNote

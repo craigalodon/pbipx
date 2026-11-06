@@ -1,0 +1,8 @@
+description = "cp -b is not an option the destination table vouches for, so the folder above a registered working copy has no quiet word; no value is planted"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []
+known       = "predecessor"
+working-copies = ["copy"]

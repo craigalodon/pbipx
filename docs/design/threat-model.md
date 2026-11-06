@@ -113,9 +113,16 @@ should set up:
    every call. Listing a working copy is denied too. An agent cannot add,
    change or remove an entry: the registry is in the store, which the gate
    denies an agent's write into. The limits are the gate's own: a path an
-   interpreter builds at run time inside a script the gate is not shown, and
-   a PowerShell variable outside a word that looks like a path, pass it, as
-   does any process outside the gate (layer 7).
+   interpreter builds at run time inside a script the gate is not shown, a
+   sourced script among them, and a PowerShell variable outside a word that
+   looks like a path, pass it, as does any process outside the gate (layer
+   7). So does the same class in smaller programs: an `awk` or `sed` program
+   that builds a command from a list of names (`system("cat " $0)`, `s///e`),
+   `rsync` or `scp` of `host:path` to the local machine, a name in a
+   producer's tree with whitespace that `xargs` cuts into pieces or that starts
+   with `-` or `@`, a symlink in that tree, and a search over a folder above
+   the `.pbi` of a copy whose
+   registry entry is stale (`behavior.md`, "Working copies", lists them).
 4. **The gate binary outside the repository**, installed at a pinned
    version. When the gate runs code from the working tree, an agent edit to
    that code changes the gate on its next call. A binary on the user's `PATH`

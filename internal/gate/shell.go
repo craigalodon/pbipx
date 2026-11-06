@@ -35,6 +35,7 @@ const maxCommands = 20000
 // in a message: it can carry anything.
 func (s *setup) shell(line string) Decision {
 	s.ctlVars = ctlVarsFixed(line)
+	s.cdpath = !cdpathFixed(line) || os.Getenv("CDPATH") != ""
 	top := splitCommands(line)
 	w := &walker{s: s, cache: newSpellCache(), text: line}
 	st := cwdState{dirs: []string{s.cwd}}
@@ -1215,6 +1216,8 @@ type view struct {
 	docOnly bool
 	// cache holds the decision's expanded words and its glob budget.
 	cache *spellCache
+	// execd is set for a command that find or fd -exec runs.
+	execd bool
 }
 
 // changeAt is a git command in the line that changes the repository: its
@@ -1302,6 +1305,13 @@ type walker struct {
 	// under.
 	probe  bool
 	probed []string
+	// feedSpots are, for working copies alone, the spots of the names a
+	// runner feeds a program (judgeFeed); chain locates the command being
+	// read among its line's (consumed by simple); inExec is the depth of
+	// find and fd -exec commands being read.
+	feedSpots []spot
+	chain     *pipeChain
+	inExec    int
 }
 
 // commands reads the simple commands cmds of line, nested depth deep, from
@@ -1314,6 +1324,9 @@ func (w *walker) commands(line string, cmds []simple, st *cwdState, depth int) {
 	w.lines = append(w.lines, line)
 	var lister *view // a find or fd whose output this pipeline carries
 	var prev *simple // the command before, in this pipeline
+	// oldDirs are the working directories a command may still run in because
+	// a cd before it, chained with &&, may have failed.
+	var oldDirs []string
 	// The stages of a pipeline run together: a change in one and a read in
 	// another, in any order, is a read after the change.
 	// In a line with a group or a subshell, a stage can be a whole group,
@@ -1350,7 +1363,11 @@ func (w *walker) commands(line string, cmds []simple, st *cwdState, depth int) {
 			prev = nil
 		}
 		c.pipeOut = i+1 < len(cmds) && cmds[i+1].pipeIn
+		w.chain = &pipeChain{cmds: cmds, at: i, line: line}
+		before := st.dirs
 		v := w.simple(c, st, depth)
+		w.chain = nil
+		oldDirs = mayHaveFailed(v, c, st, before, oldDirs)
 		if c.fallback {
 			// The line did not tokenize: what it runs cannot be told.
 			w.setUncertain("the line has an unbalanced quote or a trailing backslash, or nests substitutions too deeply")
@@ -1598,11 +1615,17 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 	s := w.s
 	v := s.viewOf(c, *st, w.ph)
 	v.cache = w.cache
+	v.execd = w.inExec > 0
+	chain := w.chain
+	w.chain = nil
 	// The lines nested in this command are read with the placeholders of
 	// the runners it runs under: they stand for input words there too.
 	feed := feedOf(v.argv, v.argvKnown)
 	defer func(old []string) { w.ph = old }(w.ph)
 	w.ph = slices.Concat(w.ph, feed.placeholders)
+	if w.probe && feed.runner != "" && feed.fromInput {
+		w.judgeFeed(c, v, feed, chain)
+	}
 	// The shell running the lines nested in a shell command is that
 	// shell, whose echo is read as it reads it (echoMayEscape); xpg_echo,
 	// set anywhere in the line, makes bash's echo read escapes.
@@ -1840,9 +1863,11 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 			w.setReach("ssh, su, runuser or machinectl runs a command the gate cannot follow", hintOther)
 		}
 	case "find":
+		w.inExec++
 		for _, exec := range findExecs(v.rest) {
 			w.simple(simple{words: literalWords(exec)}, new(v.cwd.clone()), depth+1)
 		}
+		w.inExec--
 		if findReads(v.rest) {
 			for _, p := range findPaths(v.rest) {
 				w.reachesIn(v.cwd, p, "find runs a command on, or reads, the files it finds")
@@ -1850,9 +1875,11 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 		}
 	case "fd", "fdfind":
 		execs, paths := fdArgs(v.rest)
+		w.inExec++
 		for _, exec := range execs {
 			w.simple(simple{words: literalWords(exec)}, new(v.cwd.clone()), depth+1)
 		}
+		w.inExec--
 		if len(execs) > 0 {
 			for _, p := range paths {
 				w.reachesIn(v.cwd, p, "fd runs a command on the files it finds")
@@ -2354,7 +2381,7 @@ func (s *setup) chdir(v view, st *cwdState) {
 		return
 	default:
 		target = args[i]
-		if os.Getenv("CDPATH") != "" && !isAbs(target) && !dotRelative(target) {
+		if (s.cdpath || os.Getenv("CDPATH") != "") && !isAbs(target) && !dotRelative(target) {
 			// CDPATH can take a bare name anywhere.
 			unknown()
 			return
@@ -3716,6 +3743,47 @@ func scriptArgs(rest []string, t scriptTool) []int {
 				out = append(out, i)
 				given = true
 			}
+		}
+	}
+	return out
+}
+
+// mayHaveFailed widens the working directory st that a cd or pushd v left,
+// for the commands after it: a cd that fails leaves the old one, and a
+// mistyped folder name is not rare. Unless the cd is directly followed by
+// && (what follows then runs only if it worked), the working directory may
+// be the old one or the new; after a cd chained with &&, it may be the old
+// one once the chain ends (cd x && a; b). before is the directories before
+// v, old those a chain still holds. It returns the directories still
+// pending.
+func mayHaveFailed(v view, c simple, st *cwdState, before, old []string) []string {
+	isCd := v.name == "cd" || v.name == "pushd" || v.name == "chdir"
+	if !isCd {
+		if !c.andNext && len(old) > 0 && st.known() {
+			st.dirs = unionDirs(st.dirs, old)
+			return nil
+		}
+		return old
+	}
+	if !st.known() || before == nil {
+		return nil
+	}
+	// A cd after || is skipped when the left side succeeds: what follows it
+	// then runs in the folder before it, even if it is chained with &&. One on
+	// the right of a pipe runs in a subshell, and does not carry at all.
+	if c.andNext && c.prevOp != '|' && !c.pipeIn {
+		return unionDirs(old, before)
+	}
+	st.dirs = unionDirs(st.dirs, unionDirs(before, old))
+	return nil
+}
+
+// unionDirs is a with the directories of b it lacks, a first.
+func unionDirs(a, b []string) []string {
+	out := slices.Clone(a)
+	for _, d := range b {
+		if !slices.Contains(out, d) {
+			out = append(out, d)
 		}
 	}
 	return out

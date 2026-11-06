@@ -69,7 +69,8 @@ func TestShellWorkingDirectory(t *testing.T) {
 		{"cd -P", sh("cd -P sql && rg x"), "", ""},
 		{"pushd away", sh("pushd sql && rg x"), "", ""},
 		{"popd", sh("pushd sql && popd && ls"), "", gate.ReasonFinding},
-		{"cd in a subshell carries forward", sh("(cd sql) && rg x"), "", ""},
+		// A subshell's cd does not carry out of it: rg runs in the old folder too.
+		{"cd in a subshell does not carry forward", sh("(cd sql) && rg x"), "", gate.ReasonFinding},
 		{"the directory before a cd", sh("rg x; cd sql"), "", gate.ReasonFinding},
 		{"cd to an absolute path outside", sh("cd " + bashPath(home) + " && rg x"), "", ""},
 	})
@@ -155,7 +156,7 @@ func TestShellVariables(t *testing.T) {
 		{"$OLDPWD", sh("cd work && cd ../notes && cat $OLDPWD/pbip/B.Report/" + leakInReport), gate.ReasonFinding},
 		{"$OLDPWD away", sh("cd sql && cd ../notes && cat $OLDPWD/clean.sql"), ""},
 		{"~ away", sh("cat ~/other/readme.md"), ""},
-		{"~user is unknown", sh("cat ~nobody/x"), gate.ReasonFinding},
+		{"~user is not told", sh("cat ~nobody/x"), gate.ReasonInternalError},
 		{"single quotes keep $HOME literal", sh("cat '$HOME/x'"), ""},
 	})
 	runBoth(t, []both{
@@ -523,7 +524,8 @@ func TestShellNested(t *testing.T) {
 		{"zsh -o opt -c", sh("zsh -o extendedglob -c 'git show'"), gate.ReasonGitContent, gate.ReasonGitContent},
 		{"eval", sh("eval 'git log -p'"), gate.ReasonGitContent, gate.ReasonGitContent},
 		{"eval words", sh("eval git log -p"), gate.ReasonGitContent, gate.ReasonGitContent},
-		{"eval moves the directory", sh("eval 'cd sql'; rg x"), "", ""},
+		// eval can set CDPATH unseen, so the bare name it cds to is not told (cdpathFixed).
+		{"eval moves the directory", sh("eval 'cd sql'; rg x"), "", gate.ReasonFinding},
 		{"sh -c does not", sh("sh -c 'cd sql'; rg x"), "", gate.ReasonFinding},
 		{"too deep", shIn("sql", "eval eval eval eval eval eval ls"), gate.ReasonInternalError, gate.ReasonInternalError},
 		{"not too deep", shIn("sql", "eval eval eval ls"), "", ""},

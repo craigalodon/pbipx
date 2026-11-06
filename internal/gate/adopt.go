@@ -60,6 +60,9 @@ type spot struct {
 	// all: for working copies alone; the call moves or links a path it
 	// cannot tell, which could be a folder above any copy.
 	all bool
+	// reads: for working copies alone; the call reads the path (a Read's or
+	// a Grep's, a word of a program not known to leave its words unread).
+	reads bool
 }
 
 // finder finds the adopted repositories one call touches.
@@ -447,6 +450,11 @@ func (f *finder) findSpots() (spots []spot, unknown bool) {
 			}
 		}
 	}
+	if ev.Tool == Read || ev.Tool == Search {
+		for i := range spots {
+			spots[i].reads = true
+		}
+	}
 	return spots, unknown
 }
 
@@ -487,7 +495,7 @@ func (f *finder) placeable() bool {
 // be told, a word a reading command has that cannot be placed, a line
 // nested too deep or built at run time, or one too long to judge.
 func probeShell(cwd, home, line string, m *msysSession) (*walker, []spot, bool) {
-	ps := &setup{cwd: cwd, home: home, fold: foldCase, ctlVars: ctlVarsFixed(line), msys: m}
+	ps := &setup{cwd: cwd, home: home, fold: foldCase, ctlVars: ctlVarsFixed(line), cdpath: !cdpathFixed(line) || os.Getenv("CDPATH") != "", msys: m}
 	w := &walker{s: ps, cache: newSpellCache(), probe: true}
 	st := cwdState{dirs: []string{cwd}}
 	w.commands(line, splitCommands(line), &st, 0)
@@ -510,6 +518,11 @@ func probeShell(cwd, home, line string, m *msysSession) (*walker, []spot, bool) 
 		lists := v.cwd.known() && lister(v.name, v.rest)
 		mover := v.name == "cd" || v.name == "pushd" || v.name == "chdir"
 		quiet := quietWords(ps, v)
+		spots = append(spots, lnSpots(ps, v)...)
+		if readsNameList(v) {
+			// Names read from a list the gate does not see.
+			spots = append(spots, spot{only: true, all: true})
+		}
 		// A git, hub or pbipx command that is not known to read nothing
 		// under the folders it runs in or names touches them, as does the
 		// directory -C moves git to, which relative words are placed against.
@@ -523,7 +536,8 @@ func probeShell(cwd, home, line string, m *msysSession) (*walker, []spot, bool) 
 		}
 		for wi, xw := range v.words {
 			abss, unk := ps.wordSpellings(v, xw)
-			if unk && reader && !optionOnly(xw.text) {
+			// A word a redirection reads from is read by whatever it is for.
+			if unk && (reader || xw.redirect && xw.input && !xw.here) && !optionOnly(xw.text) {
 				unknown = true
 			}
 			if unk && (v.name == "mv" || v.name == "ln") && !quiet[wi] && !xw.redirect && !optionOnly(xw.text) {
@@ -533,7 +547,7 @@ func probeShell(cwd, home, line string, m *msysSession) (*walker, []spot, bool) 
 			}
 			bare := lists || mover && !xw.redirect || quiet[wi]
 			for _, a := range abss {
-				spots = append(spots, spot{path: a, container: true, bare: bare, prose: xw.message && !w.redefines})
+				spots = append(spots, spot{path: a, container: true, bare: bare, prose: xw.message && !w.redefines, reads: !quiet[wi] && !xw.message})
 			}
 			// A path attached to a short option (-C/dir, -I/dir/x) is placed
 			// for working copies only: it is a limit of the adoption finder
@@ -559,7 +573,7 @@ func probeShell(cwd, home, line string, m *msysSession) (*walker, []spot, bool) 
 			}
 		}
 	}
-	return w, spots, unknown
+	return w, append(spots, w.feedSpots...), unknown
 }
 
 // probeIn is reachesIn for a probe: it records the spellings of p from

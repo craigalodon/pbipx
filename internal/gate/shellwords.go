@@ -111,6 +111,12 @@ type simple struct {
 	arith bool
 	// arithText is the text of that command, between its parentheses.
 	arithText string
+	// andNext is set for a command directly followed by &&: what follows
+	// runs only if it succeeds.
+	andNext bool
+	// prevOp is '&' or '|' when the command directly follows && or ||: after
+	// ||, it is skipped when what is before it succeeds.
+	prevOp byte
 	// background is set for a command run in the background (cmd &).
 	background bool
 	// uncertain says, on every command of a line the tokenizer cannot
@@ -173,6 +179,8 @@ type tokenizer struct {
 	here     bool // the redirection is a here-string
 	rw       bool // the redirection reads and writes (<>)
 	pipe     bool // the next command reads this one's output
+	// nextOp is the && or || ('&' or '|') just read, for the next command.
+	nextOp byte
 	// litBuf is the literal part being read, open when litOpen.
 	litBuf    strings.Builder
 	litOpen   bool
@@ -221,6 +229,7 @@ func (t *tokenizer) doubt(why string) {
 const (
 	whyUnclosed   = "the command line leaves a case, a parenthesis or a here-document open, so what it runs cannot be told"
 	whyStrayParen = "a ) closes nothing"
+	whyTilde      = "a tilde prefix other than ~ (~+, ~-, ~N, ~user) names a folder the gate cannot tell"
 	whyDelim      = "a here-document delimiter holds a $, a backtick or a newline"
 	whyBodyJoin   = "a backslash-newline in an unquoted here-document body changes which line ends it, or splits a $( or a backtick"
 	whyBash52     = "a here-document inside a command substitution has a line that starts with its delimiter, " +
@@ -757,6 +766,7 @@ func (t *tokenizer) endCommand() {
 	t.endWord()
 	if len(t.cur.words) > 0 || len(t.cur.subs) > 0 || len(t.cur.docs) > 0 || t.cur.arith {
 		t.cur.pipeIn = t.pipe
+		t.cur.prevOp, t.nextOp = t.nextOp, 0
 		t.cur.procSub = slices.Contains(t.parens, true)
 		t.cur.arrayElems = len(t.arrays) > 0 && t.arrays[len(t.arrays)-1]
 		t.cmds = append(t.cmds, t.cur)
@@ -1091,6 +1101,10 @@ func (t *tokenizer) run(start int, sub bool) (int, bool) {
 			t.pipe = false
 			if i+1 < len(rs) && rs[i+1] == '&' {
 				i++
+				if len(t.cmds) > n {
+					t.cmds[len(t.cmds)-1].andNext = true
+				}
+				t.nextOp = '&'
 			} else if len(t.cmds) > 0 && n <= len(t.cmds) {
 				// A background job runs alongside what follows.
 				t.cmds[len(t.cmds)-1].background = true
@@ -1105,6 +1119,7 @@ func (t *tokenizer) run(start int, sub bool) (int, bool) {
 			t.pipe = true
 			if i+1 < len(rs) && rs[i+1] == '|' {
 				t.pipe = false
+				t.nextOp = '|'
 				i++
 			} else if i+1 < len(rs) && rs[i+1] == '&' {
 				i++
@@ -1205,20 +1220,33 @@ func (t *tokenizer) run(start int, sub bool) (int, bool) {
 			}
 			i = end
 		case '~':
-			if t.inWord {
+			// A leading ~, up to the first /, is the tilde prefix; in an
+			// assignment (NAME=~x, NAME=a:~x) one after = or : is too.
+			assign := t.inWord && i > 0 && (rs[i-1] == '=' || rs[i-1] == ':') && assignmentBefore(rs, i)
+			if t.inWord && !assign {
 				t.lit("~", false)
 				continue
 			}
-			// A leading ~, up to the first /, is the tilde prefix.
-			j := i + 1
-			for j < len(rs) && isNameRune(rs[j]) {
-				j++
+			stops := "/ \t\r\n;&|()<>"
+			if assign {
+				stops += ":"
 			}
-			if j < len(rs) && !strings.ContainsRune("/ \t\r\n;&|()<>", rs[j]) {
+			j, ok := tildeEnd(rs, i, stops)
+			if !ok {
 				t.lit("~", false)
 				continue
 			}
 			user := string(rs[i+1 : j])
+			if user != "" {
+				// ~+, ~-, ~N, ~+N, ~-N and ~user name a folder that bash
+				// takes from PWD, OLDPWD, the stack or the user database:
+				// wherever bash expands one, the line is not told.
+				t.doubt(whyTilde)
+			}
+			if assign {
+				t.lit("~", false)
+				continue
+			}
 			t.expansion(tildePart, user, "~"+user)
 			i = j - 1
 		default:
@@ -2421,9 +2449,9 @@ func commandIdx(args []string) (name string, rest []string, under []string, skip
 				for j < len(args) && strings.HasPrefix(args[j], "-") {
 					j++
 				}
-				// A word "." after a program is a path (gofmt -l .), not the
+				// A word "." or ending in "/." after a program is a path (gofmt -l ., ln -s ../x/. L), not the
 				// dot-source builtin it would be as a command.
-				if j < len(args) && args[j] != "." && judged(progName(args[j])) {
+				if j < len(args) && args[j] != "." && progName(args[j]) != "." && judged(progName(args[j])) {
 					under = append(under, base)
 					i = j
 					continue
@@ -2537,4 +2565,40 @@ func progName(w string) string {
 		b = strings.ToLower(b)
 	}
 	return b
+}
+
+// tildeEnd is the end of the tilde prefix that starts at rs[i] == '~': after
+// ~+ or ~- and the digits of a stack index, or the name of a user, when what
+// follows ends the prefix (one of stops) or the line. ok is false when it
+// does not, and the ~ is a literal.
+func tildeEnd(rs []rune, i int, stops string) (end int, ok bool) {
+	j := i + 1
+	signed := j < len(rs) && (rs[j] == '+' || rs[j] == '-')
+	if signed {
+		j++
+		for j < len(rs) && isDigit(rs[j]) {
+			j++
+		}
+	}
+	for j < len(rs) && !signed && isNameRune(rs[j]) {
+		j++
+	}
+	if j < len(rs) && !strings.ContainsRune(stops, rs[j]) {
+		return 0, false
+	}
+	return j, true
+}
+
+// assignmentBefore reports whether the word that holds rs[i] began as an
+// assignment, NAME=..., where bash also expands a tilde after = and :.
+func assignmentBefore(rs []rune, i int) bool {
+	k := i
+	for k > 0 && !strings.ContainsRune(" \t\r\n;&|()<>", rs[k-1]) {
+		k--
+	}
+	eq := k
+	for eq < i && isNameRune(rs[eq]) {
+		eq++
+	}
+	return eq > k && eq < i && rs[eq] == '=' && !isDigit(rs[k])
 }

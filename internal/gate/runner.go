@@ -54,6 +54,19 @@ type runnerFeed struct {
 	// appends is true when the input words are added after the command:
 	// from input, with no placeholder.
 	appends bool
+	// file is true when the words are read from a file or the runner's
+	// options could not be read: not from a pipe the gate can follow
+	// (xargs -a, --arg-file, parallel -a, ::::).
+	file bool
+	// sep is how the input is cut into words: "" blanks and newlines
+	// (xargs), "\n" lines (parallel, xargs -d '\n'), "\x00" NUL (-0).
+	// splits is true when the input is cut some other way (-d, --colsep,
+	// --pipe), so a word is not one of the pieces of a line.
+	sep    string
+	splits bool
+	// whole are the placeholders that stand for an input word as it is:
+	// xargs's replacement strings, parallel's {} and its -I strings.
+	whole []string
 }
 
 // parallelPlaceholders are the texts GNU parallel replaces with an input
@@ -122,6 +135,7 @@ func feedOf(argv []string, known []bool) runnerFeed {
 // from anywhere, every word fed, the input appended.
 func unsureFeed(f runnerFeed) runnerFeed {
 	f.fromInput, f.appends, f.placeholders = true, true, []string{fedAll}
+	f.file, f.splits = true, true
 	return f
 }
 
@@ -175,16 +189,28 @@ func xargsFeed(args []string, known []bool) runnerFeed {
 					value = "{}"
 				}
 				f.placeholders = append(f.placeholders, value)
+				f.whole = append(f.whole, value)
 			case name == "eof" || name == "max-lines":
 				// An optional value, attached only.
 			case slices.Contains(table.long, name):
 				if !hasValue {
-					if _, ok := next(i); !ok {
+					v, ok := next(i)
+					if !ok {
 						return unsureFeed(f)
 					}
 					i++
+					value = v
+				}
+				switch name {
+				case "arg-file":
+					f.file = true
+				case "delimiter":
+					f.delimiter(value)
 				}
 			case slices.Contains(xargsLongFlags, name) && !hasValue:
+				if name == "null" {
+					f.sep = "\x00"
+				}
 			default:
 				return unsureFeed(f)
 			}
@@ -196,6 +222,9 @@ func xargsFeed(args []string, known []bool) runnerFeed {
 			c := a[j]
 			switch {
 			case strings.IndexByte(xargsShortFlag, c) >= 0:
+				if c == '0' {
+					f.sep = "\x00"
+				}
 			case strings.IndexByte(xargsShortOptional, c) >= 0:
 				if c == 'i' {
 					rest := a[j+1:]
@@ -203,6 +232,7 @@ func xargsFeed(args []string, known []bool) runnerFeed {
 						rest = "{}"
 					}
 					f.placeholders = append(f.placeholders, rest)
+					f.whole = append(f.whole, rest)
 				}
 				break cluster
 			case strings.IndexByte(xargsShortValue, c) >= 0:
@@ -218,8 +248,14 @@ func xargsFeed(args []string, known []bool) runnerFeed {
 				if strings.IndexByte(xargsNumeric, c) >= 0 && strings.Trim(value, "0123456789") != "" {
 					return unsureFeed(f)
 				}
-				if c == 'I' {
+				switch c {
+				case 'I':
 					f.placeholders = append(f.placeholders, value)
+					f.whole = append(f.whole, value)
+				case 'a':
+					f.file = true
+				case 'd':
+					f.delimiter(value)
 				}
 				break cluster
 			default:
@@ -232,6 +268,19 @@ func xargsFeed(args []string, known []bool) runnerFeed {
 	}
 	f.appends = len(f.placeholders) == 0
 	return f
+}
+
+// delimiter records the value of -d, --delimiter: a newline is lines, a NUL
+// is NUL, anything else cuts the input where a path need not end.
+func (f *runnerFeed) delimiter(value string) {
+	switch value {
+	case "\n", "\\n":
+		f.sep = "\n"
+	case "\\0", "\x00":
+		f.sep = "\x00"
+	default:
+		f.splits = true
+	}
 }
 
 // parallelFlags and parallelValues are the GNU parallel options the gate
@@ -261,7 +310,7 @@ var parallelValues = []string{
 // gate does not know, or a word it cannot tell among them or as the
 // command, leaves it unread (unsureFeed).
 func parallelFeed(args []string, known []bool) runnerFeed {
-	f := runnerFeed{runner: "parallel", fromInput: true}
+	f := runnerFeed{runner: "parallel", fromInput: true, sep: "\n"}
 	var replace []string
 	i := 0
 	for ; i < len(args); i++ {
@@ -287,10 +336,23 @@ func parallelFeed(args []string, known []bool) runnerFeed {
 				i++
 				value = args[i]
 			}
-			if name == "-I" || name == "--replace" || name == "--replace-str" {
+			switch name {
+			case "-I", "--replace", "--replace-str":
 				replace = append(replace, value)
+			case "-a", "--arg-file":
+				f.file = true
+			case "-d", "--delimiter":
+				f.delimiter(value)
+			case "-C", "--colsep":
+				f.splits = true
 			}
 		case slices.Contains(parallelFlags, name) && !hasValue:
+			switch name {
+			case "-0", "--null":
+				f.sep = "\x00"
+			case "--pipe", "--pipepart":
+				f.splits = true
+			}
 		case name == "-i":
 			replace = append(replace, "{}")
 		default:
@@ -314,6 +376,8 @@ func parallelFeed(args []string, known []bool) runnerFeed {
 			strings.HasPrefix(a, "--arg-file=") || strings.HasPrefix(a, "-a") && len(a) > 2 && a[1] == 'a' && !strings.HasPrefix(a, "--"):
 			literal = false
 			f.fromInput = true
+			f.file = f.file || a != "--pipe" && a != "--pipepart"
+			f.splits = f.splits || a == "--pipe" || a == "--pipepart"
 			goto parsed
 		case strings.HasPrefix(a, ":::"):
 			literal = true
@@ -325,6 +389,7 @@ parsed:
 		return f
 	}
 	f.placeholders = slices.Concat(replace, parallelPlaceholders)
+	f.whole = append([]string{"{}"}, replace...)
 	f.appends = !slices.ContainsFunc(template, func(w string) bool { return containsAny(w, f.placeholders) })
 	return f
 }

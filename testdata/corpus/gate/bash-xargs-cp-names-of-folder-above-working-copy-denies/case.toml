@@ -1,0 +1,8 @@
+description = "xargs cp -rt fed a name that holds a registered working copy denies: the sources arrive on its input; no value is planted"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []
+known       = "predecessor"
+working-copies = ["copy"]

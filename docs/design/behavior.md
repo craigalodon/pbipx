@@ -787,12 +787,19 @@ allowlist is its own, much smaller one (`wcQuietPrograms`):
   value (`-tDIR`, `--target-directory=DIR`) and a unique prefix of a long
   option (`--target`, `--target-dir`). A command with an option the gate
   does not know, an ambiguous prefix, or a word it cannot tell (which could
-  be an option) has no quiet word at all. A **source** is never quiet: `cp`
-  and `rsync` read it, and `mv` and `ln` of a folder above a copy move the
-  copy out of its registered path (the entry is then stale, and a stale
-  entry is skipped) or make a path that reads through to it (`ln -s ~ L`
-  and a read of `L` in the same call). A source of `mv` or `ln` that cannot
-  be told counts as touching every working copy.
+  be an option) has no quiet word at all. An option that moves or reads a
+  path beside the destination is one the tables leave out on purpose, so
+  the command has no quiet word: `mv --exchange` (it swaps the operands, so
+  every one is a source; `--exch` too), `cp -b`, `--backup` and
+  `--remove-destination`, and rsync's `--link-dest`, `--compare-dest`,
+  `--copy-dest` and `--backup-dir`. `mv --backup` and `rsync --backup` stay
+  in: they set aside only a file the command replaces. The cost is
+  `cp -b f ~/`, which denies while a copy is registered. A **source** is
+  never quiet: `cp` and `rsync` read it, and `mv` and `ln` of a folder above
+  a copy move the copy out of its registered path (the entry is then
+  stale, and a stale entry is skipped) or make a path that reads through to
+  it (`ln -s ~ L` and a read of `L` in the same call). A source of `mv` or
+  `ln` that cannot be told counts as touching every working copy.
 - The directory `tar -C` or `--directory` names, only when tar is proven to
   extract: the one operation is `x`, as a leading letter bundle (`xzf`,
   with the values of `f` and `C` following in order), `-x`, `--extract` or
@@ -851,6 +858,111 @@ message included; the words of a git message are not placed as paths.
 Names are compared without regard to case on a file system that folds it
 (macOS, Windows), and exactly elsewhere.
 
+*Fed programs.* A program a runner feeds (`xargs`, `parallel`, the other
+runners of the feed table, under `env` or `sudo` too) gets words the gate
+cannot see: they arrive on the runner's input. So `echo ~ | xargs cp -rt OUT`,
+`echo ~ | xargs mv -t OUT`, `ln -st`, `install -t`, `parallel cp -rt OUT` and
+`echo ~ | xargs cat` read or move a copy with no word of the line naming it
+(`xargs -I{} cp -r {} OUT` already denied: the placeholder is a word the
+gate cannot tell). With a live copy registered, a fed program **touches every
+copy, unless the pipeline's producer is provably confined**: it prints only
+names the gate can place, and none of them is, holds or lies inside a copy.
+The producer is the first command of the pipeline, read through the
+filters between it and the runner:
+
+- `git` `ls-files`, `diff`, `diff-index`, `diff-files` and `ls-tree` with
+  `--name-only` or `--name-status`, and `status --porcelain` or `--short`,
+  with every word known, no `-c` of an unsafe key, `--git-dir`,
+  `--work-tree`, `--format`, `--pretty`, `--output` or `--no-index`: confined
+  when git's directory (`-C` applied) and each path word are not at, under
+  or above a copy (the placement `gitSpots` gives a git command that is not
+  quiet).
+- `find P...` and `fd`, with no action (`-exec`, `-printf`, `-ls`,
+  `-fprint`), no link followed (`-L`, `-H`, `-follow`) and, for `fd`, only
+  options that select what it lists: confined when each path it walks (the
+  working directory by default) is not at, under or above a copy. `ls`,
+  with no option but the flags that print one name per line (`-1aAdFprtSUvX`
+  and the like, not `-R` or `-l`): the same, and the runner's working
+  directory too, for `ls` prints names relative to the folder it lists.
+- `echo` and `printf` with every word known and no glob: the text they
+  print is cut as the runner cuts it (blanks for `xargs`, lines for
+  `parallel`, NUL for `-0`, and at blanks too) and each piece is placed as a
+  path. A quote or a backslash in the text, which `xargs` reads, is not
+  confined, nor is a piece that starts with `-` or `@`: to the program fed
+  it is an option (`echo -T LL | xargs tar -cO`) or an `@file`, not a name.
+- `rg -l` (`--files-with-matches`) and `rg --files`, and `grep -rl`
+  (`-r -l`, `-lr`, `--recursive --files-with-matches`), by an option table
+  alone: `rg` with `-i -F -w -S -l -0 -g -t -e` and their long forms and
+  `--hidden`, `grep` with `-r` (not `-R`) `-l -i -F -E -w -e` and
+  `--include=`, `--exclude=`, `--exclude-dir=`. An option not in the table
+  (`rg -L`, `--follow`, `--pre`, `-z`, `--search-zip`, `--json`; `grep -R`,
+  `-L`, `-f`), a missing `-l` (or `grep -r`), or a word the gate cannot tell
+  is not confined. The first operand is the pattern unless `-e` or `--files`;
+  the rest are paths, placed as `find`'s are, the working directory by
+  default.
+- The filters `sort`, `uniq`, `head`, `tail` and `grep` pass lines whole, and
+  keep the confinement only with the options in a short table and no file
+  operand (`grep PATTERN`, `grep -e P`, `grep -f L` read the pipe; `grep -o`,
+  `-r`, `-l`, `-c`, `-n`, `head -c`, `sort L` do not). `cut`, `sed` and `awk`
+  are not filters here: they can make a path from the pieces of one, and
+  `cut -d/ -f1-3` of an absolute path names a folder above it. A redirection
+  on a stage, a group or subshell or substitution in the line (the flat list
+  of commands cannot tell its stages from a pipeline's) or a producer the
+  gate does not know is not confined.
+- Anything else, no pipe at all, a file on the input (`xargs cat < L`,
+  `xargs -a L`, `parallel -a L`, `::::`), a here-document or here-string, an
+  input cut some other way (`-d` other than newline or NUL, `--colsep`,
+  `--pipe`), a replacement string that is part of a word (`{}/..`, parallel's
+  `{.}` and `{//}`), or a runner whose options the gate cannot read, is not
+  confined.
+
+A runner whose program only prints its arguments gets no feed spot, whatever
+the input: `xargs` with no program, `xargs echo` and `xargs printf` (also
+under `env`). `git log --oneline | head | xargs echo` and `cat files.txt |
+xargs` are allowed; the words and redirections of the line are placed as
+usual, so `xargs echo < COPY/x` still denies. A runner whose options the gate
+cannot read, and `parallel` (even `parallel echo`: its options are not read
+apart from the program), is still a feed.
+
+And `cp`, `mv`, `ln`, `install`, `rsync` and `tee` have no quiet word when a
+runner feeds them, or when `find` or `fd -exec` runs them: their words are
+not all in the line. So `git ls-files | xargs gofmt -l`, `find src -name
+'*.go' | xargs wc -l`, `printf 'a\n' | xargs echo` and `ls | head` stay
+allowed with a copy registered elsewhere in the home folder. The costs:
+`git ls-files | cut -c4- | xargs ...` and the same with `sed` or `awk` deny,
+as does `xargs cp -t ~ f` (no quiet destination) while a copy is registered,
+and any fed program from a pipeline the gate cannot read.
+
+*Name lists.* A program that reads the names it works on from a file (or
+from the input) gets words the gate cannot see, as a fed program does, and
+**touches every copy** without any condition on the list: `xargs -a L`,
+`--arg-file`, `parallel -a L` and `::::`, `xargs cat < L`, `tar -T L` and
+`--files-from` (`--verbatim-files-from`, `-T` in any cluster, `bsdtar` and
+`gtar` too), `--files0-from` of `wc`, `sort` and `du`, `rsync --files-from`,
+`cpio` and `pax` (they read names from the input), `zip -@` and the `@file` of
+`7z` and `rar`. Long options are matched by prefix (three characters or
+more). `grep -f L` reads patterns, not names, and is not one, and **writing**
+a list is not either: `find ~ -name '*.abf' -print0 > L` is a lister, and
+stays allowed (the listing's names are schema). The cost is a `tar -T` with a
+list that is harmless, such as `tar cf x -T files.txt`, which denies while a
+copy is registered.
+
+*Symbolic links.* The text of a symbolic link is read when the link is
+followed, against the folder the link is in, not the working directory of the
+`ln` that made it: `ln -s a/stage1 $H/L` from elsewhere makes `$H/L` a path
+into `$H/a/stage1`, and `cat $H/L/.pbi/cache.abf` names no copy. For `ln -s`
+(`--symbolic` and its abbreviations, `-s` in a cluster), each source's text is
+placed against each destination's folder and against the destination itself
+(under `-t`, or when it is an existing directory), as well as against the
+working directory, cleaned first (`copy/.` and `copy/.//.` name `copy`; a
+word that only ends in `/.` is a path, not the `.` builtin as a program). An
+absolute text is placed once. A source or destination
+that cannot be told, or options the gate does not understand (any two words
+may then be a source and a destination), count as touching every copy. The
+cost is `ln -s work ~/L` and the like, whose text holds a copy once placed
+against the home folder, which deny; a link to a sibling of a copy is
+allowed.
+
 *Listing.* **A listing with a working copy, or a path in it, as an
 operand denies** (`ls`, `stat`, `du`, `tree`, `find` that only tests
 names). Principle 1 allows listing a protected root, since names are
@@ -880,6 +992,21 @@ changes nothing. An entry the store would refuse to add (the home folder,
 say), written by hand, still protects what it names. The registry is read
 for every call the gate decides.
 
+*The cache by name.* A stale entry is skipped, and everything above leans
+on the registry finding the copy: a copy a person (or a call that slipped
+through) moved reads at a path no entry names. As a backstop, **while any
+entry exists, stale or not**, a Read, a Grep path, or a word of a program not
+known to leave its words unread (the quiet allowlist's complement) that
+names a path ending in `/.pbi/cache.abf` denies with `working-copy`, in any
+repository or none, whether or not the path is a registered copy ("the call
+reads a Power BI Desktop data cache (.pbi/cache.abf), ..."). The path is
+placed as any is (`..`, `~`, symlinks); a Write, `echo`, `test`, `ls` and
+`rm` of it are not reads. This is the same file the local-state rule keeps
+unread inside a protected root, now by name outside one. The cost is a
+person's own PBIP project outside every repository: while a working copy is
+registered, the agent cannot read that project's `.pbi/cache.abf` either,
+which it could not usefully do anyway. With no entry at all the rule is off.
+
 *The message.* The class is `working-copy` (pbipx only). The message is
 fixed, and prints a path only as `<working copy>/<path inside it>` with
 each segment displayed as a finding displays a name (a segment with the
@@ -891,6 +1018,35 @@ cannot be vetted.", "`<working copy>` is a Power BI Desktop working copy,
 working copy, ..." for a path above one, a word that cannot be placed or a
 line that spells one. The hint ends it: "Leave it out of the call: a
 person works there in Power BI Desktop."
+
+*Limits (a program text that builds a path at run time).* Besides the
+interpreters named below, the gate does not read these, and they pass:
+`awk '{system("cat " $0)}' L` and `sed 's/^/cat /e' L` over a list of names;
+`rsync` or `scp` of `host:path` to the local machine; a name in a producer's
+tree that holds whitespace, which a default `xargs` cuts into pieces that
+resolve against another folder, a name in that tree that starts with `-` or
+`@`, which the fed program takes as an option, and a symlink in that tree, for
+`find P | xargs` without `-0`; a Grep or `grep -r` over a folder above the
+`.pbi` of a copy whose entry is stale (the name backstop catches a path
+that ends in
+`.pbi/cache.abf`, not a search that finds it); a sourced script (`source f`,
+`. f`), which can `cd` into a copy or set `CDPATH` unseen, the same as any
+script the gate is not shown; and a variable name built from expansions
+(`CDP${E}ATH`, `CDPAT{H,}`). A further cost: a link whose text goes up to
+a folder that holds a copy, such as `ln -s .. sub/up` in a repository
+directly under a home folder that holds one, denies. And these denials,
+which an honest line can meet: with an approved adopted repository or a
+copy registered, an input redirection from a word the gate cannot tell
+denies, even outside the repository (`python3 x.py < "$IN"`), and so do
+`~+`, `~-`, `~N` and `~user` at a word start; a line with `$'` or `$"` and
+a later bare-name `cd` denies. A deny whose line holds a `cd` judged from the
+folder before it as well (one not directly followed by `&&`) ends with a fixed
+sentence saying that a `cd` joined with `&&` is judged from its target alone;
+it holds no source text. Not placed against the folder a program is told to
+work in, for want of a small change: the operands of `env -C DIR cmd` and of
+`tar -C DIR` (`env -C work/other cat ../stage1/x`), which are placed against
+the working directory; the `-C` word itself is placed, so a folder at or above
+a copy denies.
 
 *Not covered.* The gate cannot see a path an interpreter builds at run
 time inside a script it is not shown, a glob attached to a short option
@@ -953,16 +1109,52 @@ path, is denied with `event-error`: the call cannot be judged.
     the words of a `for`, `select` or `case` list run nothing;
   - `cd X` and `pushd X` with a literal target move the working directory
     for the commands after them (a subshell's scope is not kept: the move
-    carries forward). `cd` to a target that cannot be told (`cd $X`,
-    `cd -` with no earlier `cd`, `popd`, a bare name while `CDPATH` is set,
-    `cd` with `HOME` unknown, a target with an unquoted glob character
-    such as `cd pb*`, which the shell expands to a directory the gate
-    cannot tell: also after `builtin`, `command`, `cd -P`, `pushd`,
-    `chdir` and in a subshell) makes it unknown;
+    carries forward). A `cd` can fail (a mistyped folder name), so unless
+    it is directly followed by `&&` (what follows then runs only if it
+    worked), the working directory for the commands after it is the old one
+    and the new one: `cd nosuch; cat work/stage1/x` is judged in both. After
+    `cd x && a`, the commands after the chain (`; b`) are judged in the old
+    directory too, and after `cd a || cd b` in any of the three. A `cd`
+    on the right of a pipe runs in a subshell (`true | cd w && cat f`), and one
+    after `||` is skipped when the left side succeeds (`test -d w || cd /tmp
+    && a`), so it is widened even when chained with `&&`, and a subshell's
+    `cd` (`(cd x) && a`) does not carry out of it: `a` is judged in the old
+    directory too. `cd x && a` itself, where the `cd` has nothing `||`
+    before it, is judged in the new directory only. The cost is a line like `cd
+    sql; rg x` in an adopted repository, whose `rg` is also judged from the
+    folder it started in. `cd` to a target
+    that cannot be told (`cd $X`,
+    `cd -` with no earlier `cd`, `popd`, a bare name while `CDPATH` is set
+    in the gate's environment or may be set by the line itself (the name
+    appears anywhere but as `$CDPATH` or `${CDPATH}`, quotes and backslashes
+    removed first, so `CDP""ATH` counts, and a line with `$'` or `$"` is
+    not fixed: `export`, `declare`,
+    `read`, `printf -v`, a prefix assignment, `env`; or the line holds an
+    `eval`, which can set it by a name built at run time; a sourced file is
+    a script the gate is not shown, and is not judged; the cost is that a
+    bare or quoted mention of the word on a line with a later bare-name `cd`
+    denies while a copy is registered (`cd tools && git commit -m "fix the
+    CDPATH docs"`); a path that
+    starts with `./` or `../` is still told), `cd` with `HOME` unknown,
+    a target with an unquoted glob character such as `cd pb*`, which the
+    shell expands to a directory the gate cannot tell: also after
+    `builtin`, `command`, `cd -P`, `pushd`, `chdir` and in a subshell) makes
+    it unknown;
   - `~`, `$HOME`, `${HOME}` (the gate process's home directory), `$PWD`,
     `${PWD}` (the working directory as the line leaves it) and `$OLDPWD`
     are expanded; any other expansion (`$X`, `${X:-y}`, `$1`, `$(...)`,
-    backticks) leaves its word unknown;
+    backticks) leaves its word unknown. An unquoted tilde prefix other than
+    a plain `~` (`~+`, `~-`, `~N`, `~+N`, `~-N`, which bash takes from `PWD`,
+    `OLDPWD` and the directory stack, and `~user`), at the start of a word or
+    after `=` or `:` in an assignment, where bash expands it, marks the line
+    uncertain, the fail-closed state below: it is denied with
+    `internal-error` in an adopted repository and as touching every working
+    copy. `a~+`, `~+x`, `--opt=~+/x`, a quoted or an escaped `~+` are
+    literal, as in bash. Nothing in the corpus uses `~user`; the cost is a
+    `cd ~-`, which denies;
+  - an input redirection's target the gate cannot tell (`tr a b < "$X"`) is a
+    word the command reads, whatever the command is, for a working copy as
+    for an adopted repository;
   - brace expansion is done as bash does it, before anything else reads
     the word: an unquoted `{...}` with a comma at its top level gives
     each alternative (`{a,b}`, `x{,.bak}`, nested ones expanded too), and

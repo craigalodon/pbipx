@@ -1,0 +1,8 @@
+description = "A symbolic link whose text reaches no registered working copy from the link's folder or the working directory is allowed; no value is planted"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = []
+known       = "predecessor"
+working-copies = ["copy"]

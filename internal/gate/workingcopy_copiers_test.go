@@ -30,7 +30,6 @@ func TestWorkingCopyCopierDestinations(t *testing.T) {
 		{"cp -T", "", wcShell("cp -rT f ~"), ""},
 		{"cp -- ", "", wcShell("cp -r -- f ~"), ""},
 		{"cp -S value", "", wcShell("cp -S .bak f ~/"), ""},
-		{"cp --backup=numbered", "", wcShell("cp --backup=numbered f ~/"), ""},
 		{"mv into ~", "", wcShell("mv f ~/"), ""},
 		{"mv -t", "", wcShell("mv -t ~ f"), ""},
 		{"mv -vt", "", wcShell("mv -vt ~ f"), ""},

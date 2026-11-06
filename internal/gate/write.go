@@ -208,7 +208,14 @@ func ctlVarsFixed(line string) bool {
 			return false
 		}
 	}
-	for _, name := range controlVarNames {
+	return onlyReferenced(line, controlVarNames)
+}
+
+// onlyReferenced reports whether each of names appears in line only as a
+// reference, $NAME or ${NAME}, and never as a longer name: not assigned,
+// exported, read or passed to anything that sets a variable.
+func onlyReferenced(line string, names []string) bool {
+	for _, name := range names {
 		for from := 0; ; {
 			i := strings.Index(line[from:], name)
 			if i < 0 {
@@ -229,6 +236,28 @@ func ctlVarsFixed(line string) bool {
 		}
 	}
 	return true
+}
+
+// cdpathFixed reports whether a shell line provably does not set CDPATH, so
+// only the gate's own environment decides whether cd takes a bare name from
+// another folder: the name appears only as a reference (onlyReferenced), and
+// the line holds no eval, which can set it by a name built at run time. A
+// sourced file is a script the gate is not shown, the same limit as any other
+// script, and is not judged here.
+func cdpathFixed(line string) bool {
+	// $'...' and $"..." quote a name too, and $'\x41' spells a letter.
+	if strings.Contains(line, "$'") || strings.Contains(line, `$"`) {
+		return false
+	}
+	// Quotes and backslashes inside a name do not change it to the shell:
+	// export CDP""ATH=x sets CDPATH.
+	line = strings.NewReplacer(`"`, "", `'`, "", `\`, "").Replace(line)
+	for _, tok := range lineTokens(line) {
+		if tok == "eval" {
+			return false
+		}
+	}
+	return onlyReferenced(line, []string{"CDPATH"})
 }
 
 // psCtlVarsFixed is ctlVarsFixed for PowerShell: each name, in any case,
