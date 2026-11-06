@@ -37,6 +37,11 @@ func TestWorkingCopyCDPATH(t *testing.T) {
 		{"a backslash in the name", "", wcShell(`export CDP\ATH=$HOME/work; cd copy; cat model.txt`), wc},
 		{"a quoted assignment", "", wcShell(`"CDPATH"=$HOME/work cd copy; cat model.txt`), wc},
 
+		{"an ANSI-C quoted name", "", wcShell(`export $'CDPATH'=$HOME/work; cd copy; cat model.txt`), wc},
+		{"a locale quoted name", "", wcShell(`export $"CDPATH"=$HOME/work; cd copy; cat model.txt`), wc},
+		{"an escaped letter in an ANSI-C name", "", wcShell(`export $'CDP\x41TH'=$HOME/work; cd copy; cat model.txt`), wc},
+		{"a mention in a message", "", wcShell(`cd tools && git commit -m "fix the CDPATH docs"; cat model.txt`), wc},
+
 		// Allowed: a sourced file is a script the gate is not shown, the same
 		// limit as any other script.
 		{"source then cd", "", wcShell("source .venv/bin/activate && cd tools && cat x"), ""},

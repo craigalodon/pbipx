@@ -245,6 +245,10 @@ func onlyReferenced(line string, names []string) bool {
 // sourced file is a script the gate is not shown, the same limit as any other
 // script, and is not judged here.
 func cdpathFixed(line string) bool {
+	// $'...' and $"..." quote a name too, and $'\x41' spells a letter.
+	if strings.Contains(line, "$'") || strings.Contains(line, `$"`) {
+		return false
+	}
 	// Quotes and backslashes inside a name do not change it to the shell:
 	// export CDP""ATH=x sets CDPATH.
 	line = strings.NewReplacer(`"`, "", `'`, "", `\`, "").Replace(line)

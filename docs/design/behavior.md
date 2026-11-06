@@ -1032,9 +1032,9 @@ that ends in
 `.pbi/cache.abf`, not a search that finds it); a sourced script (`source f`,
 `. f`), which can `cd` into a copy or set `CDPATH` unseen, the same as any
 script the gate is not shown; and a variable name built from expansions
-(`CDP${E}ATH`). A further cost: a link whose text goes up to a folder that
-holds a copy, such as `ln -s .. sub/up` in a repository directly under a
-home folder that holds one, denies.
+(`CDP${E}ATH`, `CDPAT{H,}`). A further cost: a link whose text goes up to
+a folder that holds a copy, such as `ln -s .. sub/up` in a repository
+directly under a home folder that holds one, denies.
 
 *Not covered.* The gate cannot see a path an interpreter builds at run
 time inside a script it is not shown, a glob attached to a short option
@@ -1101,10 +1101,14 @@ path, is denied with `event-error`: the call cannot be judged.
     `cd -` with no earlier `cd`, `popd`, a bare name while `CDPATH` is set
     in the gate's environment or may be set by the line itself (the name
     appears anywhere but as `$CDPATH` or `${CDPATH}`, quotes and backslashes
-    removed first, so `CDP""ATH` counts: `export`, `declare`,
+    removed first, so `CDP""ATH` counts, and a line with `$'` or `$"` is
+    not fixed: `export`, `declare`,
     `read`, `printf -v`, a prefix assignment, `env`; or the line holds an
     `eval`, which can set it by a name built at run time; a sourced file is
-    a script the gate is not shown, and is not judged; a path that
+    a script the gate is not shown, and is not judged; the cost is that a
+    bare or quoted mention of the word on a line with a later bare-name `cd`
+    denies while a copy is registered (`cd tools && git commit -m "fix the
+    CDPATH docs"`); a path that
     starts with `./` or `../` is still told), `cd` with `HOME` unknown,
     a target with an unquoted glob character such as `cd pb*`, which the
     shell expands to a directory the gate cannot tell: also after
