@@ -971,6 +971,21 @@ changes nothing. An entry the store would refuse to add (the home folder,
 say), written by hand, still protects what it names. The registry is read
 for every call the gate decides.
 
+*The cache by name.* A stale entry is skipped, and everything above leans
+on the registry finding the copy: a copy a person (or a call that slipped
+through) moved reads at a path no entry names. As a backstop, **while any
+entry exists, stale or not**, a Read, a Grep path, or a word of a program not
+known to leave its words unread (the quiet allowlist's complement) that
+names a path ending in `/.pbi/cache.abf` denies with `working-copy`, in any
+repository or none, whether or not the path is a registered copy ("the call
+reads a Power BI Desktop data cache (.pbi/cache.abf), ..."). The path is
+placed as any is (`..`, `~`, symlinks); a Write, `echo`, `test`, `ls` and
+`rm` of it are not reads. This is the same file the local-state rule keeps
+unread inside a protected root, now by name outside one. The cost is a
+person's own PBIP project outside every repository: while a working copy is
+registered, the agent cannot read that project's `.pbi/cache.abf` either,
+which it could not usefully do anyway. With no entry at all the rule is off.
+
 *The message.* The class is `working-copy` (pbipx only). The message is
 fixed, and prints a path only as `<working copy>/<path inside it>` with
 each segment displayed as a finding displays a name (a segment with the

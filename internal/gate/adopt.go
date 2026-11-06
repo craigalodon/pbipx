@@ -60,6 +60,9 @@ type spot struct {
 	// all: for working copies alone; the call moves or links a path it
 	// cannot tell, which could be a folder above any copy.
 	all bool
+	// reads: for working copies alone; the call reads the path (a Read's or
+	// a Grep's, a word of a program not known to leave its words unread).
+	reads bool
 }
 
 // finder finds the adopted repositories one call touches.
@@ -447,6 +450,11 @@ func (f *finder) findSpots() (spots []spot, unknown bool) {
 			}
 		}
 	}
+	if ev.Tool == Read || ev.Tool == Search {
+		for i := range spots {
+			spots[i].reads = true
+		}
+	}
 	return spots, unknown
 }
 
@@ -538,7 +546,7 @@ func probeShell(cwd, home, line string, m *msysSession) (*walker, []spot, bool) 
 			}
 			bare := lists || mover && !xw.redirect || quiet[wi]
 			for _, a := range abss {
-				spots = append(spots, spot{path: a, container: true, bare: bare, prose: xw.message && !w.redefines})
+				spots = append(spots, spot{path: a, container: true, bare: bare, prose: xw.message && !w.redefines, reads: !quiet[wi] && !xw.message})
 			}
 			// A path attached to a short option (-C/dir, -I/dir/x) is placed
 			// for working copies only: it is a limit of the adoption finder

@@ -1,0 +1,8 @@
+description = "A reader's word that ends in .pbi/cache.abf denies while any working copy is registered, whether or not the folder is one, in case the copy was moved and its entry is stale; no value is planted"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []
+known       = "predecessor"
+working-copies = ["copy"]

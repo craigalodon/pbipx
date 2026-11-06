@@ -523,7 +523,8 @@ func TestShellNested(t *testing.T) {
 		{"zsh -o opt -c", sh("zsh -o extendedglob -c 'git show'"), gate.ReasonGitContent, gate.ReasonGitContent},
 		{"eval", sh("eval 'git log -p'"), gate.ReasonGitContent, gate.ReasonGitContent},
 		{"eval words", sh("eval git log -p"), gate.ReasonGitContent, gate.ReasonGitContent},
-		{"eval moves the directory", sh("eval 'cd sql'; rg x"), "", ""},
+		// eval can set CDPATH unseen, so the bare name it cds to is not told (cdpathFixed).
+		{"eval moves the directory", sh("eval 'cd sql'; rg x"), "", gate.ReasonFinding},
 		{"sh -c does not", sh("sh -c 'cd sql'; rg x"), "", gate.ReasonFinding},
 		{"too deep", shIn("sql", "eval eval eval eval eval eval ls"), gate.ReasonInternalError, gate.ReasonInternalError},
 		{"not too deep", shIn("sql", "eval eval eval ls"), "", ""},
