@@ -936,7 +936,9 @@ into `$H/a/stage1`, and `cat $H/L/.pbi/cache.abf` names no copy. For `ln -s`
 (`--symbolic` and its abbreviations, `-s` in a cluster), each source's text is
 placed against each destination's folder and against the destination itself
 (under `-t`, or when it is an existing directory), as well as against the
-working directory. An absolute text is placed once. A source or destination
+working directory, cleaned first (`copy/.` and `copy/.//.` name `copy`; a
+word that only ends in `/.` is a path, not the `.` builtin as a program). An
+absolute text is placed once. A source or destination
 that cannot be told, or options the gate does not understand (any two words
 may then be a source and a destination), count as touching every copy. The
 cost is `ln -s work ~/L` and the like, whose text holds a copy once placed

@@ -2421,9 +2421,9 @@ func commandIdx(args []string) (name string, rest []string, under []string, skip
 				for j < len(args) && strings.HasPrefix(args[j], "-") {
 					j++
 				}
-				// A word "." after a program is a path (gofmt -l .), not the
+				// A word "." or ending in "/." after a program is a path (gofmt -l ., ln -s ../x/. L), not the
 				// dot-source builtin it would be as a command.
-				if j < len(args) && args[j] != "." && judged(progName(args[j])) {
+				if j < len(args) && args[j] != "." && progName(args[j]) != "." && judged(progName(args[j])) {
 					under = append(under, base)
 					i = j
 					continue
