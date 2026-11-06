@@ -23,7 +23,7 @@ func holdsWidenedCd(line string) bool {
 			name = w.text
 			break
 		}
-		if (name == "cd" || name == "pushd" || name == "chdir") && (!c.andNext || c.prevOp == '|') {
+		if (name == "cd" || name == "pushd" || name == "chdir") && (!c.andNext || c.prevOp == '|' || c.pipeIn) {
 			return true
 		}
 	}

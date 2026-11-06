@@ -3769,8 +3769,9 @@ func mayHaveFailed(v view, c simple, st *cwdState, before, old []string) []strin
 		return nil
 	}
 	// A cd after || is skipped when the left side succeeds: what follows it
-	// then runs in the folder before it, even if it is chained with &&.
-	if c.andNext && c.prevOp != '|' {
+	// then runs in the folder before it, even if it is chained with &&. One on
+	// the right of a pipe runs in a subshell, and does not carry at all.
+	if c.andNext && c.prevOp != '|' && !c.pipeIn {
 		return unionDirs(old, before)
 	}
 	st.dirs = unionDirs(st.dirs, unionDirs(before, old))

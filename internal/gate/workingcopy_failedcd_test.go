@@ -45,6 +45,12 @@ func TestWorkingCopyFailedCd(t *testing.T) {
 		{"<(cd) && cat", h, wcShell("cat <(cd work) && cat work/copy/model.txt"), wc},
 		{"cd && (cd) && cat", h, wcShell("cd work && (cd other) && cat copy/model.txt"), wc},
 
+		// A cd on the right of a pipe runs in a subshell.
+		{"a | cd && cat", h, wcShell("true | cd work && cat work/copy/model.txt"), wc},
+		{"a | pushd && cat", h, wcShell("true | pushd work && cat work/copy/model.txt"), wc},
+		{"a | cd && ls && cat", h, wcShell("ls | cd work && ls && cat work/copy/model.txt"), wc},
+		{"a |& cd && cat", h, wcShell("true |& cd work && cat work/copy/model.txt"), wc},
+
 		// Unchanged.
 		{"cd || a, from outside", "", wcShell("cd sub || true; cat model.txt"), ""},
 		{"cd && cd && a", h, wcShell("cd nosuch && cd deeper && cat work/copy/model.txt"), ""},

@@ -1115,6 +1115,7 @@ path, is denied with `event-error`: the call cannot be judged.
     and the new one: `cd nosuch; cat work/stage1/x` is judged in both. After
     `cd x && a`, the commands after the chain (`; b`) are judged in the old
     directory too, and after `cd a || cd b` in any of the three. A `cd`
+    on the right of a pipe runs in a subshell (`true | cd w && cat f`), and one
     after `||` is skipped when the left side succeeds (`test -d w || cd /tmp
     && a`), so it is widened even when chained with `&&`, and a subshell's
     `cd` (`(cd x) && a`) does not carry out of it: `a` is judged in the old
