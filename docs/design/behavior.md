@@ -890,6 +890,16 @@ filters between it and the runner:
   path. A quote or a backslash in the text, which `xargs` reads, is not
   confined, nor is a piece that starts with `-` or `@`: to the program fed
   it is an option (`echo -T LL | xargs tar -cO`) or an `@file`, not a name.
+- `rg -l` (`--files-with-matches`) and `rg --files`, and `grep -rl`
+  (`-r -l`, `-lr`, `--recursive --files-with-matches`), by an option table
+  alone: `rg` with `-i -F -w -S -l -0 -g -t -e` and their long forms and
+  `--hidden`, `grep` with `-r` (not `-R`) `-l -i -F -E -w -e` and
+  `--include=`, `--exclude=`, `--exclude-dir=`. An option not in the table
+  (`rg -L`, `--follow`, `--pre`, `-z`, `--search-zip`, `--json`; `grep -R`,
+  `-L`, `-f`), a missing `-l` (or `grep -r`), or a word the gate cannot tell
+  is not confined. The first operand is the pattern unless `-e` or `--files`;
+  the rest are paths, placed as `find`'s are, the working directory by
+  default.
 - The filters `sort`, `uniq`, `head`, `tail` and `grep` pass lines whole, and
   keep the confinement only with the options in a short table and no file
   operand (`grep PATTERN`, `grep -e P`, `grep -f L` read the pipe; `grep -o`,

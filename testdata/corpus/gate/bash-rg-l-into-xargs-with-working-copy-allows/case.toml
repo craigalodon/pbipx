@@ -1,0 +1,8 @@
+description = "rg -l over a folder with no working copy in or above it is a confined producer for xargs; no value is planted"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = []
+known       = "predecessor"
+working-copies = ["copy"]

@@ -181,6 +181,26 @@ func (w *walker) producerSpots(pv view, consumer view, feed runnerFeed) ([]spot,
 			}
 		}
 		return out, true
+	case "rg", "grep":
+		operands, ok := s.searchOperands(pv, nameSearches[pv.name])
+		if !ok {
+			return nil, false
+		}
+		for _, xw := range operands {
+			abss, unk := s.wordSpellings(pv, xw)
+			if unk {
+				return nil, false
+			}
+			for _, a := range abss {
+				out = append(out, spot{path: a, container: true, only: true})
+			}
+		}
+		if len(operands) == 0 {
+			for _, d := range pv.cwd.dirs {
+				out = append(out, spot{path: d, container: true, only: true})
+			}
+		}
+		return out, true
 	case "ls":
 		if !lsPlain(pv.rest) {
 			return nil, false
