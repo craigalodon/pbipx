@@ -35,6 +35,7 @@ const maxCommands = 20000
 // in a message: it can carry anything.
 func (s *setup) shell(line string) Decision {
 	s.ctlVars = ctlVarsFixed(line)
+	s.cdpath = !cdpathFixed(line) || os.Getenv("CDPATH") != ""
 	top := splitCommands(line)
 	w := &walker{s: s, cache: newSpellCache(), text: line}
 	st := cwdState{dirs: []string{s.cwd}}
@@ -2375,7 +2376,7 @@ func (s *setup) chdir(v view, st *cwdState) {
 		return
 	default:
 		target = args[i]
-		if os.Getenv("CDPATH") != "" && !isAbs(target) && !dotRelative(target) {
+		if (s.cdpath || os.Getenv("CDPATH") != "") && !isAbs(target) && !dotRelative(target) {
 			// CDPATH can take a bare name anywhere.
 			unknown()
 			return

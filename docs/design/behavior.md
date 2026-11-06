@@ -1045,11 +1045,16 @@ path, is denied with `event-error`: the call cannot be judged.
   - `cd X` and `pushd X` with a literal target move the working directory
     for the commands after them (a subshell's scope is not kept: the move
     carries forward). `cd` to a target that cannot be told (`cd $X`,
-    `cd -` with no earlier `cd`, `popd`, a bare name while `CDPATH` is set,
-    `cd` with `HOME` unknown, a target with an unquoted glob character
-    such as `cd pb*`, which the shell expands to a directory the gate
-    cannot tell: also after `builtin`, `command`, `cd -P`, `pushd`,
-    `chdir` and in a subshell) makes it unknown;
+    `cd -` with no earlier `cd`, `popd`, a bare name while `CDPATH` is set
+    in the gate's environment or may be set by the line itself (the name
+    appears anywhere but as `$CDPATH` or `${CDPATH}`: `export`, `declare`,
+    `read`, `printf -v`, a prefix assignment, `env`; or the line holds an
+    `eval`, `source` or `.` command, which can set it unseen; a path that
+    starts with `./` or `../` is still told), `cd` with `HOME` unknown,
+    a target with an unquoted glob character such as `cd pb*`, which the
+    shell expands to a directory the gate cannot tell: also after
+    `builtin`, `command`, `cd -P`, `pushd`, `chdir` and in a subshell) makes
+    it unknown;
   - `~`, `$HOME`, `${HOME}` (the gate process's home directory), `$PWD`,
     `${PWD}` (the working directory as the line leaves it) and `$OLDPWD`
     are expanded; any other expansion (`$X`, `${X:-y}`, `$1`, `$(...)`,

@@ -1,0 +1,8 @@
+description = "A line that sets CDPATH leaves a later bare cd unknown, so a read after it could be in a registered working copy and denies; no value is planted"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []
+known       = "predecessor"
+working-copies = ["copy"]

@@ -487,7 +487,7 @@ func (f *finder) placeable() bool {
 // be told, a word a reading command has that cannot be placed, a line
 // nested too deep or built at run time, or one too long to judge.
 func probeShell(cwd, home, line string, m *msysSession) (*walker, []spot, bool) {
-	ps := &setup{cwd: cwd, home: home, fold: foldCase, ctlVars: ctlVarsFixed(line), msys: m}
+	ps := &setup{cwd: cwd, home: home, fold: foldCase, ctlVars: ctlVarsFixed(line), cdpath: !cdpathFixed(line) || os.Getenv("CDPATH") != "", msys: m}
 	w := &walker{s: ps, cache: newSpellCache(), probe: true}
 	st := cwdState{dirs: []string{cwd}}
 	w.commands(line, splitCommands(line), &st, 0)
