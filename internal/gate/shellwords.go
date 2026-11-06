@@ -1211,7 +1211,16 @@ func (t *tokenizer) run(start int, sub bool) (int, bool) {
 			}
 			// A leading ~, up to the first /, is the tilde prefix.
 			j := i + 1
-			for j < len(rs) && isNameRune(rs[j]) {
+			signed := j < len(rs) && (rs[j] == '+' || rs[j] == '-')
+			if signed {
+				// ~+ and ~- (PWD and OLDPWD) and ~+N and ~-N (the
+				// directory stack): a prefix of its own to bash.
+				j++
+				for j < len(rs) && isDigit(rs[j]) {
+					j++
+				}
+			}
+			for j < len(rs) && !signed && isNameRune(rs[j]) {
 				j++
 			}
 			if j < len(rs) && !strings.ContainsRune("/ \t\r\n;&|()<>", rs[j]) {

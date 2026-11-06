@@ -1076,7 +1076,9 @@ path, is denied with `event-error`: the call cannot be judged.
   - `~`, `$HOME`, `${HOME}` (the gate process's home directory), `$PWD`,
     `${PWD}` (the working directory as the line leaves it) and `$OLDPWD`
     are expanded; any other expansion (`$X`, `${X:-y}`, `$1`, `$(...)`,
-    backticks) leaves its word unknown;
+    backticks, and a leading `~+`, `~-`, `~+N` or `~-N`, which bash takes from
+    `PWD`, `OLDPWD` and the directory stack) leaves its word unknown (`a~+`
+    and a quoted `~+` are literal);
   - brace expansion is done as bash does it, before anything else reads
     the word: an unquoted `{...}` with a comma at its top level gives
     each alternative (`{a,b}`, `x{,.bak}`, nested ones expanded too), and
