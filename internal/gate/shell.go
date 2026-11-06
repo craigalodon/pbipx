@@ -3768,7 +3768,9 @@ func mayHaveFailed(v view, c simple, st *cwdState, before, old []string) []strin
 	if !st.known() || before == nil {
 		return nil
 	}
-	if c.andNext {
+	// A cd after || is skipped when the left side succeeds: what follows it
+	// then runs in the folder before it, even if it is chained with &&.
+	if c.andNext && c.prevOp != '|' {
 		return unionDirs(old, before)
 	}
 	st.dirs = unionDirs(st.dirs, unionDirs(before, old))

@@ -114,6 +114,9 @@ type simple struct {
 	// andNext is set for a command directly followed by &&: what follows
 	// runs only if it succeeds.
 	andNext bool
+	// prevOp is '&' or '|' when the command directly follows && or ||: after
+	// ||, it is skipped when what is before it succeeds.
+	prevOp byte
 	// background is set for a command run in the background (cmd &).
 	background bool
 	// uncertain says, on every command of a line the tokenizer cannot
@@ -176,6 +179,8 @@ type tokenizer struct {
 	here     bool // the redirection is a here-string
 	rw       bool // the redirection reads and writes (<>)
 	pipe     bool // the next command reads this one's output
+	// nextOp is the && or || ('&' or '|') just read, for the next command.
+	nextOp byte
 	// litBuf is the literal part being read, open when litOpen.
 	litBuf    strings.Builder
 	litOpen   bool
@@ -761,6 +766,7 @@ func (t *tokenizer) endCommand() {
 	t.endWord()
 	if len(t.cur.words) > 0 || len(t.cur.subs) > 0 || len(t.cur.docs) > 0 || t.cur.arith {
 		t.cur.pipeIn = t.pipe
+		t.cur.prevOp, t.nextOp = t.nextOp, 0
 		t.cur.procSub = slices.Contains(t.parens, true)
 		t.cur.arrayElems = len(t.arrays) > 0 && t.arrays[len(t.arrays)-1]
 		t.cmds = append(t.cmds, t.cur)
@@ -1095,14 +1101,10 @@ func (t *tokenizer) run(start int, sub bool) (int, bool) {
 			t.pipe = false
 			if i+1 < len(rs) && rs[i+1] == '&' {
 				i++
-				k := i - 2
-				for k >= 0 && (rs[k] == ' ' || rs[k] == '\t') {
-					k--
-				}
-				// A subshell's cd, (cd x) && a, is taken to carry forward.
-				if len(t.cmds) > n || len(t.cmds) > 0 && k >= 0 && rs[k] == ')' {
+				if len(t.cmds) > n {
 					t.cmds[len(t.cmds)-1].andNext = true
 				}
+				t.nextOp = '&'
 			} else if len(t.cmds) > 0 && n <= len(t.cmds) {
 				// A background job runs alongside what follows.
 				t.cmds[len(t.cmds)-1].background = true
@@ -1117,6 +1119,7 @@ func (t *tokenizer) run(start int, sub bool) (int, bool) {
 			t.pipe = true
 			if i+1 < len(rs) && rs[i+1] == '|' {
 				t.pipe = false
+				t.nextOp = '|'
 				i++
 			} else if i+1 < len(rs) && rs[i+1] == '&' {
 				i++

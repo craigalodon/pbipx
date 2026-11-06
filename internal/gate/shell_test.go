@@ -69,7 +69,8 @@ func TestShellWorkingDirectory(t *testing.T) {
 		{"cd -P", sh("cd -P sql && rg x"), "", ""},
 		{"pushd away", sh("pushd sql && rg x"), "", ""},
 		{"popd", sh("pushd sql && popd && ls"), "", gate.ReasonFinding},
-		{"cd in a subshell carries forward", sh("(cd sql) && rg x"), "", ""},
+		// A subshell's cd does not carry out of it: rg runs in the old folder too.
+		{"cd in a subshell does not carry forward", sh("(cd sql) && rg x"), "", gate.ReasonFinding},
 		{"the directory before a cd", sh("rg x; cd sql"), "", gate.ReasonFinding},
 		{"cd to an absolute path outside", sh("cd " + bashPath(home) + " && rg x"), "", ""},
 	})

@@ -1102,8 +1102,12 @@ path, is denied with `event-error`: the call cannot be judged.
     worked), the working directory for the commands after it is the old one
     and the new one: `cd nosuch; cat work/stage1/x` is judged in both. After
     `cd x && a`, the commands after the chain (`; b`) are judged in the old
-    directory too, and after `cd a || cd b` in any of the three. `cd x && a`
-    itself is judged in the new directory only. The cost is a line like `cd
+    directory too, and after `cd a || cd b` in any of the three. A `cd`
+    after `||` is skipped when the left side succeeds (`test -d w || cd /tmp
+    && a`), so it is widened even when chained with `&&`, and a subshell's
+    `cd` (`(cd x) && a`) does not carry out of it: `a` is judged in the old
+    directory too. `cd x && a` itself, where the `cd` has nothing `||`
+    before it, is judged in the new directory only. The cost is a line like `cd
     sql; rg x` in an adopted repository, whose `rg` is also judged from the
     folder it started in. `cd` to a target
     that cannot be told (`cd $X`,
