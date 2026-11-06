@@ -145,7 +145,7 @@ only real changes.
 - [x] A synthetic sample PBIP project to demonstrate with, in
   `examples/sample-pbip/`, with a planted finding and an acceptance test;
   Desktop opened and saved it 2026-11-05
-- [ ] Docs written for analysts, not maintainers
+- [x] Docs written for analysts, not maintainers: [guide](guide.md)
 - [x] Repository made public (2026-11-06); issue tracker and `SECURITY.md`
   contact live
 
