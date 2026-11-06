@@ -42,17 +42,19 @@ never prints a value it finds.
 | `pbipx stage` / `collect` | Round-trip a project between the repository and a working copy outside it that Power BI Desktop can open. |
 | `pbipx perf` | Summarize Performance Analyzer exports without printing query text. |
 
-The commands ship as one binary for Windows, macOS and Linux, with no runtime
-to install.
+The commands ship as one binary, with no runtime to install. Releases are built
+for Linux. The code is written for Windows and macOS too, and is tested on them
+only by hand, so on those build it from source with Go.
 
 ## Install
 
 Pre-alpha: releases are for trying it out, not for relying on it.
 
 1. From the [releases page](https://github.com/craigalodon/pbipx/releases),
-   download the archive for your platform (`pbipx_<version>_<os>_<arch>`,
-   `.zip` for Windows, `.tar.gz` otherwise), `checksums.txt` and
-   `checksums.txt.sigstore.json`.
+   download the archive for your architecture
+   (`pbipx_<version>_linux_<arch>.tar.gz`), `checksums.txt` and
+   `checksums.txt.sigstore.json`. v0.1.1 and earlier also have Windows and
+   macOS archives.
 2. Check that `checksums.txt` was signed by this repository's release
    workflow, with [cosign](https://docs.sigstore.dev/cosign/system_config/installation/):
 
@@ -72,8 +74,6 @@ Pre-alpha: releases are for trying it out, not for relying on it.
    sha256sum --ignore-missing -c checksums.txt
    ```
 
-   On macOS, use `shasum -a 256 --ignore-missing -c checksums.txt`; on
-   Windows, compare `Get-FileHash` with the line in `checksums.txt`.
 4. Extract the binary and put it on your `PATH` in a directory outside any
    repository, such as `~/.local/bin`. A binary inside the working tree can be
    changed by the agent it is meant to check

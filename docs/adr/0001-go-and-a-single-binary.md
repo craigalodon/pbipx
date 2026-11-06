@@ -45,3 +45,21 @@ liability.
 **.NET, for the Tabular Object Model.** TOM would parse models for us, but it
 ties the tool to a runtime and to the model formats TOM supports, and the
 scanner needs positions and literals that TOM normalizes away.
+
+## Amendment (2026-11-06): Linux runs and builds only, for now
+
+CI and release builds run on Linux only. Windows and macOS runners cost more
+than a project with one user, on Linux, can justify, and the runners for macOS
+were often unavailable besides.
+
+- **CI** tests on Linux. `GOOS=windows` and `GOOS=darwin` vet steps keep the code
+  for those systems compiling. Tests that only run there do not run in CI.
+- **Releases** ship Linux archives for `amd64` and `arm64`. v0.1.1 and earlier
+  have the others. People on Windows or macOS build from source.
+- **The code stays cross-platform.** Path handling for Windows and Git Bash, and
+  case folding for macOS, are kept. The maintainer tests them by hand on their
+  own machines, at the points a change touches them. So a Windows or macOS
+  regression can reach a release; this is the cost, accepted for now.
+
+Going back takes a matrix in `ci.yml` and `goos` in `.goreleaser.yaml`. Do it
+when there are users on those systems.
