@@ -536,7 +536,8 @@ func probeShell(cwd, home, line string, m *msysSession) (*walker, []spot, bool) 
 		}
 		for wi, xw := range v.words {
 			abss, unk := ps.wordSpellings(v, xw)
-			if unk && reader && !optionOnly(xw.text) {
+			// A word a redirection reads from is read by whatever it is for.
+			if unk && (reader || xw.redirect && xw.input && !xw.here) && !optionOnly(xw.text) {
 				unknown = true
 			}
 			if unk && (v.name == "mv" || v.name == "ln") && !quiet[wi] && !xw.redirect && !optionOnly(xw.text) {

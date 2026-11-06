@@ -221,6 +221,7 @@ func (t *tokenizer) doubt(why string) {
 const (
 	whyUnclosed   = "the command line leaves a case, a parenthesis or a here-document open, so what it runs cannot be told"
 	whyStrayParen = "a ) closes nothing"
+	whyTilde      = "a tilde prefix other than ~ (~+, ~-, ~N, ~user) names a folder the gate cannot tell"
 	whyDelim      = "a here-document delimiter holds a $, a backtick or a newline"
 	whyBodyJoin   = "a backslash-newline in an unquoted here-document body changes which line ends it, or splits a $( or a backtick"
 	whyBash52     = "a here-document inside a command substitution has a line that starts with its delimiter, " +
@@ -1205,29 +1206,33 @@ func (t *tokenizer) run(start int, sub bool) (int, bool) {
 			}
 			i = end
 		case '~':
-			if t.inWord {
+			// A leading ~, up to the first /, is the tilde prefix; in an
+			// assignment (NAME=~x, NAME=a:~x) one after = or : is too.
+			assign := t.inWord && i > 0 && (rs[i-1] == '=' || rs[i-1] == ':') && assignmentBefore(rs, i)
+			if t.inWord && !assign {
 				t.lit("~", false)
 				continue
 			}
-			// A leading ~, up to the first /, is the tilde prefix.
-			j := i + 1
-			signed := j < len(rs) && (rs[j] == '+' || rs[j] == '-')
-			if signed {
-				// ~+ and ~- (PWD and OLDPWD) and ~+N and ~-N (the
-				// directory stack): a prefix of its own to bash.
-				j++
-				for j < len(rs) && isDigit(rs[j]) {
-					j++
-				}
+			stops := "/ \t\r\n;&|()<>"
+			if assign {
+				stops += ":"
 			}
-			for j < len(rs) && !signed && isNameRune(rs[j]) {
-				j++
-			}
-			if j < len(rs) && !strings.ContainsRune("/ \t\r\n;&|()<>", rs[j]) {
+			j, ok := tildeEnd(rs, i, stops)
+			if !ok {
 				t.lit("~", false)
 				continue
 			}
 			user := string(rs[i+1 : j])
+			if user != "" {
+				// ~+, ~-, ~N, ~+N, ~-N and ~user name a folder that bash
+				// takes from PWD, OLDPWD, the stack or the user database:
+				// wherever bash expands one, the line is not told.
+				t.doubt(whyTilde)
+			}
+			if assign {
+				t.lit("~", false)
+				continue
+			}
 			t.expansion(tildePart, user, "~"+user)
 			i = j - 1
 		default:
@@ -2546,4 +2551,40 @@ func progName(w string) string {
 		b = strings.ToLower(b)
 	}
 	return b
+}
+
+// tildeEnd is the end of the tilde prefix that starts at rs[i] == '~': after
+// ~+ or ~- and the digits of a stack index, or the name of a user, when what
+// follows ends the prefix (one of stops) or the line. ok is false when it
+// does not, and the ~ is a literal.
+func tildeEnd(rs []rune, i int, stops string) (end int, ok bool) {
+	j := i + 1
+	signed := j < len(rs) && (rs[j] == '+' || rs[j] == '-')
+	if signed {
+		j++
+		for j < len(rs) && isDigit(rs[j]) {
+			j++
+		}
+	}
+	for j < len(rs) && !signed && isNameRune(rs[j]) {
+		j++
+	}
+	if j < len(rs) && !strings.ContainsRune(stops, rs[j]) {
+		return 0, false
+	}
+	return j, true
+}
+
+// assignmentBefore reports whether the word that holds rs[i] began as an
+// assignment, NAME=..., where bash also expands a tilde after = and :.
+func assignmentBefore(rs []rune, i int) bool {
+	k := i
+	for k > 0 && !strings.ContainsRune(" \t\r\n;&|()<>", rs[k-1]) {
+		k--
+	}
+	eq := k
+	for eq < i && isNameRune(rs[eq]) {
+		eq++
+	}
+	return eq > k && eq < i && rs[eq] == '=' && !isDigit(rs[k])
 }

@@ -155,7 +155,7 @@ func TestShellVariables(t *testing.T) {
 		{"$OLDPWD", sh("cd work && cd ../notes && cat $OLDPWD/pbip/B.Report/" + leakInReport), gate.ReasonFinding},
 		{"$OLDPWD away", sh("cd sql && cd ../notes && cat $OLDPWD/clean.sql"), ""},
 		{"~ away", sh("cat ~/other/readme.md"), ""},
-		{"~user is unknown", sh("cat ~nobody/x"), gate.ReasonFinding},
+		{"~user is not told", sh("cat ~nobody/x"), gate.ReasonInternalError},
 		{"single quotes keep $HOME literal", sh("cat '$HOME/x'"), ""},
 	})
 	runBoth(t, []both{

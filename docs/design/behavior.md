@@ -1113,9 +1113,18 @@ path, is denied with `event-error`: the call cannot be judged.
   - `~`, `$HOME`, `${HOME}` (the gate process's home directory), `$PWD`,
     `${PWD}` (the working directory as the line leaves it) and `$OLDPWD`
     are expanded; any other expansion (`$X`, `${X:-y}`, `$1`, `$(...)`,
-    backticks, and a leading `~+`, `~-`, `~+N` or `~-N`, which bash takes from
-    `PWD`, `OLDPWD` and the directory stack) leaves its word unknown (`a~+`
-    and a quoted `~+` are literal);
+    backticks) leaves its word unknown. An unquoted tilde prefix other than
+    a plain `~` (`~+`, `~-`, `~N`, `~+N`, `~-N`, which bash takes from `PWD`,
+    `OLDPWD` and the directory stack, and `~user`), at the start of a word or
+    after `=` or `:` in an assignment, where bash expands it, marks the line
+    uncertain, the fail-closed state below: it is denied with
+    `internal-error` in an adopted repository and as touching every working
+    copy. `a~+`, `~+x`, `--opt=~+/x`, a quoted or an escaped `~+` are
+    literal, as in bash. Nothing in the corpus uses `~user`; the cost is a
+    `cd ~-`, which denies;
+  - an input redirection's target the gate cannot tell (`tr a b < "$X"`) is a
+    word the command reads, whatever the command is, for a working copy as
+    for an adopted repository;
   - brace expansion is done as bash does it, before anything else reads
     the word: an unquoted `{...}` with a comma at its top level gives
     each alternative (`{a,b}`, `x{,.bak}`, nested ones expanded too), and
