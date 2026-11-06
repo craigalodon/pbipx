@@ -1024,9 +1024,11 @@ interpreters named below, the gate does not read these, and they pass:
 `awk '{system("cat " $0)}' L` and `sed 's/^/cat /e' L` over a list of names;
 `rsync` or `scp` of `host:path` to the local machine; a name in a producer's
 tree that holds whitespace, which a default `xargs` cuts into pieces that
-resolve against another folder, and a symlink in that tree, for `find P |
-xargs` without `-0`; a Grep or `grep -r` over a folder above the `.pbi` of a
-copy whose entry is stale (the name backstop catches a path that ends in
+resolve against another folder, a name in that tree that starts with `-` or
+`@`, which the fed program takes as an option, and a symlink in that tree, for
+`find P | xargs` without `-0`; a Grep or `grep -r` over a folder above the
+`.pbi` of a copy whose entry is stale (the name backstop catches a path
+that ends in
 `.pbi/cache.abf`, not a search that finds it); a sourced script (`source f`,
 `. f`), which can `cd` into a copy or set `CDPATH` unseen, the same as any
 script the gate is not shown; and a variable name built from expansions
