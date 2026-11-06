@@ -57,6 +57,9 @@ type spot struct {
 	prose     bool
 	// only: for working copies alone; the adoption finder ignores it.
 	only bool
+	// all: for working copies alone; the call moves or links a path it
+	// cannot tell, which could be a folder above any copy.
+	all bool
 }
 
 // finder finds the adopted repositories one call touches.
@@ -522,6 +525,11 @@ func probeShell(cwd, home, line string, m *msysSession) (*walker, []spot, bool) 
 			abss, unk := ps.wordSpellings(v, xw)
 			if unk && reader && !optionOnly(xw.text) {
 				unknown = true
+			}
+			if unk && (v.name == "mv" || v.name == "ln") && !quiet[wi] && !xw.redirect && !optionOnly(xw.text) {
+				// A source that cannot be told could be a folder above a
+				// copy: moving or linking it escapes the registered path.
+				spots = append(spots, spot{only: true, all: true})
 			}
 			bare := lists || mover && !xw.redirect || quiet[wi]
 			for _, a := range abss {

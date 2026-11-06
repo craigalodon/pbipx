@@ -83,12 +83,24 @@ func quietWords(s *setup, v view) map[int]bool {
 		}
 		return q
 	}
-	dests, _ := s.destinations(v)
-	for i, xw := range v.words {
+	// A destination, by its position among the words and never by its text:
+	// the words of cp, mv, ln, install, rsync and tee are read with their
+	// options (copyArgs), and a command with one the gate does not fully
+	// understand has no quiet word. A source is never quiet: mv and ln move
+	// or link the folder itself, cp and rsync read it.
+	if _, copier := copyOptSpecs[v.name]; copier {
+		dests, _, ok := copyArgs(v.name, s.restWords(v))
+		if !ok {
+			return q
+		}
 		for _, d := range dests {
-			if xw.text == d.text && xw.redirect == d.redirect {
-				q[i] = true
-			}
+			q[rest[d.idx]] = true
+		}
+	}
+	for i, xw := range v.words {
+		if xw.redirect && !xw.here && (!xw.input || xw.rw) {
+			// An output redirection, or <>.
+			q[i] = true
 		}
 	}
 	var flags []string // options whose next word is a directory to work in

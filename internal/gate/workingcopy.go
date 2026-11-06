@@ -67,6 +67,9 @@ func (f *finder) workingCopyDeny() *Decision {
 		if sp.prose {
 			continue
 		}
+		if sp.all {
+			return &reach
+		}
 		for _, a := range []string{sp.path, resolve(sp.path)} {
 			for _, root := range roots {
 				if rel, in := relTo(root, a, f.fold); in {

@@ -3077,34 +3077,33 @@ func (s *setup) destinations(v view) (dests, sources []xword) {
 		}
 	}
 	rest := s.restWords(v)
-	switch withValue, copier := copiers[v.name]; {
-	case copier:
-		var pos []xword
-		for i := 0; i < len(rest); i++ {
-			a := rest[i].text
-			switch {
-			case a == "-t" || a == "--target-directory":
-				if i+1 < len(rest) {
-					dests = append(dests, rest[i+1])
+	_, copier := copiers[v.name]
+	switch {
+	case copier || v.name == "tee":
+		// By position: the words of cp, mv, ln, install, rsync and tee are
+		// read with their options (copyArgs). One the gate does not
+		// understand leaves every word that is not an option both a
+		// destination and a source.
+		ds, srcs, ok := copyArgs(v.name, rest)
+		if !ok {
+			for _, xw := range rest {
+				if !strings.HasPrefix(xw.text, "-") {
+					dests = append(dests, xw)
+					sources = append(sources, xw)
 				}
-				i++
-			case strings.HasPrefix(a, "--target-directory="):
-				dests = append(dests, xword{text: strings.TrimPrefix(a, "--target-directory="), known: rest[i].known})
-			case len(a) == 2 && a[0] == '-' && strings.IndexByte(withValue, a[1]) >= 0:
-				i++
-			case strings.HasPrefix(a, "-") && a != "-":
-			default:
-				pos = append(pos, rest[i])
 			}
+			break
 		}
-		if len(pos) >= 2 {
-			dests = append(dests, pos[len(pos)-1])
-			sources = pos[:len(pos)-1]
+		for _, d := range ds {
+			w := rest[d.idx]
+			if d.skip > 0 {
+				w = xword{text: w.text[d.skip:], known: w.known}
+			}
+			dests = append(dests, w)
 		}
-	case v.name == "tee":
-		for _, xw := range rest {
-			if !strings.HasPrefix(xw.text, "-") {
-				dests = append(dests, xw)
+		if v.name != "tee" {
+			for _, i := range srcs {
+				sources = append(sources, rest[i])
 			}
 		}
 	case v.name == "dd":
