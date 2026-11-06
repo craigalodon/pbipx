@@ -510,6 +510,10 @@ func probeShell(cwd, home, line string, m *msysSession) (*walker, []spot, bool) 
 		lists := v.cwd.known() && lister(v.name, v.rest)
 		mover := v.name == "cd" || v.name == "pushd" || v.name == "chdir"
 		quiet := quietWords(ps, v)
+		if readsNameList(v) {
+			// Names read from a list the gate does not see.
+			spots = append(spots, spot{only: true, all: true})
+		}
 		// A git, hub or pbipx command that is not known to read nothing
 		// under the folders it runs in or names touches them, as does the
 		// directory -C moves git to, which relative words are placed against.

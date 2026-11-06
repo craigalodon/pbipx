@@ -1,0 +1,8 @@
+description = "xargs -a reads the names it runs on from a list file the gate does not read, so with a copy registered it touches every copy; no value is planted"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []
+known       = "predecessor"
+working-copies = ["copy"]

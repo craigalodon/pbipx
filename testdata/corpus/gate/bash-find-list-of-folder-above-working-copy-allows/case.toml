@@ -1,0 +1,8 @@
+description = "A list of the names under the folder above a registered working copy, written to a file, only lists names and is allowed; no value is planted"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = []
+known       = "predecessor"
+working-copies = ["copy"]

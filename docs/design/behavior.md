@@ -907,6 +907,20 @@ allowed with a copy registered elsewhere in the home folder. The costs:
 as does `xargs cp -t ~ f` (no quiet destination) while a copy is registered,
 and any fed program from a pipeline the gate cannot read.
 
+*Name lists.* A program that reads the names it works on from a file (or
+from the input) gets words the gate cannot see, as a fed program does, and
+**touches every copy** without any condition on the list: `xargs -a L`,
+`--arg-file`, `parallel -a L` and `::::`, `xargs cat < L`, `tar -T L` and
+`--files-from` (`--verbatim-files-from`, `-T` in any cluster, `bsdtar` and
+`gtar` too), `--files0-from` of `wc`, `sort` and `du`, `rsync --files-from`,
+`cpio` and `pax` (they read names from the input), `zip -@` and the `@file` of
+`7z` and `rar`. Long options are matched by prefix (three characters or
+more). `grep -f L` reads patterns, not names, and is not one, and **writing**
+a list is not either: `find ~ -name '*.abf' -print0 > L` is a lister, and
+stays allowed (the listing's names are schema). The cost is a `tar -T` with a
+list that is harmless, such as `tar cf x -T files.txt`, which denies while a
+copy is registered.
+
 *Listing.* **A listing with a working copy, or a path in it, as an
 operand denies** (`ls`, `stat`, `du`, `tree`, `find` that only tests
 names). Principle 1 allows listing a protected root, since names are
