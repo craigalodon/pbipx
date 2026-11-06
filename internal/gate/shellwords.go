@@ -1895,11 +1895,17 @@ func ansiC(rs []rune, i int) (string, int, bool) {
 				b.WriteRune(e)
 				continue
 			}
-			n, _ := strconv.ParseUint(string(rs[j+1:k]), 16, 32)
 			if e == 'x' {
-				b.WriteByte(byte(n)) //nolint:gosec // G115: at most two hex digits, which fit a byte
+				n, _ := strconv.ParseUint(string(rs[j+1:k]), 16, 8)
+				b.WriteByte(byte(n))
 			} else {
-				b.WriteRune(rune(n)) //nolint:gosec // G115: at most eight hex digits, parsed to 32 bits; bash takes them as is
+				// Past Unicode's range it cannot spell a path.
+				n, _ := strconv.ParseUint(string(rs[j+1:k]), 16, 32)
+				if n <= unicode.MaxRune {
+					b.WriteRune(rune(n))
+				} else {
+					b.WriteRune(unicode.ReplacementChar)
+				}
 			}
 			j = k - 1
 		case '0', '1', '2', '3', '4', '5', '6', '7':
@@ -1907,8 +1913,12 @@ func ansiC(rs []rune, i int) (string, int, bool) {
 			for k < len(rs) && k-j < 3 && '0' <= rs[k] && rs[k] <= '7' {
 				k++
 			}
-			n, _ := strconv.ParseUint(string(rs[j:k]), 8, 32)
-			b.WriteByte(byte(n)) //nolint:gosec // G115: bash keeps the low byte of three octal digits, as this does
+			// Bash keeps the low byte of three octal digits, as shifting does.
+			var n byte
+			for _, d := range rs[j:k] {
+				n = n<<3 | byte(d-'0') //nolint:gosec // G115: an octal digit, checked by the loop above
+			}
+			b.WriteByte(n)
 			j = k - 1
 		case '\\', '\'', '"', '?':
 			b.WriteRune(e)

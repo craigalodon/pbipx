@@ -3,10 +3,20 @@
 Tools for developing Power BI projects (PBIP) with AI coding agents, without
 leaking the data Power BI Desktop writes into them.
 
-> **Status: pre-alpha (v0.1).** `scan`, `scan-text`, `explain`, `gate`,
-> `init` and `policy` work; `stage`, `collect` and `perf` are not built yet.
-> Try it on synthetic projects before relying on it. See
+> **Status: pre-alpha (v0.1).** `scan`, `scan-text`, `baseline`, `explain`,
+> `gate`, `init` and `policy` work; `stage`, `collect` and `perf` are not
+> built yet. Try it on synthetic projects before relying on it. See
 > [docs/ROADMAP.md](docs/ROADMAP.md).
+
+## Start here
+
+- **New to pbipx?** Read the [guide for analysts](docs/guide.md). It covers
+  setup, what a refusal looks like and what to do about it.
+- **Want to try it safely?** Copy the sample project and follow its
+  walkthrough: [`examples/sample-pbip/`](examples/sample-pbip/README.md). It
+  is invented, and holds no real data.
+- **Ready to install?** See [Install](#install) and
+  [Getting started](#getting-started) below.
 
 ## The problem
 
@@ -29,18 +39,22 @@ pbipx finds those values before they are committed or read. It also covers the
 SQL, YAML and Markdown that usually live beside a Power BI project, and it
 never prints a value it finds.
 
-## What it will do
+## Commands
 
-| Command | Purpose |
-|---|---|
-| `pbipx scan` | Scan a repository, staged changes or files for persisted values and personal-data shapes. Block or warn, with a reviewed baseline for warnings. |
-| `pbipx scan-text` | Scan prose such as commit messages and notes for personal-data shapes. |
-| `pbipx gate` | An AI agent's pre-tool hook. It denies reads of files with findings, and of files it cannot vet, in the repositories set up for pbipx (`pbipx init`, or an approved policy), and leaves every other repository alone. |
-| `pbipx policy approve` / `status` | Approve the repository's policy at a terminal, or report whether it is approved. The gate denies every call until a person approves the policy, and again after any change to it. |
-| `pbipx policy unenroll` | Remove this clone's setup for the gate on this machine, at a terminal, for every work tree of the clone. The gate stops protecting its files from agents, and every approval is forgotten. Refused while the work tree has a `.pbipx.toml`. |
-| `pbipx explain` | Print a report's or model's structure (pages, visuals, tables, columns, measures, relationships, sources) with no values. |
-| `pbipx stage` / `collect` | Round-trip a project between the repository and a working copy outside it that Power BI Desktop can open. |
-| `pbipx perf` | Summarize Performance Analyzer exports without printing query text. |
+The Status column says what exists in this version.
+
+| Command | Status | Purpose |
+|---|---|---|
+| `pbipx scan` | works | Scan a repository, staged changes or files for persisted values and personal-data shapes. Block or warn, with a reviewed baseline for warnings. |
+| `pbipx scan-text` | works | Scan prose such as commit messages and notes for personal-data shapes. |
+| `pbipx baseline` | works | Record a warning as accepted until a date (`record`), and check that none has expired (`verify`). |
+| `pbipx gate` | works | An AI agent's pre-tool hook. It denies reads of files with findings, and of files it cannot vet, in the repositories set up for pbipx (`pbipx init`, or an approved policy), and leaves every other repository alone. |
+| `pbipx init` | works | Write a starting policy and register the gate as an agent hook. |
+| `pbipx policy approve` / `status` | works | Approve the repository's policy at a terminal, or report whether it is approved. The gate denies every call until a person approves the policy, and again after any change to it. |
+| `pbipx policy unenroll` | works | Remove this clone's setup for the gate on this machine, at a terminal, for every work tree of the clone. The gate stops protecting its files from agents, and every approval is forgotten. Refused while the work tree has a `.pbipx.toml`. |
+| `pbipx explain` | works | Print a report's or model's structure (pages, visuals, tables, columns, measures, relationships, sources) with no values. |
+| `pbipx stage` / `collect` | not built yet | Round-trip a project between the repository and a working copy outside it that Power BI Desktop can open. Designed in [docs/design/stage-collect.md](docs/design/stage-collect.md). |
+| `pbipx perf` | not built yet | Summarize Performance Analyzer exports without printing query text. Specified in [docs/design/perf.md](docs/design/perf.md). |
 
 The commands ship as one binary, with no runtime to install. Releases are built
 for Linux. The code is written for Windows and macOS too, and is tested on them
@@ -131,6 +145,20 @@ The rules everything else follows. The reasoning is in
   so each rule is measured before it ships.
 - **Policy is configuration.** Nothing about a particular organization lives
   in the tool.
+
+## Design documents
+
+For maintainers and the curious.
+
+- [docs/design/principles.md](docs/design/principles.md): the rules, and why.
+- [docs/design/threat-model.md](docs/design/threat-model.md): what pbipx
+  protects, and what it does not.
+- [docs/design/behavior.md](docs/design/behavior.md) and
+  [docs/design/corpus.md](docs/design/corpus.md): how verdicts are decided,
+  and the language-neutral test corpus.
+- [docs/adr/](docs/adr/): decision records.
+- [docs/ROADMAP.md](docs/ROADMAP.md): phases and exit criteria.
+- [CONTRIBUTING.md](CONTRIBUTING.md): working on the code.
 
 ## License
 
