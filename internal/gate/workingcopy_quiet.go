@@ -107,14 +107,13 @@ func quietWords(s *setup, v view) map[int]bool {
 	var prefixes []string
 	switch v.name {
 	case "tar":
-		first := ""
-		if len(v.rest) > 0 {
-			first = v.rest[0]
-		}
-		extract := slices.Contains(v.rest, "--extract") || slices.Contains(v.rest, "--get") ||
-			!strings.HasPrefix(first, "--") && strings.Contains(first, "x")
-		if extract {
-			flags, prefixes = []string{"-C", "--directory"}, []string{"--directory="}
+		// The directory tar works in is quiet only when tar is proven to
+		// extract (tarArgs): any other operation, or an option not
+		// understood, reads it.
+		if extract, dirs, ok := tarArgs(s.restWords(v)); ok && extract {
+			for _, d := range dirs {
+				q[rest[d]] = true
+			}
 		}
 	case "unzip":
 		flags = []string{"-d"}
