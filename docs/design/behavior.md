@@ -764,14 +764,80 @@ search or `find` that goes under it, and a Bash word of a program that
 could read under it. So `grep -r X ~`, `rg X` from the folder above,
 `cp -r ~/work x` (a source) and `tar czf x -C ~ .` deny, and so does a
 program the gate does not know. A word naming a folder above a copy does
-not deny when the program is known to read nothing under it: the
-programs that never read their operands as files (`echo`, `printf`,
-`test`, `[`, `dirname`, `basename`, `export`, `rm`, `mv`, `ls`, `git`,
-and the rest of the `neverReadsOperands` table), a program that opens a
-place (`code`, `open`, `xdg-open`, `explorer`), a destination of `cp`, `mv`,
-`rsync` and the like, and the directory `tar x -C`, `unzip -d` and `wget -P`
-unpack or download into. So `echo ~`, `export X=$HOME`, `cp f ~/`,
-`unzip a.zip -d ~` and `git -C ~ status` are allowed. A path attached to
+not deny only when the program and the word's position are **proven** to
+read nothing under it. This is a short allowlist, and anything the gate
+does not fully understand (an unknown program or option, a word it cannot
+tell) is not quiet. It is not the `neverReadsOperands` table, which answers
+another question (is an operand the gate cannot tell read as a file); the
+allowlist is its own, much smaller one (`wcQuietPrograms`):
+
+- Programs that print their arguments, test or name a path, change the
+  shell's state, or make, remove or change the mode of a file without
+  opening what is below: `echo`, `printf`, `true`, `false`, `:`, `test`,
+  `[`, `[[`, `basename`, `dirname`, `realpath`, `readlink`, `which`,
+  `whereis`, `type`, `cd`, `pushd`, `popd`, `chdir`, `export`, `unset`,
+  `set`, `declare`, `typeset`, `local`, `readonly`, `alias`, `unalias`,
+  `mkdir`, `rmdir`, `touch`, `rm`, `chmod`, `chown`, `chgrp`, `mkfifo`,
+  `unlink`, and the listers (`ls`, `dir`, `vdir`, `stat`, `du`, `df`,
+  `tree`; `find` that only tests names), whose listing is documented
+  below. `mv`, `ln`, `file`, `cat` and the rest are not here.
+- The destination of `cp`, `mv`, `ln`, `install`, `rsync` and `tee`, by its
+  position among the words and never by its text. The options are read as
+  the program reads them: a cluster (`-rt`, `-vrt`, `-nt`), an attached
+  value (`-tDIR`, `--target-directory=DIR`) and a unique prefix of a long
+  option (`--target`, `--target-dir`). A command with an option the gate
+  does not know, an ambiguous prefix, or a word it cannot tell (which could
+  be an option) has no quiet word at all. A **source** is never quiet: `cp`
+  and `rsync` read it, and `mv` and `ln` of a folder above a copy move the
+  copy out of its registered path (the entry is then stale, and a stale
+  entry is skipped) or make a path that reads through to it (`ln -s ~ L`
+  and a read of `L` in the same call). A source of `mv` or `ln` that cannot
+  be told counts as touching every working copy.
+- The directory `tar -C` or `--directory` names, only when tar is proven to
+  extract: the one operation is `x`, as a leading letter bundle (`xzf`,
+  with the values of `f` and `C` following in order), `-x`, `--extract` or
+  `--get`. Any other operation (`-c`, `-r`, `-u`, `-A`, `-t`, `-d`,
+  `--delete`) anywhere, an option the gate does not know, or a word that
+  could be one makes tar a reader. `-fx.tar` names an archive; it is not
+  `x`. And `unzip -d` and `wget -P`, the directory they unpack or download
+  into.
+- `git` and `hub`, only for a read-only subcommand that opens no file
+  below the folder, with every word known and no `-c` of an unsafe key,
+  `--git-dir`, `--work-tree` or alias: `status` (not `-v`), `log` and
+  `show` with no patch (`show` needs `--no-patch`, `-s`, `--stat` or the
+  like; `-p`, `-u`, `-c`, `-L`, `--patch`, `--no-index` and any
+  abbreviation of one deny), `branch` and `tag` that only list, `remote`
+  without a changing subcommand, `rev-parse`, `rev-list`, `describe`,
+  `for-each-ref`, `show-ref`, `merge-base`, `name-rev`, `count-objects`,
+  `var`, `version`, `check-ref-format`, `symbolic-ref` that reads,
+  `reflog` and `worktree list`. Every other subcommand denies with
+  `working-copy` when git's effective directory (`-C`, applied in turn, or
+  the working directory) or a path word it names is at or above a copy:
+  `grep` and `diff --no-index`, `add`, `hash-object`, `archive` and `clone`
+  read files below the folder, and a relative path is placed against the
+  `-C` directory, not the working directory. `git status` in a repository
+  that holds no copy, with no word above one, is unaffected.
+- `pbipx`, by subcommand: `version` and `help` read no operand and are
+  quiet. `scan`, `scan-text`, `explain`, `init`, `policy` and `baseline`
+  read a folder or the repository around the working directory, so their
+  words and the working directory above a copy are not quiet.
+- `code`, `cursor`, `open` and `explorer`, only given operands and no
+  option, every word known: `code --diff`, `--goto`, `--merge`, `code -`,
+  `open -a`, `-f` and `-t` can put content before the agent or run
+  something and are not quiet. `xdg-open` runs whatever handler the system
+  has and is not in the allowlist, so `xdg-open ~` denies above a copy; so
+  does `code --diff ~ x`, which is a small cost.
+
+So `echo ~`, `export X=$HOME`, `cp f ~/`, `mv f ~/`, `unzip a.zip -d ~`,
+`tar xzf a.tgz -C ~` and `git -C ~ status` are allowed, and `cp -rt d ~`,
+`git -C ~ grep --no-index X .`, `mv ~ elsewhere` and `tar -fx.tar -c -C ~ .`
+deny. The cost is a call whose word is above a copy and cannot be told,
+such as `cp "$f" ~/`, which denies while a copy is registered. Moving or
+deleting a registered folder by a means outside the call (a person, another
+program) leaves a stale entry that is skipped; denying the agent's `mv` and
+`ln` of a folder above a copy closes the agent's way to it, and nothing
+further is done about a copy a person moves. `rm` of a folder above a copy
+removes the copy and reads nothing, and stays allowed. A path attached to
 a short option (`make -C<dir>`, `cc -I<dir>/x`, `sort -o<file>`) is
 placed for working copies, which the adoption finder does not do for
 adopted repositories; a glob attached to one is not expanded. A call that
