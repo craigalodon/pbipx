@@ -1,4 +1,4 @@
-# Release builds: one static binary per platform (ADR-0001), with SHA-256
+# Release builds: one static Linux binary per architecture (ADR-0001), with SHA-256
 # checksums signed by Sigstore keyless signing. The release workflow
 # (.github/workflows/release.yml) runs this on a v* tag. To try it locally,
 # without signing or publishing:
@@ -14,7 +14,7 @@ builds:
     binary: pbipx
     env:
       - CGO_ENABLED=0
-    goos: [linux, darwin, windows]
+    goos: [linux]
     goarch: [amd64, arm64]
     # Reproducible: no local paths, no build ids, and file times taken from
     # the commit.
@@ -27,14 +27,12 @@ builds:
 archives:
   - id: pbipx
     formats: [tar.gz]
-    format_overrides:
-      - goos: windows
-        formats: [zip]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
       - README.md
       # The license goes in every archive; matching nothing is not an error.
       - LICENSE*
+      - NOTICE
 
 checksum:
   name_template: checksums.txt
