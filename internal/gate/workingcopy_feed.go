@@ -148,6 +148,11 @@ func (w *walker) producerSpots(pv view, consumer view, feed runnerFeed) ([]spot,
 			if tok == "" {
 				continue
 			}
+			// A piece that starts with - or @ is an option, or an @file, to
+			// the program the runner feeds, not a name.
+			if tok[0] == '-' || tok[0] == '@' {
+				return nil, false
+			}
 			for _, d := range pv.cwd.dirs {
 				place(d, tok)
 			}

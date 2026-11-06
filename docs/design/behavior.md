@@ -888,7 +888,8 @@ filters between it and the runner:
   print is cut as the runner cuts it (blanks for `xargs`, lines for
   `parallel`, NUL for `-0`, and at blanks too) and each piece is placed as a
   path. A quote or a backslash in the text, which `xargs` reads, is not
-  confined.
+  confined, nor is a piece that starts with `-` or `@`: to the program fed
+  it is an option (`echo -T LL | xargs tar -cO`) or an `@file`, not a name.
 - The filters `sort`, `uniq`, `head`, `tail` and `grep` pass lines whole, and
   keep the confinement only with the options in a short table and no file
   operand (`grep PATTERN`, `grep -e P`, `grep -f L` read the pipe; `grep -o`,
