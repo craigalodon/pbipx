@@ -507,6 +507,17 @@ func probeShell(cwd, home, line string, m *msysSession) (*walker, []spot, bool) 
 		lists := v.cwd.known() && lister(v.name, v.rest)
 		mover := v.name == "cd" || v.name == "pushd" || v.name == "chdir"
 		quiet := quietWords(ps, v)
+		// A git, hub or pbipx command that is not known to read nothing
+		// under the folders it runs in or names touches them, as does the
+		// directory -C moves git to, which relative words are placed against.
+		switch {
+		case (v.name == "git" || v.name == "hub") && !gitQuiet(v):
+			spots = append(spots, gitSpots(ps, v)...)
+		case v.name == "pbipx" && !pbipxQuiet(v):
+			for _, d := range v.cwd.dirs {
+				spots = append(spots, spot{path: d, container: true, only: true})
+			}
+		}
 		for wi, xw := range v.words {
 			abss, unk := ps.wordSpellings(v, xw)
 			if unk && reader && !optionOnly(xw.text) {

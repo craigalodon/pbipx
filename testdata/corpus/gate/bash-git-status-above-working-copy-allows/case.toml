@@ -1,0 +1,8 @@
+description = "git status in the folder above a registered working copy opens no file below it, and is allowed; no value is planted"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 0
+sentinels   = []
+known       = "predecessor"
+working-copies = ["copy"]

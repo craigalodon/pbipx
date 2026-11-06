@@ -1,0 +1,8 @@
+description = "git add in the folder above a registered working copy reads the files below it, and denies; no value is planted"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []
+known       = "predecessor"
+working-copies = ["copy"]
