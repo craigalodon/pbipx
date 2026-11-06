@@ -1,0 +1,8 @@
+description = "mv of the folder above a registered working copy moves the copy out of its registered path, and denies; no value is planted"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []
+known       = "predecessor"
+working-copies = ["copy"]

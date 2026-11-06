@@ -1,0 +1,8 @@
+description = "ln -s of the folder above a registered working copy makes a path that reads through to the copy, and denies; no value is planted"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []
+known       = "predecessor"
+working-copies = ["copy"]

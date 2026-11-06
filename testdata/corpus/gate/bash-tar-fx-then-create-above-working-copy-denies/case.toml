@@ -1,0 +1,8 @@
+description = "tar -fx.tar names its archive x.tar and -c creates, so it reads the folder above a registered working copy, and denies; no value is planted"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []
+known       = "predecessor"
+working-copies = ["copy"]

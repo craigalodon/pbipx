@@ -1,0 +1,8 @@
+description = "cp --target is an abbreviation of --target-directory, so the folder above a registered working copy that follows it is a source, and denies; no value is planted"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []
+known       = "predecessor"
+working-copies = ["copy"]
