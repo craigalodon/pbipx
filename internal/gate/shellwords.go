@@ -1899,13 +1899,13 @@ func ansiC(rs []rune, i int) (string, int, bool) {
 				n, _ := strconv.ParseUint(string(rs[j+1:k]), 16, 8)
 				b.WriteByte(byte(n))
 			} else {
-				// Past Unicode's range it cannot spell a path; WriteRune would
-				// write the replacement character for it anyway.
+				// Past Unicode's range it cannot spell a path.
 				n, _ := strconv.ParseUint(string(rs[j+1:k]), 16, 32)
-				if n > unicode.MaxRune {
-					n = unicode.ReplacementChar
+				if n <= unicode.MaxRune {
+					b.WriteRune(rune(n))
+				} else {
+					b.WriteRune(unicode.ReplacementChar)
 				}
-				b.WriteRune(rune(n)) //nolint:gosec // G115: at most unicode.MaxRune, checked above
 			}
 			j = k - 1
 		case '0', '1', '2', '3', '4', '5', '6', '7':
