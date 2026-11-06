@@ -51,7 +51,8 @@ go install github.com/craigalodon/pbipx/cmd/pbipx@latest
 ```
 
 Make sure the folder Go installs into (`~/go/bin` by default) is on your
-`PATH`, and that it is outside any repository. Check it with `pbipx version`.
+`PATH`, and that it is outside any repository. Check it with `pbipx version`,
+which prints `pbipx dev` for a build from source.
 
 ## Try it on the sample first
 
