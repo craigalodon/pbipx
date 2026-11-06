@@ -37,14 +37,9 @@ jobs:
           SKIP: private-terms,private-terms-message
 
   test:
-    strategy:
-      fail-fast: false
-      matrix:
-        # Pull requests and main test on Linux. Windows and macOS minutes
-        # cost more in a private repository, so they run for a release tag
-        # (v*) or a manual run (Actions > ci > Run workflow).
-        os: ${{ (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') && fromJSON('["ubuntu-latest", "windows-latest", "macos-latest"]') || fromJSON('["ubuntu-latest"]') }}
-    runs-on: ${{ matrix.os }}
+    # Linux only (ADR-0001, amendment). The maintainer tests Windows and macOS
+    # by hand; the vet steps below keep that code compiling.
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -55,9 +50,9 @@ jobs:
       - run: git --version
       - run: go build ./...
       - run: go vet ./...
-      # The gate package alone takes about ten minutes under -race on
-      # Windows runners, past go test's default limit.
-      - run: go test -race -timeout 30m ./...
+      - run: GOOS=windows go vet ./...
+      - run: GOOS=darwin go vet ./...
+      - run: go test -race ./...
 
   # Every commit message a pull request adds, scanned as the commit-msg hook
   # would. The repository has no policy of its own; the corpus's generic one

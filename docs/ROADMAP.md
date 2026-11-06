@@ -81,7 +81,8 @@ marked as known differences. None showed a predecessor bug.
 - [x] `pbipx init`: a starting policy and hook configuration for a standard
       PBIP repository, including the managed or user-level hook registration
 - [x] Policy integrity: design, then build (threat model, layer 6; ADR-0006)
-- [x] Release builds for six platforms, with checksums; install docs
+- [x] Release builds, with checksums; install docs (six platforms through
+      v0.1.1, Linux since: ADR-0001, amendment)
 
 **Exit:** the `gate` area passes; a fresh clone of a sample repository, set up
 with `pbipx init`, denies a planted finding through the real hook.
