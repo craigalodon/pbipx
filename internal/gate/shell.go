@@ -1324,6 +1324,9 @@ func (w *walker) commands(line string, cmds []simple, st *cwdState, depth int) {
 	w.lines = append(w.lines, line)
 	var lister *view // a find or fd whose output this pipeline carries
 	var prev *simple // the command before, in this pipeline
+	// oldDirs are the working directories a command may still run in because
+	// a cd before it, chained with &&, may have failed.
+	var oldDirs []string
 	// The stages of a pipeline run together: a change in one and a read in
 	// another, in any order, is a read after the change.
 	// In a line with a group or a subshell, a stage can be a whole group,
@@ -1361,8 +1364,10 @@ func (w *walker) commands(line string, cmds []simple, st *cwdState, depth int) {
 		}
 		c.pipeOut = i+1 < len(cmds) && cmds[i+1].pipeIn
 		w.chain = &pipeChain{cmds: cmds, at: i, line: line}
+		before := st.dirs
 		v := w.simple(c, st, depth)
 		w.chain = nil
+		oldDirs = mayHaveFailed(v, c, st, before, oldDirs)
 		if c.fallback {
 			// The line did not tokenize: what it runs cannot be told.
 			w.setUncertain("the line has an unbalanced quote or a trailing backslash, or nests substitutions too deeply")
@@ -3738,6 +3743,44 @@ func scriptArgs(rest []string, t scriptTool) []int {
 				out = append(out, i)
 				given = true
 			}
+		}
+	}
+	return out
+}
+
+// mayHaveFailed widens the working directory st that a cd or pushd v left,
+// for the commands after it: a cd that fails leaves the old one, and a
+// mistyped folder name is not rare. Unless the cd is directly followed by
+// && (what follows then runs only if it worked), the working directory may
+// be the old one or the new; after a cd chained with &&, it may be the old
+// one once the chain ends (cd x && a; b). before is the directories before
+// v, old those a chain still holds. It returns the directories still
+// pending.
+func mayHaveFailed(v view, c simple, st *cwdState, before, old []string) []string {
+	isCd := v.name == "cd" || v.name == "pushd" || v.name == "chdir"
+	if !isCd {
+		if !c.andNext && len(old) > 0 && st.known() {
+			st.dirs = unionDirs(st.dirs, old)
+			return nil
+		}
+		return old
+	}
+	if !st.known() || before == nil {
+		return nil
+	}
+	if c.andNext {
+		return unionDirs(old, before)
+	}
+	st.dirs = unionDirs(st.dirs, unionDirs(before, old))
+	return nil
+}
+
+// unionDirs is a with the directories of b it lacks, a first.
+func unionDirs(a, b []string) []string {
+	out := slices.Clone(a)
+	for _, d := range b {
+		if !slices.Contains(out, d) {
+			out = append(out, d)
 		}
 	}
 	return out

@@ -1097,7 +1097,16 @@ path, is denied with `event-error`: the call cannot be judged.
     the words of a `for`, `select` or `case` list run nothing;
   - `cd X` and `pushd X` with a literal target move the working directory
     for the commands after them (a subshell's scope is not kept: the move
-    carries forward). `cd` to a target that cannot be told (`cd $X`,
+    carries forward). A `cd` can fail (a mistyped folder name), so unless
+    it is directly followed by `&&` (what follows then runs only if it
+    worked), the working directory for the commands after it is the old one
+    and the new one: `cd nosuch; cat work/stage1/x` is judged in both. After
+    `cd x && a`, the commands after the chain (`; b`) are judged in the old
+    directory too, and after `cd a || cd b` in any of the three. `cd x && a`
+    itself is judged in the new directory only. The cost is a line like `cd
+    sql; rg x` in an adopted repository, whose `rg` is also judged from the
+    folder it started in. `cd` to a target
+    that cannot be told (`cd $X`,
     `cd -` with no earlier `cd`, `popd`, a bare name while `CDPATH` is set
     in the gate's environment or may be set by the line itself (the name
     appears anywhere but as `$CDPATH` or `${CDPATH}`, quotes and backslashes
