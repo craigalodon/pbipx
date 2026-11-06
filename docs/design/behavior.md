@@ -928,6 +928,20 @@ stays allowed (the listing's names are schema). The cost is a `tar -T` with a
 list that is harmless, such as `tar cf x -T files.txt`, which denies while a
 copy is registered.
 
+*Symbolic links.* The text of a symbolic link is read when the link is
+followed, against the folder the link is in, not the working directory of the
+`ln` that made it: `ln -s a/stage1 $H/L` from elsewhere makes `$H/L` a path
+into `$H/a/stage1`, and `cat $H/L/.pbi/cache.abf` names no copy. For `ln -s`
+(`--symbolic` and its abbreviations, `-s` in a cluster), each source's text is
+placed against each destination's folder and against the destination itself
+(under `-t`, or when it is an existing directory), as well as against the
+working directory. An absolute text is placed once. A source or destination
+that cannot be told, or options the gate does not understand (any two words
+may then be a source and a destination), count as touching every copy. The
+cost is `ln -s work ~/L` and the like, whose text holds a copy once placed
+against the home folder, which deny; a link to a sibling of a copy is
+allowed.
+
 *Listing.* **A listing with a working copy, or a path in it, as an
 operand denies** (`ls`, `stat`, `du`, `tree`, `find` that only tests
 names). Principle 1 allows listing a protected root, since names are

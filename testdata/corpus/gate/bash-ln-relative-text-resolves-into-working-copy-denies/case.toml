@@ -1,0 +1,8 @@
+description = "The text of a symbolic link resolves against the link's folder, so a relative text that reaches a registered working copy from there denies, though it is not one from the working directory; no value is planted"
+command     = "gate"
+args        = []
+policy      = "default"
+exit        = 2
+sentinels   = []
+known       = "predecessor"
+working-copies = ["copy"]

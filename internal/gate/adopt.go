@@ -510,6 +510,7 @@ func probeShell(cwd, home, line string, m *msysSession) (*walker, []spot, bool) 
 		lists := v.cwd.known() && lister(v.name, v.rest)
 		mover := v.name == "cd" || v.name == "pushd" || v.name == "chdir"
 		quiet := quietWords(ps, v)
+		spots = append(spots, lnSpots(ps, v)...)
 		if readsNameList(v) {
 			// Names read from a list the gate does not see.
 			spots = append(spots, spot{only: true, all: true})
