@@ -88,7 +88,9 @@ func quietWords(s *setup, v view) map[int]bool {
 	// options (copyArgs), and a command with one the gate does not fully
 	// understand has no quiet word. A source is never quiet: mv and ln move
 	// or link the folder itself, cp and rsync read it.
-	if _, copier := copyOptSpecs[v.name]; copier {
+	// None when a runner feeds the program or find -exec runs it: its words
+	// are not all in the line.
+	if _, copier := copyOptSpecs[v.name]; copier && !v.execd && feedOf(v.argv, v.argvKnown).runner == "" {
 		dests, _, ok := copyArgs(v.name, s.restWords(v))
 		if !ok {
 			return q

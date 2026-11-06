@@ -851,6 +851,62 @@ message included; the words of a git message are not placed as paths.
 Names are compared without regard to case on a file system that folds it
 (macOS, Windows), and exactly elsewhere.
 
+*Fed programs.* A program a runner feeds (`xargs`, `parallel`, the other
+runners of the feed table, under `env` or `sudo` too) gets words the gate
+cannot see: they arrive on the runner's input. So `echo ~ | xargs cp -rt OUT`,
+`echo ~ | xargs mv -t OUT`, `ln -st`, `install -t`, `parallel cp -rt OUT` and
+`echo ~ | xargs cat` read or move a copy with no word of the line naming it
+(`xargs -I{} cp -r {} OUT` already denied: the placeholder is a word the
+gate cannot tell). With a live copy registered, a fed program **touches every
+copy, unless the pipeline's producer is provably confined**: it prints only
+names the gate can place, and none of them is, holds or lies inside a copy.
+The producer is the first command of the pipeline, read through the
+filters between it and the runner:
+
+- `git` `ls-files`, `diff`, `diff-index`, `diff-files` and `ls-tree` with
+  `--name-only` or `--name-status`, and `status --porcelain` or `--short`,
+  with every word known, no `-c` of an unsafe key, `--git-dir`,
+  `--work-tree`, `--format`, `--pretty`, `--output` or `--no-index`: confined
+  when git's directory (`-C` applied) and each path word are not at, under
+  or above a copy (the placement `gitSpots` gives a git command that is not
+  quiet).
+- `find P...` and `fd`, with no action (`-exec`, `-printf`, `-ls`,
+  `-fprint`), no link followed (`-L`, `-H`, `-follow`) and, for `fd`, only
+  options that select what it lists: confined when each path it walks (the
+  working directory by default) is not at, under or above a copy. `ls`,
+  with no option but the flags that print one name per line (`-1aAdFprtSUvX`
+  and the like, not `-R` or `-l`): the same, and the runner's working
+  directory too, for `ls` prints names relative to the folder it lists.
+- `echo` and `printf` with every word known and no glob: the text they
+  print is cut as the runner cuts it (blanks for `xargs`, lines for
+  `parallel`, NUL for `-0`, and at blanks too) and each piece is placed as a
+  path. A quote or a backslash in the text, which `xargs` reads, is not
+  confined.
+- The filters `sort`, `uniq`, `head`, `tail` and `grep` pass lines whole, and
+  keep the confinement only with the options in a short table and no file
+  operand (`grep PATTERN`, `grep -e P`, `grep -f L` read the pipe; `grep -o`,
+  `-r`, `-l`, `-c`, `-n`, `head -c`, `sort L` do not). `cut`, `sed` and `awk`
+  are not filters here: they can make a path from the pieces of one, and
+  `cut -d/ -f1-3` of an absolute path names a folder above it. A redirection
+  on a stage, a group or subshell or substitution in the line (the flat list
+  of commands cannot tell its stages from a pipeline's) or a producer the
+  gate does not know is not confined.
+- Anything else, no pipe at all, a file on the input (`xargs cat < L`,
+  `xargs -a L`, `parallel -a L`, `::::`), a here-document or here-string, an
+  input cut some other way (`-d` other than newline or NUL, `--colsep`,
+  `--pipe`), a replacement string that is part of a word (`{}/..`, parallel's
+  `{.}` and `{//}`), or a runner whose options the gate cannot read, is not
+  confined.
+
+And `cp`, `mv`, `ln`, `install`, `rsync` and `tee` have no quiet word when a
+runner feeds them, or when `find` or `fd -exec` runs them: their words are
+not all in the line. So `git ls-files | xargs gofmt -l`, `find src -name
+'*.go' | xargs wc -l`, `printf 'a\n' | xargs echo` and `ls | head` stay
+allowed with a copy registered elsewhere in the home folder. The costs:
+`git ls-files | cut -c4- | xargs ...` and the same with `sed` or `awk` deny,
+as does `xargs cp -t ~ f` (no quiet destination) while a copy is registered,
+and any fed program from a pipeline the gate cannot read.
+
 *Listing.* **A listing with a working copy, or a path in it, as an
 operand denies** (`ls`, `stat`, `du`, `tree`, `find` that only tests
 names). Principle 1 allows listing a protected root, since names are

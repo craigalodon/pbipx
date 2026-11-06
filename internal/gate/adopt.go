@@ -559,7 +559,7 @@ func probeShell(cwd, home, line string, m *msysSession) (*walker, []spot, bool) 
 			}
 		}
 	}
-	return w, spots, unknown
+	return w, append(spots, w.feedSpots...), unknown
 }
 
 // probeIn is reachesIn for a probe: it records the spellings of p from

@@ -1215,6 +1215,8 @@ type view struct {
 	docOnly bool
 	// cache holds the decision's expanded words and its glob budget.
 	cache *spellCache
+	// execd is set for a command that find or fd -exec runs.
+	execd bool
 }
 
 // changeAt is a git command in the line that changes the repository: its
@@ -1302,6 +1304,13 @@ type walker struct {
 	// under.
 	probe  bool
 	probed []string
+	// feedSpots are, for working copies alone, the spots of the names a
+	// runner feeds a program (judgeFeed); chain locates the command being
+	// read among its line's (consumed by simple); inExec is the depth of
+	// find and fd -exec commands being read.
+	feedSpots []spot
+	chain     *pipeChain
+	inExec    int
 }
 
 // commands reads the simple commands cmds of line, nested depth deep, from
@@ -1350,7 +1359,9 @@ func (w *walker) commands(line string, cmds []simple, st *cwdState, depth int) {
 			prev = nil
 		}
 		c.pipeOut = i+1 < len(cmds) && cmds[i+1].pipeIn
+		w.chain = &pipeChain{cmds: cmds, at: i, line: line}
 		v := w.simple(c, st, depth)
+		w.chain = nil
 		if c.fallback {
 			// The line did not tokenize: what it runs cannot be told.
 			w.setUncertain("the line has an unbalanced quote or a trailing backslash, or nests substitutions too deeply")
@@ -1598,11 +1609,17 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 	s := w.s
 	v := s.viewOf(c, *st, w.ph)
 	v.cache = w.cache
+	v.execd = w.inExec > 0
+	chain := w.chain
+	w.chain = nil
 	// The lines nested in this command are read with the placeholders of
 	// the runners it runs under: they stand for input words there too.
 	feed := feedOf(v.argv, v.argvKnown)
 	defer func(old []string) { w.ph = old }(w.ph)
 	w.ph = slices.Concat(w.ph, feed.placeholders)
+	if w.probe && feed.runner != "" && feed.fromInput {
+		w.judgeFeed(c, v, feed, chain)
+	}
 	// The shell running the lines nested in a shell command is that
 	// shell, whose echo is read as it reads it (echoMayEscape); xpg_echo,
 	// set anywhere in the line, makes bash's echo read escapes.
@@ -1840,9 +1857,11 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 			w.setReach("ssh, su, runuser or machinectl runs a command the gate cannot follow", hintOther)
 		}
 	case "find":
+		w.inExec++
 		for _, exec := range findExecs(v.rest) {
 			w.simple(simple{words: literalWords(exec)}, new(v.cwd.clone()), depth+1)
 		}
+		w.inExec--
 		if findReads(v.rest) {
 			for _, p := range findPaths(v.rest) {
 				w.reachesIn(v.cwd, p, "find runs a command on, or reads, the files it finds")
@@ -1850,9 +1869,11 @@ func (w *walker) simple(c simple, st *cwdState, depth int) view {
 		}
 	case "fd", "fdfind":
 		execs, paths := fdArgs(v.rest)
+		w.inExec++
 		for _, exec := range execs {
 			w.simple(simple{words: literalWords(exec)}, new(v.cwd.clone()), depth+1)
 		}
+		w.inExec--
 		if len(execs) > 0 {
 			for _, p := range paths {
 				w.reachesIn(v.cwd, p, "fd runs a command on the files it finds")
