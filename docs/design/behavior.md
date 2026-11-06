@@ -1001,6 +1001,21 @@ working copy, ..." for a path above one, a word that cannot be placed or a
 line that spells one. The hint ends it: "Leave it out of the call: a
 person works there in Power BI Desktop."
 
+*Limits (a program text that builds a path at run time).* Besides the
+interpreters named below, the gate does not read these, and they pass:
+`awk '{system("cat " $0)}' L` and `sed 's/^/cat /e' L` over a list of names;
+`rsync` or `scp` of `host:path` to the local machine; a name in a producer's
+tree that holds whitespace, which a default `xargs` cuts into pieces that
+resolve against another folder, and a symlink in that tree, for `find P |
+xargs` without `-0`; a Grep or `grep -r` over a folder above the `.pbi` of a
+copy whose entry is stale (the name backstop catches a path that ends in
+`.pbi/cache.abf`, not a search that finds it); a sourced script (`source f`,
+`. f`), which can `cd` into a copy or set `CDPATH` unseen, the same as any
+script the gate is not shown; and a variable name built from expansions
+(`CDP${E}ATH`). A further cost: a link whose text goes up to a folder that
+holds a copy, such as `ln -s .. sub/up` in a repository directly under a
+home folder that holds one, denies.
+
 *Not covered.* The gate cannot see a path an interpreter builds at run
 time inside a script it is not shown, a glob attached to a short option
 (`-I<dir>/*`), nor a PowerShell variable that is not
@@ -1068,7 +1083,8 @@ path, is denied with `event-error`: the call cannot be judged.
     appears anywhere but as `$CDPATH` or `${CDPATH}`, quotes and backslashes
     removed first, so `CDP""ATH` counts: `export`, `declare`,
     `read`, `printf -v`, a prefix assignment, `env`; or the line holds an
-    `eval`, `source` or `.` command, which can set it unseen; a path that
+    `eval`, which can set it by a name built at run time; a sourced file is
+    a script the gate is not shown, and is not judged; a path that
     starts with `./` or `../` is still told), `cd` with `HOME` unknown,
     a target with an unquoted glob character such as `cd pb*`, which the
     shell expands to a directory the gate cannot tell: also after

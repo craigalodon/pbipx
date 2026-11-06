@@ -241,22 +241,20 @@ func onlyReferenced(line string, names []string) bool {
 // cdpathFixed reports whether a shell line provably does not set CDPATH, so
 // only the gate's own environment decides whether cd takes a bare name from
 // another folder: the name appears only as a reference (onlyReferenced), and
-// the line holds no eval, source or dot command, which can set it by a name
-// built at run time or in a file.
+// the line holds no eval, which can set it by a name built at run time. A
+// sourced file is a script the gate is not shown, the same limit as any other
+// script, and is not judged here.
 func cdpathFixed(line string) bool {
 	// Quotes and backslashes inside a name do not change it to the shell:
 	// export CDP""ATH=x sets CDPATH.
 	line = strings.NewReplacer(`"`, "", `'`, "", `\`, "").Replace(line)
 	for _, tok := range lineTokens(line) {
-		if tok == "eval" || tok == "source" {
+		if tok == "eval" {
 			return false
 		}
 	}
-	return !dotCommand.MatchString(line) && onlyReferenced(line, []string{"CDPATH"})
+	return onlyReferenced(line, []string{"CDPATH"})
 }
-
-// dotCommand matches the . builtin where a command starts.
-var dotCommand = regexp.MustCompile(`(?:^|[;&|(){\n])\s*\.(?:\s|$)`)
 
 // psCtlVarsFixed is ctlVarsFixed for PowerShell: each name, in any case,
 // appears only as $env:NAME or ${env:NAME} and is not assigned, and the

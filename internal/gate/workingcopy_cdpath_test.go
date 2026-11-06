@@ -29,9 +29,6 @@ func TestWorkingCopyCDPATH(t *testing.T) {
 		{"cd -P", "", wcShell("export CDPATH=~/work; cd -P copy; cat x"), wc},
 		{"pushd", "", wcShell("export CDPATH=~/work; pushd copy; cat x"), wc},
 		{"eval", "", wcShell(`eval "export CDPATH=~/work"; cd copy; cat x`), wc},
-		{"source", "", wcShell("source env.sh; cd copy; cat x"), wc},
-		{"dot command", "", wcShell(". ./env.sh; cd copy; cat x"), wc},
-		{"dot command after a semicolon", "", wcShell("true; . ./env.sh; cd copy; cat x"), wc},
 		{"unset first", "", wcShell("unset CDPATH; export CDPATH=~/work; cd copy; cat x"), wc},
 		{"from a folder", m.outside, wcShell("export CDPATH=~/work; cd copy; cat model.txt"), wc},
 
@@ -39,6 +36,11 @@ func TestWorkingCopyCDPATH(t *testing.T) {
 		{"a single-quoted name", "", wcShell(`export CDP''ATH=$HOME/work; cd copy; cat model.txt`), wc},
 		{"a backslash in the name", "", wcShell(`export CDP\ATH=$HOME/work; cd copy; cat model.txt`), wc},
 		{"a quoted assignment", "", wcShell(`"CDPATH"=$HOME/work cd copy; cat model.txt`), wc},
+
+		// Allowed: a sourced file is a script the gate is not shown, the same
+		// limit as any other script.
+		{"source then cd", "", wcShell("source .venv/bin/activate && cd tools && cat x"), ""},
+		{"dot then cd", "", wcShell(". .venv/bin/activate; cd sub; cat x"), ""},
 
 		// Allowed.
 		{"no CDPATH", "", wcShell("cd sub; cat x"), ""},
