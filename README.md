@@ -134,4 +134,5 @@ The rules everything else follows. The reasoning is in
 
 ## License
 
-Licensed under the Apache License, Version 2.0 (Apache-2.0). See [LICENSE](LICENSE).
+Copyright 2026 Craig Green. Licensed under the Apache License, Version 2.0
+(Apache-2.0). See [LICENSE](LICENSE) and [NOTICE](NOTICE).
